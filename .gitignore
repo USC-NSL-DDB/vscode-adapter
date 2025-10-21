@@ -1,0 +1,11 @@
+out
+coverage
+node_modules
+*.vsix
+.nyc_output
+.vscode-test
+.secrets
+*.log
+*.txt
+
+sampleWorkSpace/
