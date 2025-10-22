@@ -587,6 +587,15 @@ export class MI2DebugSession extends DebugSession {
 	protected override stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
 		if (trace)
 			this.miDebugger.log("stderr", `stackTraceRequest${JSON.stringify(args)}`)
+		// Filter out fake group thread IDs (negative IDs used for visual grouping)
+		if (args.threadId < 0) {
+			response.body = {
+				stackFrames: [],
+				totalFrames: 0
+			};
+			this.sendResponse(response);
+			return;
+		}
 		this.miDebugger.getStack(args.startFrame, args.levels, args.threadId).then(stack => {
 			const ret: StackFrame[] = [];
 			stack.forEach(element => {
