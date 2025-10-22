@@ -179,6 +179,11 @@ export class MI2DebugSession extends DebugSession {
 	protected handleBreak(info?: MINode) {
 		if (trace)
 			this.miDebugger.log("stderr", `handleBreak${JSON.stringify(info)}`)
+		new Promise((resolve, reject) => {
+			this.miDebugger.sendCommand(`exec-interrupt`).then((info) => {
+				resolve(info.resultRecords.resultClass == "done");
+			}, reject);
+		});
 		const stopped_threads: [] = info.record("stopped-threads")
 		const step_thread_id = info ? parseInt(info.record("thread-id")) : 1
 		this.sendEvent(new StoppedEvent("step", step_thread_id));
@@ -205,6 +210,11 @@ export class MI2DebugSession extends DebugSession {
 	protected handlePause(info: MINode) {
 		if (trace)
 			this.miDebugger.log("stderr", `handlePause${JSON.stringify(info)}`)
+		new Promise((resolve, reject) => {
+			this.miDebugger.sendCommand(`exec-interrupt`).then((info) => {
+				resolve(info.resultRecords.resultClass == "done");
+			}, reject);
+		});
 		const stopped_threads: [] = info.record("stopped-threads")
 		if (stopped_threads.length > 1) {
 			for (const thread_id of stopped_threads) {
@@ -225,6 +235,11 @@ export class MI2DebugSession extends DebugSession {
 	protected stopEvent(info: MINode) {
 		if (trace)
 			this.miDebugger.log("stderr", `stopEvent${JSON.stringify(info)}`)
+		new Promise((resolve, reject) => {
+			this.miDebugger.sendCommand(`exec-interrupt`).then((info) => {
+				resolve(info.resultRecords.resultClass == "done");
+			}, reject);
+		});
 		if (!this.started)
 			this.crashed = true;
 		if (!this.quit) {
