@@ -118,10 +118,17 @@ export class VariableObject {
 		this.nameToDisplay = MINode.valueOf(node, "exp"); 
 		const self_exp = MINode.valueOf(node, "exp");
 		if (parent) {
-			if (parent.type == undefined){
-				parent.type = `${parent.exp}.${self_exp}`;
-			}
-			if (parent.type.endsWith("**") || parent.type.endsWith("[]") || parent.displayhint === "array") {
+			const parentIsSyntheticAccessSpecifier = 
+				parent.nameToDisplay === "public" || 
+				parent.nameToDisplay === "private" || 
+				parent.nameToDisplay === "protected";
+
+			if (parentIsSyntheticAccessSpecifier){
+				const lastDot = parent.exp.lastIndexOf('.');
+				const baseExp = lastDot > 0 ? parent.exp.substring(0, lastDot) : parent.exp;
+				this.exp = `${baseExp}.${self_exp}`;
+			} 
+			else if (parent.type.endsWith("**") || parent.type.endsWith("[]") || parent.displayhint === "array") {
 				this.exp = `${parent.exp}[0]`;	// for arrays, we default to [0] to avoid invalid index in the expression
 				// Extract the index from self_exp, which should be in the format of a number if it's an array element
 				const indexMatch = self_exp.match(/^\[?(\d+)\]?$/);
