@@ -141,7 +141,7 @@ export class MI2 extends EventEmitter implements IBackend {
 				if (code !== 0) {
 					this.emit("launcherror", new Error(`Process exited with code ${code}`));
 					reject(new Error(`Process exited with code ${code}\n${this.stderrOutput}`));
-				}else {
+				} else {
 					this.emit("quit");
 				}
 			});
