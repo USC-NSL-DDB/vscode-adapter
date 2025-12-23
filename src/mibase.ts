@@ -851,7 +851,8 @@ export class MI2DebugSession extends DebugSession {
 				}
 				this.sendResponse(response);
 			} catch (err) {
-				this.sendErrorResponse(response, 1, `Could not expand variable: ${err}`);
+				const stack = err instanceof Error ? err.stack : String(err);
+				this.sendErrorResponse(response, 1, `Could not expand variable: ${stack}`);
 			}
 		} else if (typeof id == "string") {
 			// Variable members

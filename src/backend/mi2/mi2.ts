@@ -121,12 +121,14 @@ export class MI2 extends EventEmitter implements IBackend {
 			this.procEnv = env;
 		}
 	}
+	protected stderrOutput: string = "";
 	protected logMessage: LogMessage = new LogMessage;
 
 	load(cwd: string, target: string, procArgs: string, separateConsole: string, autorun: string[]): Thenable<any> {
 		// if (!path.isAbsolute(target))
 		// 	target = path.join(cwd, target);
 		return new Promise((resolve, reject) => {
+			this.stderrOutput = "";
 			this.isSSH = false;
 			const args = this.preargs.concat(this.extraargs || []);
 			this.process = ChildProcess.spawn(this.application, args
@@ -135,7 +137,14 @@ export class MI2 extends EventEmitter implements IBackend {
 			setInterval(() => (this.process.stdin.write("\n")), 2000)
 			this.process.stdout.on("data", this.stdout.bind(this));
 			this.process.stderr.on("data", this.stderr.bind(this));
-			this.process.on("exit", () => this.emit("quit"));
+			this.process.on("exit", (code) => {
+				if (code !== 0) {
+					this.emit("launcherror", new Error(`Process exited with code ${code}`));
+					reject(new Error(`Process exited with code ${code}\n${this.stderrOutput}`));
+				} else {
+					this.emit("quit");
+				}
+			});
 			this.process.on("error", err => this.emit("launcherror", err));
 			// const promises = this.initCommands(target, cwd);
 			const promises = []
@@ -288,11 +297,11 @@ export class MI2 extends EventEmitter implements IBackend {
 			this.errbuf += data.toString("utf8");
 		const end = this.errbuf.lastIndexOf('\n');
 		if (end != -1) {
-			// this.onOutputStderr(this.errbuf.substring(0, end));
+			this.onOutputStderr(this.errbuf.substring(0, end));
 			this.errbuf = this.errbuf.substring(end + 1);
 		}
 		if (this.errbuf.length) {
-			// this.logNoNewLine("stderr", this.errbuf);
+			this.logNoNewLine("stderr", this.errbuf);
 			this.errbuf = "";
 		}
 	}
@@ -301,6 +310,7 @@ export class MI2 extends EventEmitter implements IBackend {
 		const lines = str.split('\n');
 		lines.forEach(line => {
 			this.log("stderr", line);
+			this.stderrOutput += line + "\n";
 		});
 	}
 
