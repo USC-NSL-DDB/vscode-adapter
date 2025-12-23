@@ -128,7 +128,7 @@ export class MI2 extends EventEmitter implements IBackend {
 		// if (!path.isAbsolute(target))
 		// 	target = path.join(cwd, target);
 		return new Promise((resolve, reject) => {
-			this.stderrOutput = ""
+			this.stderrOutput = "";
 			this.isSSH = false;
 			const args = this.preargs.concat(this.extraargs || []);
 			this.process = ChildProcess.spawn(this.application, args
