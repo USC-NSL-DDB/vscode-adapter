@@ -308,7 +308,11 @@ function updateInlineDecorations() {
 
 function updateEditorDecorations(editor: vscode.TextEditor) {
 	const decorations: vscode.DecorationOptions[] = [];
-
+	const activeSession = vscode.debug.activeDebugSession;
+	if (!activeSession || activeSession.type !== 'ddb') {
+		editor.setDecorations(inlineDecorationType, []);
+		return;
+	}
 	for (const bp of vscode.debug.breakpoints) {
 		if (bp instanceof vscode.SourceBreakpoint && bp.location.uri.toString() === editor.document.uri.toString()) {
 			const line = bp.location.range.start.line;
