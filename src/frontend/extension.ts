@@ -402,6 +402,19 @@ export function activate(context: vscode.ExtensionContext) {
 			updateInlineDecorations();
 		})
 	);
+	// Clear decorations when debug session ends
+	context.subscriptions.push(
+		vscode.debug.onDidTerminateDebugSession(() => {
+			updateInlineDecorations();
+		})
+	);
+
+	// Update decorations when switching between debug sessions
+	context.subscriptions.push(
+		vscode.debug.onDidChangeActiveDebugSession(() => {
+			updateInlineDecorations();
+		})
+	);
 	vscode.debug.registerDebugAdapterTrackerFactory('ddb', new MyDebugAdapterTrackerFactory());
 	ddbviewactivate(context, breakpointSessionsMapExp)
 	// const rootPath =
