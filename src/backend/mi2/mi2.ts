@@ -1056,10 +1056,10 @@ export class MI2 extends EventEmitter implements IBackend {
 		const variables = result.result("variables");
 		const ret: Variable[] = [];
 		// fixme: sometimes variables is not iterable
-        if (!variables || !Array.isArray(variables)) {
-            this.log("stderr", `getStackVariables: variables is not iterable. Got: ${JSON.stringify(variables)}, full result: ${JSON.stringify(result)}`);
-            return ret;
-        }
+		if (!variables || !Array.isArray(variables)) {
+			this.log("stderr", `getStackVariables: variables is not iterable. Got: ${JSON.stringify(variables)}, full result: ${JSON.stringify(result)}`);
+			return ret;
+		}
 		for (const element of variables) {
 			const key = MINode.valueOf(element, "name");
 			const value = MINode.valueOf(element, "value");
