@@ -1008,12 +1008,12 @@ export class MI2 extends EventEmitter implements IBackend {
 		const stack = result.result("stack");
 
 		return stack.map((element: any) => {
-			const level = MINode.valueOf(element, "level");
+			const level = parseInt(MINode.valueOf(element, "level")) || 0;
 			const addr = MINode.valueOf(element, "addr");
 			const func = MINode.valueOf(element, "func");
 			const filename = MINode.valueOf(element, "file");
-			const session_id = MINode.valueOf(element, "session");
-			const thread_id = MINode.valueOf(element, "thread");
+			const session_id = parseInt(MINode.valueOf(element, "session")) || 0;
+			const thread_id = parseInt(MINode.valueOf(element, "thread")) || 0;
 			let file: string = MINode.valueOf(element, "fullname");
 			if (!file) {
 				// Fallback to using `file` if `fullname` is not provided.

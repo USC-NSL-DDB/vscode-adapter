@@ -12,6 +12,12 @@
 				"4713",
 			],
 			"default": "4711"
+		},
+		{
+			"id": "debugWorkspacePath",
+			"type": "promptString",
+			"description": "Path to workspace for debugging session",
+			"default": ""
 		}
 	],
 	"configurations": [
@@ -21,7 +27,7 @@
 			"request": "launch",
 			"args": [
 				"--extensionDevelopmentPath=${workspaceFolder}",
-				"${workspaceFolder}/../apps"
+				"${input:debugWorkspacePath}"
 			],
 			"sourceMaps": true,
 			"env": {
@@ -54,7 +60,7 @@
 			},
 			"cwd": "${workspaceRoot}",
 			"preLaunchTask": "compile",
-			"runtimeExecutable": "/home/junzhouh/.nvm/versions/node/v22.11.0/bin/node"
+			"runtimeExecutable": "${userHome}/.nvm/versions/node/v22.11.0/bin/node"
 		},
 		{
 			"name": "Launch Tests",
