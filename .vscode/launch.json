@@ -12,6 +12,12 @@
 				"4713",
 			],
 			"default": "4711"
+		},
+		{
+			"id": "debugWorkspacePath",
+			"type": "promptString",
+			"description": "Path to workspace for debugging session",
+			"default": ""
 		}
 	],
 	"configurations": [
@@ -21,7 +27,7 @@
 			"request": "launch",
 			"args": [
 				"--extensionDevelopmentPath=${workspaceFolder}",
-				"${workspaceFolder}/../apps"
+				"${input:debugWorkspacePath}"
 			],
 			"sourceMaps": true,
 			"env": {
