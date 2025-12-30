@@ -780,6 +780,9 @@ export class MI2DebugSession extends DebugSession {
 							variablesReference: 0
 						});
 					}
+					response.body = {
+						variables: variables
+					};
 				} else {
 					const stack: Variable[] = await this.miDebugger.getStackVariables(id.threadId, id.level, id.session);
 					const variablePromises = stack.map(async (variable) => {
