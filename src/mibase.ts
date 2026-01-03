@@ -636,7 +636,7 @@ export class MI2DebugSession extends DebugSession {
 						undefined,
 						undefined,
 						undefined
-					)
+					);
 					frame.presentationHint = 'label';
 				} else {
 					frame = new StackFrame(
