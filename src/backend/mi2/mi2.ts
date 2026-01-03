@@ -1032,7 +1032,7 @@ export class MI2 extends EventEmitter implements IBackend {
 			if (lnstr)
 				line = parseInt(lnstr);
 			const from = parseInt(MINode.valueOf(element, "from"));
-			let is_boundary: boolean = MINode.valueOf(element, "boundary_frame") != undefined ? true : false;
+			let is_boundary: boolean = MINode.valueOf(element, "boundary_frame") != undefined;
 
 			// vscode
 			return {
