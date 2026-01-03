@@ -627,13 +627,27 @@ export class MI2DebugSession extends DebugSession {
 					// }
 					source = new Source(element.fileName, path);
 				}
-
-				ret.push(new StackFrame(
-					this.threadAndLevelToFrameId(element.thread, element.level, element.session),
-					element.function + "@" + element.address,
-					source,
-					element.line,
-					0));
+				
+				let frame: StackFrame;
+				if (element.is_boundary) {
+					frame = new StackFrame(
+						this.threadAndLevelToFrameId(element.thread, element.level, element.session),
+						`--- Called from [tid: ${element.thread}, sid: ${element.session}] ---`,
+						undefined,
+						undefined,
+						undefined
+					)
+					frame.presentationHint = 'label';
+				} else {
+					frame = new StackFrame(
+						this.threadAndLevelToFrameId(element.thread, element.level, element.session),
+						element.function + "@" + element.address,
+						source,
+						element.line, 
+						0
+					);
+				}
+				ret.push(frame);
 			});
 
 			// Apply the startFrame and levels filter to the stack frames

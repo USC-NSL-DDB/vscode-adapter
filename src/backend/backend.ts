@@ -41,8 +41,9 @@ export interface Stack {
 	fileName: string;
 	file: string;
 	line: number;
-	session:number
-	thread:number
+	session: number;
+	thread: number;
+	is_boundary: boolean;
 }
 
 export interface Variable {

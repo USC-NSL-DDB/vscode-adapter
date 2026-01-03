@@ -1032,6 +1032,7 @@ export class MI2 extends EventEmitter implements IBackend {
 			if (lnstr)
 				line = parseInt(lnstr);
 			const from = parseInt(MINode.valueOf(element, "from"));
+			let is_boundary: boolean = MINode.valueOf(element, "boundary_frame") != undefined ? true : false;
 
 			// vscode
 			return {
@@ -1042,7 +1043,8 @@ export class MI2 extends EventEmitter implements IBackend {
 				level: level,
 				line: line,
 				session: session_id,
-				thread: thread_id
+				thread: thread_id,
+				is_boundary: is_boundary
 			};
 		});
 	}
