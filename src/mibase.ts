@@ -15,6 +15,7 @@ import { setFlagsFromString } from 'v8';
 import { Debugger } from 'inspector';
 import { send } from 'process';
 import { cloneDeep } from 'lodash';
+import { get } from 'http';
 const trace = process.env.TRACE?.toLowerCase() === 'true';
 class ExtendedVariable {
 	constructor(public name: string, public options: { "arg": any }) {
@@ -57,6 +58,7 @@ export class MI2DebugSession extends DebugSession {
 	protected serverPath: string;
 	protected m_threads: Map<number, M_Thread> = new Map();
 	protected goToTargets: Map<number, DebugProtocol.GotoTarget & { path: string }> = new Map();
+	protected stoppedSessions: Set<number> = new Set();
 
 	public constructor(debuggerLinesStartAt1: boolean, isServer: boolean = false) {
 		super(debuggerLinesStartAt1, isServer);
@@ -142,16 +144,48 @@ export class MI2DebugSession extends DebugSession {
 			type = "stderr";
 		this.sendEvent(new OutputEvent(msg, type));
 	}
+	private getAllSessionIds(): Set<number> {
+		return new Set(this.threadIdToSessionId.values());
+	}
 
+	private markSessionStopped(sessionId: number): void {
+		this.stoppedSessions.add(sessionId);
+		if (trace)
+			this.miDebugger.log("stderr", `Session ${sessionId} marked as stopped. Stopped sessions: ${[...this.stoppedSessions].join(", ")}`);
+	}
+
+	private markSessionRunning(sessionId: number): void {
+		this.stoppedSessions.delete(sessionId);
+		if (trace)
+			this.miDebugger.log("stderr", `Session ${sessionId} marked as running. Stopped sessions: ${[...this.stoppedSessions].join(", ")}`);
+	}
+
+	private interruptRunningSessions(excludeSessionId?: number): void {
+		const allSessionIds = this.getAllSessionIds();
+		for (const sessionId of allSessionIds) {
+			if (sessionId !== excludeSessionId && !this.stoppedSessions.has(sessionId)) {
+				if (trace)
+					this.miDebugger.log("stderr", `Interrupting running session ${sessionId}`);
+				this.miDebugger.sendCommand(`exec-interrupt --session ${sessionId}`).then(
+					() => { },
+					(err) => {
+						if (trace)
+							this.miDebugger.log("stderr", `Failed to interrupt session ${sessionId}: ${err}`);
+					}
+				);
+			}
+		}
+	}
 	protected handleBreakpoint(info: MINode) {
-
-		new Promise((resolve, reject) => {
-			this.miDebugger.sendCommand(`exec-interrupt`).then((info) => {
-				resolve(info.resultRecords.resultClass == "done");
-			}, reject);
-		});
 		const bp_thread_id = parseInt(info.record("thread-id"))
 		const session_id = parseInt(info.record("session-id"))
+
+		// Mark this session as stopped
+		this.markSessionStopped(session_id);
+
+		// Only interrupt sessions that are still running
+		this.interruptRunningSessions(session_id);
+
 		const event = new StoppedEvent("breakpoint", bp_thread_id);
 		this.sendEvent(event);
 		const stopped_threads: [] = info.record("stopped-threads")
@@ -179,13 +213,17 @@ export class MI2DebugSession extends DebugSession {
 	protected handleBreak(info?: MINode) {
 		if (trace)
 			this.miDebugger.log("stderr", `handleBreak${JSON.stringify(info)}`)
-		new Promise((resolve, reject) => {
-			this.miDebugger.sendCommand(`exec-interrupt`).then((info) => {
-				resolve(info.resultRecords.resultClass == "done");
-			}, reject);
-		});
+
 		const stopped_threads: [] = info.record("stopped-threads")
 		const step_thread_id = info ? parseInt(info.record("thread-id")) : 1
+		const session_id = parseInt(info.record("session-id"))
+
+		// Mark this session as stopped
+		this.markSessionStopped(session_id);
+
+		// Only interrupt sessions that are still running
+		this.interruptRunningSessions(session_id);
+
 		this.sendEvent(new StoppedEvent("step", step_thread_id));
 		if (stopped_threads.length > 1) {
 			for (const thread_id of stopped_threads) {
@@ -210,12 +248,16 @@ export class MI2DebugSession extends DebugSession {
 	protected handlePause(info: MINode) {
 		if (trace)
 			this.miDebugger.log("stderr", `handlePause${JSON.stringify(info)}`)
-		new Promise((resolve, reject) => {
-			this.miDebugger.sendCommand(`exec-interrupt`).then((info) => {
-				resolve(info.resultRecords.resultClass == "done");
-			}, reject);
-		});
+
 		const stopped_threads: [] = info.record("stopped-threads")
+		const session_id = parseInt(info.record("session-id"))
+
+		// Mark this session as stopped
+		this.markSessionStopped(session_id);
+
+		// Only interrupt sessions that are still running
+		this.interruptRunningSessions(session_id);
+
 		if (stopped_threads.length > 1) {
 			for (const thread_id of stopped_threads) {
 				// this.miDebugger.log("stderr", `sending stop event${parseInt(thread_id)}`)
@@ -235,11 +277,17 @@ export class MI2DebugSession extends DebugSession {
 	protected stopEvent(info: MINode) {
 		if (trace)
 			this.miDebugger.log("stderr", `stopEvent${JSON.stringify(info)}`)
-		new Promise((resolve, reject) => {
-			this.miDebugger.sendCommand(`exec-interrupt`).then((info) => {
-				resolve(info.resultRecords.resultClass == "done");
-			}, reject);
-		});
+
+		const session_id = parseInt(info.record("session-id"))
+
+		// Mark this session as stopped
+		if (!isNaN(session_id)) {
+			this.markSessionStopped(session_id);
+		}
+
+		// Interrupt all other running sessions
+		this.interruptRunningSessions(session_id);
+
 		if (!this.started)
 			this.crashed = true;
 		if (!this.quit) {
@@ -250,7 +298,15 @@ export class MI2DebugSession extends DebugSession {
 	}
 	protected runningEvent(info: MINode["outOfBandRecord"][number]) {
 		if (!this.quit) {
-			const event = new ContinuedEvent(parseInt(MINode.valueOf(info.output, "thread-id")), false);
+			const threadId = parseInt(MINode.valueOf(info.output, "thread-id"));
+			const sessionId = this.threadIdToSessionId.get(threadId);
+
+			// Mark session as running
+			if (sessionId !== undefined) {
+				this.markSessionRunning(sessionId);
+			}
+
+			const event = new ContinuedEvent(threadId, false);
 			this.sendEvent(event);
 		}
 	}
@@ -479,16 +535,14 @@ export class MI2DebugSession extends DebugSession {
 		// continue
 		if (command == "continue") {
 			const session_id = args.arguments.session_id
-			let sessionId = -1;
+
 			new Promise((resolve, reject) => {
 				if (trace)
 					this.miDebugger.log("stderr", `custom continueRequest session_id: ${session_id}`)
 				this.miDebugger.sendCommand(`record-time-and-continue --session ${session_id}`).then((info) => {
+					this.markSessionRunning(session_id);
 					resolve(info.resultRecords.resultClass == "done");
 				}, reject);
-				// this.miDebugger.sendCommand(`exec-continue --session ${session_id}`).then((info) => {
-				// 	resolve(info.resultRecords.resultClass == "done");
-				// }, reject);
 			}).then(done => {
 				this.sendResponse(response);
 			}, msg => {
@@ -1034,9 +1088,9 @@ export class MI2DebugSession extends DebugSession {
 		// let command = "exec-continue"
 		let command = "record-time-and-continue"
 		//@ts-ignore
-		if (args.sessionId != undefined) {
-			//@ts-ignore
-			command += ` --session ${args.sessionId}`
+		const sessionId: number | undefined = args.sessionId;
+		if (sessionId != undefined) {
+			command += ` --session ${sessionId}`
 		} else {
 			command += ` --all`
 		}
