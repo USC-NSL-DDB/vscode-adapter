@@ -536,9 +536,6 @@ export class MI2DebugSession extends DebugSession {
 		if (command == "continue") {
 			const session_id = args.arguments.session_id
 
-			// Mark session as running before continuing
-			// this.markSessionRunning(session_id);
-
 			new Promise((resolve, reject) => {
 				if (trace)
 					this.miDebugger.log("stderr", `custom continueRequest session_id: ${session_id}`)
@@ -1077,14 +1074,8 @@ export class MI2DebugSession extends DebugSession {
 		const sessionId: number | undefined = args.sessionId;
 		if (sessionId != undefined) {
 			command += ` --session ${sessionId}`
-			// Mark specific session as running
-			this.markSessionRunning(sessionId);
 		} else {
 			command += ` --all`
-			// Mark all sessions as running
-			for (const sid of this.getAllSessionIds()) {
-				this.markSessionRunning(sid);
-			}
 		}
 
 		new Promise((resolve, reject) => {
