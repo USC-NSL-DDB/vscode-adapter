@@ -95,6 +95,7 @@ async function getAvailableSessions(): Promise<any[]> {
 // Define a custom QuickPickItem type that can hold our session data
 interface SessionQuickPickItem extends vscode.QuickPickItem {
 	sessionId?: string; // Make it optional for separators
+	groupId?: string; // Used to identify group headers
 }
 async function promptForSessions(): Promise<Array<{ sessionId: string }> | undefined> {
 	const sessions = await getAvailableSessions();
@@ -121,43 +122,98 @@ async function promptForSessions(): Promise<Array<{ sessionId: string }> | undef
 	const quickPickItems: SessionQuickPickItem[] = [];
 	const sortedGroupIds = Array.from(groupedSessions.keys()).sort();
 
+	// Track which items belong to which group header
+	const groupHeaderToItems: Map<SessionQuickPickItem, SessionQuickPickItem[]> = new Map();
+
 	for (const groupId of sortedGroupIds) {
 		const sessionGroup = groupedSessions.get(groupId)!;
 
-		// Add a visually distinct HEADER item for the group. It won't have a sessionId.
-		quickPickItems.push({
-			label: `$(folder) ${groupId.toUpperCase()}`, // Use a VS Code icon
+		// Add a visually distinct HEADER item for the group
+		const headerItem: SessionQuickPickItem = {
+			label: `$(folder) ${groupId.toUpperCase()}`,
 			description: `(${sessionGroup.length} sessions)`,
-			// This item is "selectable" in the UI, but we'll filter it out later.
-		});
+			groupId: groupId // Mark this as a group header
+		};
+		quickPickItems.push(headerItem);
+
+		const groupItems: SessionQuickPickItem[] = [];
 
 		// Add the actual selectable session items for this group
 		for (const session of sessionGroup) {
-			quickPickItems.push({
-				label: `   ${session.alias || 'UNKNOWN'}`, // Indent under the header
+			const sessionItem: SessionQuickPickItem = {
+				label: `   ${session.alias || 'UNKNOWN'}`,
 				description: `sid=${session.sid}`,
-				sessionId: session.sid // This makes it a real, selectable item
-			});
+				sessionId: session.sid
+			};
+			quickPickItems.push(sessionItem);
+			groupItems.push(sessionItem);
 		}
+
+		groupHeaderToItems.set(headerItem, groupItems);
 	}
 
-	// 3. Show the Quick Pick to the user
-	const selectedItems = await vscode.window.showQuickPick<SessionQuickPickItem>(
-		quickPickItems,
-		{
-			canPickMany: true,
-			placeHolder: 'Select sessions to apply the breakpoint to'
-		}
-	);
+	// 3. Use createQuickPick for more control over selection behavior
+	return new Promise((resolve) => {
+		const quickPick = vscode.window.createQuickPick<SessionQuickPickItem>();
+		quickPick.items = quickPickItems;
+		quickPick.canSelectMany = true;
+		quickPick.placeholder = 'Select sessions to apply the breakpoint to';
 
-	// 4. Filter out the header items from the final result
-	if (selectedItems) {
-		return selectedItems
-			.filter(item => item.sessionId !== undefined) // This is the key trick
-			.map(item => ({ sessionId: item.sessionId! }));
-	}
+		let isUpdating = false;
+		let previousSelection: readonly SessionQuickPickItem[] = [];
+		let accepted = false;
 
-	return undefined; // User cancelled
+		quickPick.onDidChangeSelection((selected) => {
+			if (isUpdating) return;
+			isUpdating = true;
+
+			const newSelection = new Set(selected);
+			const prevSet = new Set(previousSelection);
+
+			// Check if any group header was just selected (wasn't in previous, now in current)
+			for (const item of selected) {
+				if (item.groupId && groupHeaderToItems.has(item) && !prevSet.has(item)) {
+					// Header was just selected - add all items in this group
+					for (const groupItem of groupHeaderToItems.get(item)!) {
+						newSelection.add(groupItem);
+					}
+				}
+			}
+
+			// Check if any group header was just deselected (was in previous, not in current)
+			for (const item of previousSelection) {
+				if (item.groupId && groupHeaderToItems.has(item) && !newSelection.has(item)) {
+					// Header was just deselected - remove all items in this group
+					for (const groupItem of groupHeaderToItems.get(item)!) {
+						newSelection.delete(groupItem);
+					}
+				}
+			}
+
+			const newSelectionArray = Array.from(newSelection);
+			quickPick.selectedItems = newSelectionArray;
+			previousSelection = newSelectionArray;
+			isUpdating = false;
+		});
+
+		quickPick.onDidAccept(() => {
+			accepted = true;
+			const result = quickPick.selectedItems
+				.filter(item => item.sessionId !== undefined)
+				.map(item => ({ sessionId: item.sessionId! }));
+			quickPick.dispose();
+			resolve(result);
+		});
+
+		quickPick.onDidHide(() => {
+			quickPick.dispose();
+			if (!accepted) {
+				resolve(undefined);
+			}
+		});
+
+		quickPick.show();
+	});
 }
 function convertToVSCodeBreakpoint(bp: any, source: any): vscode.Breakpoint {
 	const uri = vscode.Uri.parse(source.path);
