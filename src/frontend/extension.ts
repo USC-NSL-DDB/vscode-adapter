@@ -404,7 +404,16 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 	// Clear decorations when debug session ends
 	context.subscriptions.push(
-		vscode.debug.onDidTerminateDebugSession(() => {
+		vscode.debug.onDidTerminateDebugSession((session) => {
+			if (session.type === 'ddb') {
+				// Remove all breakpoints from the UI
+				const allBreakpoints = vscode.debug.breakpoints;
+				vscode.debug.removeBreakpoints(allBreakpoints);
+				
+				// Clear the maps
+				breakpointSessionsMap.clear();
+				breakpointSessionsMapExp.clear();
+			}
 			updateInlineDecorations();
 		})
 	);

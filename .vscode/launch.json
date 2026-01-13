@@ -53,8 +53,7 @@
 				// "SESSIONS_COMMANDS_API_URL": "http://localhost:5004"
 			},
 			"cwd": "${workspaceRoot}",
-			"preLaunchTask": "compile",
-			"runtimeExecutable": "/home/junzhouh/.nvm/versions/node/v22.11.0/bin/node"
+			"preLaunchTask": "compile"
 		},
 		{
 			"name": "Launch Tests",
