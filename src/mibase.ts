@@ -310,16 +310,81 @@ export class MI2DebugSession extends DebugSession {
 			this.sendEvent(event);
 		}
 	}
+	private static s_targetId: number = 0;
 
-	protected threadCreatedEvent(info: MINode) {
+	private tryGetTidFromTargetId(targetId: string): { success: boolean; tid: number } {
+		let tid = 0;
+
+		// Try parsing as a plain number
+		const plainNum = parseInt(targetId, 10);
+		if (!isNaN(plainNum) && plainNum !== 0) {
+			return { success: true, tid: plainNum };
+		}
+
+		// Try "Thread <number>" format
+		if (targetId.toLowerCase().startsWith("thread ")) {
+			const threadNum = parseInt(targetId.substring("Thread ".length), 10);
+			if (!isNaN(threadNum) && threadNum !== 0) {
+				return { success: true, tid: threadNum };
+			}
+		}
+
+		// Try "Process <number>" format (first thread in a linux process has tid == pid)
+		if (targetId.toLowerCase().startsWith("process ")) {
+			const processNum = parseInt(targetId.substring("Process ".length), 10);
+			if (!isNaN(processNum) && processNum !== 0) {
+				return { success: true, tid: processNum };
+			}
+		}
+
+		// Try pthread format: "Thread <0x123456789abc> (LWP <thread-id>)"
+		if (targetId.toLowerCase().startsWith("thread ")) {
+			const lwpPos = targetId.indexOf("(LWP ");
+			const parenPos = targetId.lastIndexOf(")");
+			if (lwpPos !== -1 && parenPos !== -1) {
+				const len = parenPos - (lwpPos + 5);
+				if (len > 0) {
+					const lwpNum = parseInt(targetId.substring(lwpPos + 5, lwpPos + 5 + len), 10);
+					if (!isNaN(lwpNum) && lwpNum !== 0) {
+						return { success: true, tid: lwpNum };
+					}
+				}
+			}
+		}
+
+		// Try "LWP <thread-id>" format (gdb coredumps)
+		if (targetId.toLowerCase().startsWith("lwp ")) {
+			const lwpNum = parseInt(targetId.substring("LWP ".length), 10);
+			if (!isNaN(lwpNum) && lwpNum !== 0) {
+				return { success: true, tid: lwpNum };
+			}
+		}
+
+		return { success: false, tid };
+	}
+	protected async threadCreatedEvent(info: MINode) {
 		if (trace)
 			this.miDebugger.log("stderr", `threadCreatedEvent${JSON.stringify(info)}`)
-		var threadId = parseInt(info.record("id"));
+		let threadId = parseInt(info.record("id"));
+		const session_id = parseInt(info.record("session-id"))
+		let thread_response = await this.miDebugger.sendCommand(`thread-info --thread ${threadId}`);
+		const thread_info = thread_response.result("threads");
+		if (thread_info.length != 1) {
+			return;
+		}
+		const name = MINode.valueOf(thread_info[0], "name")
+		const target_id = MINode.valueOf(thread_info[0], "target-id")
+		const parsed_tid_result = this.tryGetTidFromTargetId(target_id);
+		let parsed_target_id = 0;
+		if (parsed_tid_result.success) {
+			parsed_target_id = parsed_tid_result.tid;
+		}
 		this.m_threads.set(
 			threadId,
 			{
 				id: threadId,
-				name: `[${info.record("session-alias")}]: Thread ${info.record("id")}, sid = ${info.record("session-id")}`,
+				// name: `[${info.record("session-alias")}]: Thread ${thread_id}, sid = ${info.record("session-id") }`,
+				name: `${name} [tid=${parsed_target_id}, sid=${session_id}]`,
 				groupId: info.record("group-id"),
 			}
 		);
@@ -327,7 +392,14 @@ export class MI2DebugSession extends DebugSession {
 			threadId,
 			parseInt(info.record("session-id"))
 		);
-		this.sendEvent(new ThreadEvent("started", info.record("id")));
+		let thread_state = MINode.valueOf(thread_info[0], "state");
+		this.sendEvent(new ThreadEvent("started", threadId));
+		if (thread_state == "stopped") {
+			const event = new StoppedEvent("", threadId);
+			//@ts-ignore
+			event.body.preserveFocusHint = true
+			this.sendEvent(event);
+		}
 	}
 
 	protected threadExitedEvent(info: MINode) {
@@ -336,7 +408,7 @@ export class MI2DebugSession extends DebugSession {
 		var threadId = parseInt(info.record("id"));
 		this.m_threads.delete(threadId);
 		this.threadIdToSessionId.delete(threadId);
-		this.sendEvent(new ThreadEvent("exited", info.record("id")));
+		this.sendEvent(new ThreadEvent("exited", threadId));
 	}
 
 	protected quitEvent() {
@@ -606,7 +678,7 @@ export class MI2DebugSession extends DebugSession {
 			threads.push(
 				{
 					id: fakeThreadId--,
-					name: `📦 ${groupId}`,
+					name: `🖥️ ${groupId}`,
 				}
 			)
 			for (const thread of groupThreads) {
