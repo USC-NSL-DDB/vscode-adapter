@@ -74,8 +74,9 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "extension.showInfo",
-        "title": "Show Information Popup"
+        "command": "ddbSessionsExplorer.showLogicalGroupDetails",
+        "title": "Show Logical Group Details",
+        "icon": "$(info)"
       },
       {
         "command": "ddbSessionsExplorer.pauseSession",
@@ -639,12 +640,12 @@
     "menus": {
       "view/title": [
         {
-          "command": "ddbSessionsExplorer.refresh",
+          "command": "ddbSessionsExplorer.toggleGrouping",
           "when": "view == ddbSessionsExplorer",
           "group": "navigation"
         },
         {
-          "command": "ddbSessionsExplorer.toggleGrouping",
+          "command": "ddbSessionsExplorer.refresh",
           "when": "view == ddbSessionsExplorer",
           "group": "navigation"
         },
@@ -663,6 +664,11 @@
         {
           "command": "ddbSessionsExplorer.continueSession",
           "when": "viewItem == sessionItem",
+          "group": "inline"
+        },
+        {
+          "command": "ddbSessionsExplorer.showLogicalGroupDetails",
+          "when": "view == ddbSessionsExplorer && viewItem == logicalGroup",
           "group": "inline"
         }
       ]

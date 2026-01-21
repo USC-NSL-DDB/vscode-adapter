@@ -11,8 +11,7 @@ import { LogicalGroup } from "./common/ddb_api";
 
 class SessionsProvider
   implements
-    vscode.TreeDataProvider<LogicalGroupItem | SessionItem | SessionItemDetail>
-{
+  vscode.TreeDataProvider<LogicalGroupItem | SessionItem | SessionItemDetail> {
   private _onDidChangeTreeData: vscode.EventEmitter<
     LogicalGroupItem | SessionItem | SessionItemDetail | undefined | null | void
   > = new vscode.EventEmitter<
@@ -156,24 +155,58 @@ class SessionsProvider
     return [];
   }
 
+  private formatSessionItem(session: ddb_api.Session): SessionItem {
+    return new SessionItem(
+      `[sid: ${session.sid}] ${session.alias}`,
+      vscode.TreeItemCollapsibleState.Collapsed,
+      true,
+      session.status,
+      String(session.sid),
+      {
+        "Session Alias": String(session.alias),
+        "Session ID": String(session.sid),
+        "Session Tag": session.tag,
+      }
+    );
+  }
+
+  private formatSessionItemWithLogicalGroup(session: ddb_api.Session, group?: LogicalGroup): SessionItem {
+    if (!group) {
+      return new SessionItem(
+        `["Ungrouped", sid: ${session.sid}] ${session.alias}`,
+        vscode.TreeItemCollapsibleState.Collapsed, // Still expandable for details
+        true,
+        session.status,
+        String(session.sid),
+        {
+          "Session Alias": String(session.alias),
+          "Session ID": String(session.sid),
+          "Session Tag": session.tag,
+          "Belongs to Group (id)": "N/A",
+          "Belongs to Group (alias)": "N/A",
+        }
+      )
+    }
+    return new SessionItem(
+      `[grp_id: ${group.id}, sid: ${session.sid}] ${session.alias}`,
+      vscode.TreeItemCollapsibleState.Collapsed, // Still expandable for details
+      true,
+      session.status,
+      String(session.sid),
+      {
+        "Session Alias": String(session.alias),
+        "Session ID": String(session.sid),
+        "Session Tag": session.tag,
+        "Belongs to Group (id)": String(group.id),
+        "Belongs to Group (alias)": group.alias,
+      }
+    )
+  }
+
   private getSessionsForGroup(groupId: number): SessionItem[] {
     try {
       const sessions = this.sessionManager.getSessionsByGroup(groupId);
-      return sessions.map((session) => {
-        const sessionItem = new SessionItem(
-          `[${session.alias}] ${session.tag}`,
-          vscode.TreeItemCollapsibleState.Collapsed,
-          true,
-          session.status,
-          String(session.sid),
-          {
-            alias: String(session.alias),
-            sid: String(session.sid),
-            tag: session.tag,
-          }
-        );
-        return sessionItem;
-      });
+      return sessions.map((session) => this.formatSessionItem(session));
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -187,21 +220,7 @@ class SessionsProvider
   private getUngroupedSessionItems(): SessionItem[] {
     try {
       const sessions = this.sessionManager.getUngroupedSessions();
-      return sessions.map((session) => {
-        const sessionItem = new SessionItem(
-          `[${session.alias}] ${session.tag}`,
-          vscode.TreeItemCollapsibleState.Collapsed,
-          true,
-          session.status,
-          String(session.sid),
-          {
-            alias: String(session.alias),
-            sid: String(session.sid),
-            tag: session.tag,
-          }
-        );
-        return sessionItem;
-      });
+      return sessions.map((session) => this.formatSessionItem(session));
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -255,19 +274,7 @@ class SessionsProvider
       for (const session of sessions) {
         const groupInfo = `[${group.alias}]`;
         items.push(
-          new SessionItem(
-            `${groupInfo} [${session.alias}] ${session.tag}`,
-            vscode.TreeItemCollapsibleState.Collapsed, // Still expandable for details
-            true,
-            session.status,
-            String(session.sid),
-            {
-              alias: String(session.alias),
-              sid: String(session.sid),
-              tag: session.tag,
-              groupAlias: group.alias,
-            }
-          )
+          this.formatSessionItemWithLogicalGroup(session, group)
         );
       }
     }
@@ -275,18 +282,7 @@ class SessionsProvider
     // Add ungrouped sessions
     for (const session of ungroupedSessions) {
       items.push(
-        new SessionItem(
-          `[Ungrouped] [${session.alias}] ${session.tag}`,
-          vscode.TreeItemCollapsibleState.Collapsed,
-          true,
-          session.status,
-          String(session.sid),
-          {
-            alias: String(session.alias),
-            sid: String(session.sid),
-            tag: session.tag,
-          }
-        )
+        this.formatSessionItemWithLogicalGroup(session)
       );
     }
 
@@ -308,7 +304,7 @@ class BreakpointsProvider implements vscode.TreeDataProvider<BreakPointItem> {
 
   public isDebugSessionActive: boolean = false;
 
-  constructor(private breakpointSessionsMap: Map<string, string[]>) {}
+  constructor(private breakpointSessionsMap: Map<string, string[]>) { }
 
   refresh(): void {
     this._onDidChangeTreeData.fire();
@@ -369,13 +365,13 @@ class LogicalGroupItem extends vscode.TreeItem {
     super(
       isUngrouped
         ? `Ungrouped (${sessionCount})`
-        : `[${group.id}] ${group.hash} (${group.alias}) - ${sessionCount} sessions`,
+        : `[grp_id: ${group.id}] ${group.alias} (${sessionCount} sessions)`,
       vscode.TreeItemCollapsibleState.Collapsed
     );
     this.contextValue = "logicalGroup";
     this.tooltip = isUngrouped
       ? `Sessions not belonging to any logical group`
-      : `Logical Group: ${group.alias}\nID: ${group.id}\nHash: ${group.hash}\nSessions: ${sessionCount}`;
+      : `Logical Group Detail:\nGroup ID: ${group.id}\nGroup Alias: ${group.alias}\nGroup Hash: ${group.hash}\nNumber of Sessions: ${sessionCount}`;
   }
 }
 
@@ -554,7 +550,7 @@ export function activate(
     async () => {
       if (!sessionsProvider.isDebugSessionActive) {
         vscode.window.showInformationMessage(
-          "Cannot refresh: No active debug session"
+          "Cannot refresh: No active debug session. Did you start DDB already?"
         );
         return;
       }
@@ -573,7 +569,7 @@ export function activate(
     () => {
       if (!sessionsProvider.isDebugSessionActive) {
         vscode.window.showInformationMessage(
-          "Cannot toggle: No active debug session"
+          "Cannot toggle: No active debug session. Did you start DDB already?"
         );
         return;
       }
@@ -585,13 +581,38 @@ export function activate(
 
   context.subscriptions.push(toggleGroupingCommand);
 
+  // Show logical group details command
+  const showLogicalGroupDetailsCommand = vscode.commands.registerCommand(
+    "ddbSessionsExplorer.showLogicalGroupDetails",
+    (item: LogicalGroupItem) => {
+      if (item.isUngrouped) {
+        vscode.window.showInformationMessage(
+          "Sessions not belonging to any logical group"
+        );
+      } else {
+        const message = [
+          `Logical Group Details:`,
+          ``,
+          `Group Alias: ${item.group.alias}`,
+          `Group ID: ${item.group.id}`,
+          `Group Hash: ${item.group.hash}`,
+          `Number of Sessions: ${item.sessionCount}`
+        ].join('\n');
+
+        vscode.window.showInformationMessage(message, { modal: true });
+      }
+    }
+  );
+
+  context.subscriptions.push(showLogicalGroupDetailsCommand);
+
   // Manual refresh command for breakpoints view
   const breakpointsRefreshCommand = vscode.commands.registerCommand(
     "ddbBreakpointsExplorer.refresh",
     async () => {
       if (!breakpointsProvider.isDebugSessionActive) {
         vscode.window.showInformationMessage(
-          "Cannot refresh: No active debug session"
+          "Cannot refresh: No active debug session. Did you start DDB already?"
         );
         return;
       }

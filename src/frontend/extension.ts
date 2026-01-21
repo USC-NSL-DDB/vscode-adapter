@@ -521,14 +521,12 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
 const trasactionId = 0;
 export function activate(context: vscode.ExtensionContext) {
   logger.info("Starting gdb adapter extension.......");
-
-  console.log("Starting gdb adapter extension.......");
-  let disposable = vscode.commands.registerCommand("extension.showInfo", () => {
-    vscode.window.showInformationMessage("Hello from your VSCode extension!");
-    const breakpoints = vscode.debug.breakpoints;
-    console.log("Breakpoints: ", breakpoints);
-  });
-  context.subscriptions.push(disposable);
+  // let disposable = vscode.commands.registerCommand("extension.showInfo", () => {
+  //   vscode.window.showInformationMessage("Hello from your VSCode extension!");
+  //   const breakpoints = vscode.debug.breakpoints;
+  //   console.log("Breakpoints: ", breakpoints);
+  // });
+  // context.subscriptions.push(disposable);
   vscode.debug.onDidStartDebugSession((session) => {
     console.log("Debug session started: ", session);
     breakpointSessionsMap.clear();
