@@ -59,8 +59,21 @@
     },
     "commands": [
       {
-        "command": "sessionsCommandsExplorer.refresh",
-        "title": "DDBExtraViewRefresh",
+        "command": "ddbSessionsExplorer.refresh",
+        "title": "Refresh Sessions",
+        "icon": {
+          "light": "images/refresh-svgrepo-com.svg",
+          "dark": "images/refresh-svgrepo-com.svg"
+        }
+      },
+      {
+        "command": "ddbSessionsExplorer.toggleGrouping",
+        "title": "Toggle Logical Groups",
+        "icon": "$(group-by-ref-type)"
+      },
+      {
+        "command": "ddbBreakpointsExplorer.refresh",
+        "title": "Refresh Breakpoints",
         "icon": {
           "light": "images/refresh-svgrepo-com.svg",
           "dark": "images/refresh-svgrepo-com.svg"
@@ -71,12 +84,12 @@
         "title": "Show Information Popup"
       },
       {
-        "command": "sessionsCommandsExplorer.pauseSession",
+        "command": "ddbSessionsExplorer.pauseSession",
         "title": "Pause Session",
         "icon": "$(debug-pause)"
       },
       {
-        "command": "sessionsCommandsExplorer.continueSession",
+        "command": "ddbSessionsExplorer.continueSession",
         "title": "Continue Session",
         "icon": "$(debug-continue)"
       }
@@ -620,27 +633,41 @@
     "views": {
       "debug": [
         {
-          "id": "sessionsCommandsExplorer",
-          "name": "Sessions & Commands"
+          "id": "ddbSessionsExplorer",
+          "name": "Sessions"
+        },
+        {
+          "id": "ddbBreakpointsExplorer",
+          "name": "Breakpoints"
         }
       ]
     },
     "menus": {
       "view/title": [
         {
-          "command": "sessionsCommandsExplorer.refresh",
-          "when": "view == sessionsCommandsExplorer",
+          "command": "ddbSessionsExplorer.refresh",
+          "when": "view == ddbSessionsExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "ddbSessionsExplorer.toggleGrouping",
+          "when": "view == ddbSessionsExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "ddbBreakpointsExplorer.refresh",
+          "when": "view == ddbBreakpointsExplorer",
           "group": "navigation"
         }
       ],
       "view/item/context": [
         {
-          "command": "sessionsCommandsExplorer.pauseSession",
+          "command": "ddbSessionsExplorer.pauseSession",
           "when": "viewItem == sessionItem",
           "group": "inline"
         },
         {
-          "command": "sessionsCommandsExplorer.continueSession",
+          "command": "ddbSessionsExplorer.continueSession",
           "when": "viewItem == sessionItem",
           "group": "inline"
         }

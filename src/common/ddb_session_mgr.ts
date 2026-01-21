@@ -110,6 +110,7 @@ export class SessionManager {
   // ============================================================================
   private lastUpdateTime: number | null;
   private updateListeners: Set<() => void>;
+  private initialized: boolean;
 
   // ============================================================================
   // Auto-refresh & Debouncing
@@ -136,6 +137,7 @@ export class SessionManager {
     // Initialize metadata
     this.lastUpdateTime = null;
     this.updateListeners = new Set();
+    this.initialized = false;
 
     // Initialize auto-refresh & debouncing
     this.refreshInterval = null;
@@ -302,6 +304,7 @@ export class SessionManager {
 
       this.rebuildCache(sessions, groups);
       this.lastUpdateTime = Date.now();
+      this.initialized = true;
       this.notifyListeners();
     } catch (error) {
       console.error("Failed to update all data:", error);
@@ -317,6 +320,7 @@ export class SessionManager {
       const sessions = await getSessions();
       this.updateSessionCache(sessions);
       this.lastUpdateTime = Date.now();
+      this.initialized = true;
       this.notifyListeners();
     } catch (error) {
       console.error("Failed to update sessions:", error);
@@ -331,6 +335,7 @@ export class SessionManager {
       const groups = await getGroups();
       this.updateGroupCache(groups);
       this.lastUpdateTime = Date.now();
+      this.initialized = true;
       this.notifyListeners();
     } catch (error) {
       console.error("Failed to update groups:", error);
@@ -345,6 +350,7 @@ export class SessionManager {
       const group = await getGroup({ grp_id: groupId });
       this.updateSingleGroup(group);
       this.lastUpdateTime = Date.now();
+      this.initialized = true;
       this.notifyListeners();
     } catch (error) {
       console.error(`Failed to update group ${groupId}:`, error);
@@ -746,11 +752,11 @@ export class SessionManager {
   }
 
   /**
-   * Check if the SessionManager has been initialized and has data.
-   * @returns true if initialized with data, false otherwise
+   * Check if the SessionManager has been initialized (first fetch completed).
+   * @returns true if initialized (data has been fetched at least once), false otherwise
    */
   private isInitialized(): boolean {
-    return this.hasData();
+    return this.initialized;
   }
 
   /**
@@ -845,6 +851,7 @@ export class SessionManager {
     this.ungroupedSessions.clear();
     this.srcToGroups.clear();
     this.lastUpdateTime = null;
+    this.initialized = false;
     // Notify listeners so UI can update to empty state
     this.notifyListeners();
   }
