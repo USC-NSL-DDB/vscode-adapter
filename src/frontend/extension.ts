@@ -9,6 +9,7 @@ import { Breakpoint } from "vscode-debugadapter";
 import { DebugProtocol } from "vscode-debugprotocol";
 import { get } from "http";
 import { logger } from "../logger";
+import { integer } from "yaml-language-server";
 // class GDBDebugAdapterTracker implements vscode.DebugAdapterTracker {
 // 	private stateEmitter: vscode.EventEmitter<any>;
 
@@ -95,8 +96,36 @@ async function getAvailableSessions(): Promise<any[]> {
 // Define a custom QuickPickItem type that can hold our session data
 interface SessionQuickPickItem extends vscode.QuickPickItem {
 	sessionId?: string; // Make it optional for separators
-	groupId?: string; // Used to identify group headers
+	groupId?: number; // Used to identify group ids
+	groupHash?: string; // Used to identify group names
 }
+
+class LogicalGroup {
+	groupHash: string;
+	groupId: number;
+	
+	constructor(groupHash: string, groupId: number) {
+		this.groupHash = groupHash;
+		this.groupId = groupId;
+	}
+
+	get_grp_id(): number {
+		return this.groupId;
+	}
+	
+	get_grp_hash(): string {
+		return this.groupHash;
+	}
+	
+	get_grp_repr(): string {
+		if (this.groupId === -1) {
+			return "Ungrouped";
+		} else {
+			return `${this.groupHash} (id: ${this.groupId})`;
+		}
+	}
+}
+
 async function promptForSessions(): Promise<Array<{ sessionId: string }> | undefined> {
 	const sessions = await getAvailableSessions();
 
@@ -106,16 +135,29 @@ async function promptForSessions(): Promise<Array<{ sessionId: string }> | undef
 	}
 
 	// 1. Group sessions by their groupId
-	const groupedSessions: Map<string, any[]> = new Map();
+	const logicalGroups: Map<number, LogicalGroup> = new Map();
+	const groupedSessions: Map<number, any[]> = new Map();
 	const UNGROUPED_KEY = "Ungrouped";
 
 	for (const session of sessions) {
-		// Use 'group_id' from your Rust backend
-		const groupId = session.groupId || UNGROUPED_KEY;
-		if (!groupedSessions.has(groupId)) {
-			groupedSessions.set(groupId, []);
+		let groupHash: string;
+		let groupId: number;
+		if (session.group === undefined || session.group === null || (!session.group.valid)) {
+			groupHash = UNGROUPED_KEY;
+			groupId = -1;
+		} else {
+			const group = session.group;
+			groupHash = group.groupHash;
+			groupId = group.groupId;
 		}
-		groupedSessions.get(groupId)!.push(session);
+		const logicalGroup = new LogicalGroup(groupHash, groupId);
+		if (!logicalGroups.has(logicalGroup.get_grp_id())) {
+			logicalGroups.set(logicalGroup.get_grp_id(), logicalGroup);
+		}
+		if (!groupedSessions.has(logicalGroup.get_grp_id())) {
+			groupedSessions.set(logicalGroup.get_grp_id(), []);
+		}
+		groupedSessions.get(logicalGroup.get_grp_id())!.push(session);
 	}
 
 	// 2. Build the list for the Quick Pick UI, with group headers
@@ -130,7 +172,7 @@ async function promptForSessions(): Promise<Array<{ sessionId: string }> | undef
 
 		// Add a visually distinct HEADER item for the group
 		const headerItem: SessionQuickPickItem = {
-			label: `$(folder) ${groupId.toUpperCase()}`,
+			label: `$(folder) ${logicalGroups.get(groupId)!.get_grp_repr()}`,
 			description: `(${sessionGroup.length} sessions)`,
 			groupId: groupId // Mark this as a group header
 		};
@@ -215,6 +257,7 @@ async function promptForSessions(): Promise<Array<{ sessionId: string }> | undef
 		quickPick.show();
 	});
 }
+
 function convertToVSCodeBreakpoint(bp: any, source: any): vscode.Breakpoint {
 	const uri = vscode.Uri.parse(source.path);
 	const location = new vscode.Location(uri, new vscode.Position(bp.line - 1, bp.column ? bp.column - 1 : 0));
