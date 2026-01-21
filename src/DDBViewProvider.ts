@@ -25,6 +25,9 @@ class SessionsProvider
   private sessionManager: SessionManager;
   public isDebugSessionActive: boolean = false;
   private isGroupedMode: boolean = true; // Default to grouped mode
+  private treeView?: vscode.TreeView<
+    LogicalGroupItem | SessionItem | SessionItemDetail
+  >;
 
   constructor() {
     this.sessionManager = SessionManager.getInstance();
@@ -40,14 +43,45 @@ class SessionsProvider
     this.refresh();
   }
 
+  // Set TreeView reference to enable description updates
+  public setTreeView(
+    treeView: vscode.TreeView<
+      LogicalGroupItem | SessionItem | SessionItemDetail
+    >
+  ): void {
+    this.treeView = treeView;
+  }
+
+  // Update view description to show current mode
+  private updateViewDescription(): void {
+    if (this.treeView) {
+      const description = this.isGroupedMode ? "Grouped" : "Flatten";
+      this.treeView.description = description;
+    }
+  }
+
   // Toggle between grouped and flat mode
   public toggleGrouping(): void {
     this.isGroupedMode = !this.isGroupedMode;
+    this.updateViewDescription();
     this.refresh();
   }
 
   public getIsGroupedMode(): boolean {
     return this.isGroupedMode;
+  }
+
+  // Reset to grouped mode and update description
+  public resetToGroupedMode(): void {
+    this.isGroupedMode = true;
+    this.updateViewDescription();
+  }
+
+  // Clear view description
+  public clearViewDescription(): void {
+    if (this.treeView) {
+      this.treeView.description = undefined;
+    }
   }
 
   getTreeItem(
@@ -435,6 +469,9 @@ export function activate(
     treeDataProvider: sessionsProvider,
   });
 
+  // Set TreeView reference to enable description updates
+  sessionsProvider.setTreeView(sessionsTreeView);
+
   const breakpointsTreeView = vscode.window.createTreeView(
     "ddbBreakpointsExplorer",
     {
@@ -465,6 +502,9 @@ export function activate(
       sessionsProvider.isDebugSessionActive = true;
       breakpointsProvider.isDebugSessionActive = true;
 
+      // Reset to grouped mode and show description
+      sessionsProvider.resetToGroupedMode();
+
       // Start SessionManager auto-refresh
       sessionManager.startAutoRefresh();
 
@@ -483,6 +523,9 @@ export function activate(
       // Clear tree data in both providers
       sessionsProvider.clearSessionData();
       breakpointsProvider.clearSessionData();
+
+      // Clear view description when debug session ends
+      sessionsProvider.clearViewDescription();
     }
   );
 
