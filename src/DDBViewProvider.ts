@@ -289,7 +289,9 @@ export function activate(
           `Trying to pause session: ${sessionId}`
         );
         const debugSession = vscode.debug.activeDebugSession;
-        debugSession.customRequest("pause", { sessionId: sessionId });
+        if (debugSession) {
+          debugSession.customRequest("pause", { sessionId: sessionId });
+        }
       }
     )
   );
@@ -303,7 +305,9 @@ export function activate(
           `Trying to continue session: ${sessionId}`
         );
         const debugSession = vscode.debug.activeDebugSession;
-        debugSession.customRequest("continue", { sessionId: sessionId });
+        if (debugSession) {
+          debugSession.customRequest("continue", { sessionId: sessionId });
+        }
       }
     )
   );

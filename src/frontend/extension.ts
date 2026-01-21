@@ -332,6 +332,9 @@ async function handleSetBreakpoints(message: any) {
   const source = message.arguments.source;
   const breakpointsToRemove = [];
   console.log("debug1", breakpoints);
+  if (!breakpoints) {
+    return;
+  }
   for (const bp of breakpoints) {
     // Check if the breakpoint already has session IDs
     const bkptLinePathId = getBreakpointIdFromDAP(bp, source.path);
@@ -360,6 +363,9 @@ async function handleSetBreakpoints(message: any) {
   // Send the modified setBreakpoints request to the debug adapter
   // message.arguments.breakpoints = message.arguments.breakpoints.filter(bp => !breakpointsToRemove.includes(bp));
   const session = vscode.debug.activeDebugSession;
+  if (!session) {
+    return;
+  }
   const response: DebugProtocol.SetBreakpointsResponse =
     await session.customRequest("setSessionBreakpoints", message);
   console.log("debug5", JSON.stringify(response, null, 2));
@@ -371,7 +377,9 @@ async function handleSetBreakpoints(message: any) {
       //@ts-ignore
       const found = response.breakpoints.find(
         (bp: DebugProtocol.Breakpoint) =>
-          bp.line === bpLine && bpUri.endsWith(bp.source.path)
+          bp.line === bpLine &&
+          bp.source?.path &&
+          bpUri.endsWith(bp.source.path)
       );
       if (found) {
         vscodebp.sessionIds = found.sessionIds;
@@ -391,7 +399,8 @@ async function handleSetBreakpoints(message: any) {
 }
 
 class MyDebugAdapterTrackerFactory
-  implements vscode.DebugAdapterTrackerFactory {
+  implements vscode.DebugAdapterTrackerFactory
+{
   createDebugAdapterTracker(
     session: vscode.DebugSession
   ): vscode.ProviderResult<vscode.DebugAdapterTracker> {
@@ -485,8 +494,10 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
       const decoration = {
         range: range,
         hoverMessage: new vscode.MarkdownString(
-          `**Breakpoint Info**\n- Line: ${bp.location.range.start.line
-          }\n- Column: ${bp.location.range.start.character
+          `**Breakpoint Info**\n- Line: ${
+            bp.location.range.start.line
+          }\n- Column: ${
+            bp.location.range.start.character
           }\n- Session IDs: ${bp.sessionIds?.join(", ")}`
         ),
         renderOptions: {

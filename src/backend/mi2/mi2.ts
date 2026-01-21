@@ -71,7 +71,7 @@ class LogMessage {
         parsed.outOfBandRecord[0].output[0][1] == "breakpoint-hit" &&
         parsed.outOfBandRecord[0].output[2][1] == brk.id
       ) {
-        this.logMsgVar = brk?.logMessage;
+        this.logMsgVar = brk?.logMessage ?? "";
         const matches = this.logMsgVar.match(this.logReplaceTest);
         const count = matches ? matches.length : 0;
         this.logMsgRplNum = count;
@@ -99,7 +99,8 @@ export class MI2 extends EventEmitter implements IBackend {
       const env: { [key: string]: string } = {};
       // Duplicate process.env so we don't override it
       for (const key in process.env)
-        if (process.env.hasOwnProperty(key)) env[key] = process.env[key];
+        if (process.env.hasOwnProperty(key) && process.env[key] !== undefined)
+          env[key] = process.env[key];
 
       // Overwrite with user specified variables
       for (const key in procEnv) {
@@ -132,9 +133,11 @@ export class MI2 extends EventEmitter implements IBackend {
         args
         // { cwd: cwd, env: this.procEnv }
       );
-      setInterval(() => this.process.stdin.write("\n"), 2000);
-      this.process.stdout.on("data", this.stdout.bind(this));
-      this.process.stderr.on("data", this.stderr.bind(this));
+      if (this.process.stdin) {
+        setInterval(() => this.process.stdin!.write("\n"), 2000);
+      }
+      this.process.stdout?.on("data", this.stdout.bind(this));
+      this.process.stderr?.on("data", this.stderr.bind(this));
       this.process.on("exit", (code) => {
         if (code !== 0) {
           this.emit(
@@ -248,8 +251,8 @@ export class MI2 extends EventEmitter implements IBackend {
         cwd: cwd,
         env: this.procEnv,
       });
-      this.process.stdout.on("data", this.stdout.bind(this));
-      this.process.stderr.on("data", this.stderr.bind(this));
+      this.process.stdout?.on("data", this.stdout.bind(this));
+      this.process.stderr?.on("data", this.stderr.bind(this));
       this.process.on("exit", () => this.emit("quit"));
       this.process.on("error", (err) => this.emit("launcherror", err));
       const promises = this.initCommands(target, cwd, true);
@@ -297,8 +300,8 @@ export class MI2 extends EventEmitter implements IBackend {
         cwd: cwd,
         env: this.procEnv,
       });
-      this.process.stdout.on("data", this.stdout.bind(this));
-      this.process.stderr.on("data", this.stderr.bind(this));
+      this.process.stdout?.on("data", this.stdout.bind(this));
+      this.process.stderr?.on("data", this.stderr.bind(this));
       this.process.on("exit", () => this.emit("quit"));
       this.process.on("error", (err) => this.emit("launcherror", err));
       const promises = this.initCommands(target, cwd, true);
@@ -315,7 +318,7 @@ export class MI2 extends EventEmitter implements IBackend {
     });
   }
 
-  stdout(data) {
+  stdout(data: any) {
     if (typeof data == "string") this.buffer += data;
     else this.buffer += data.toString("utf8");
     const end = this.buffer.lastIndexOf("\n");
@@ -354,7 +357,7 @@ export class MI2 extends EventEmitter implements IBackend {
     }
     return false;
   }
-  extractMIOutput(input) {
+  extractMIOutput(input: any) {
     const pattern = /\[ TOOL MI OUTPUT \] \\n(.*)\\n/s;
     const match = input.match(pattern);
 
@@ -503,7 +506,7 @@ export class MI2 extends EventEmitter implements IBackend {
     return new Promise((resolve, reject) => {
       this.log("console", "Running executable");
       this.sendCommand(startCommand).then((info) => {
-        if (info.resultRecords.resultClass == "running") resolve(undefined);
+        if (info.resultRecords.resultClass == "running") resolve(true);
         else reject();
       }, reject);
     });
@@ -534,12 +537,14 @@ export class MI2 extends EventEmitter implements IBackend {
 
   detach() {
     const proc = this.process;
-    const to = setTimeout(() => {
-      process.kill(-proc.pid);
-    }, 1000);
-    this.process.on("exit", function (code) {
-      clearTimeout(to);
-    });
+    if (proc.pid) {
+      const to = setTimeout(() => {
+        process.kill(-proc.pid!);
+      }, 1000);
+      this.process.on("exit", function (code) {
+        clearTimeout(to);
+      });
+    }
     this.sendRaw("-target-detach");
   }
 
@@ -674,7 +679,7 @@ export class MI2 extends EventEmitter implements IBackend {
     sessionId: string
   ): Thenable<any> {
     const regex = /{([a-z0-9A-Z-_\.\>\&\*\[\]]*)}/gm;
-    let m: RegExpExecArray;
+    let m: RegExpExecArray | null;
     let commands: string = "";
 
     while ((m = regex.exec(command))) {
@@ -805,15 +810,17 @@ export class MI2 extends EventEmitter implements IBackend {
 
     if (breakpoint.raw) {
       location += '"' + escape(breakpoint.raw) + '"';
-    } else {
+    } else if (breakpoint.file) {
       location += '"' + escape(breakpoint.file) + ":" + breakpoint.line + '"';
+    } else {
+      return true; // Cannot set breakpoint without file or raw location
     }
 
     // Map each location to a promise that sets the breakpoint
-    const sessionId = breakpoint.sessionId;
+    const sessionId = breakpoint.sessionId ?? "";
     const bkptPathLineId = this.generateBreakpointId(
-      breakpoint.file,
-      breakpoint.line
+      breakpoint.file ?? "",
+      breakpoint.line ?? 0
     );
     if (this.breakpoints.get(bkptPathLineId)?.has(sessionId)) {
       return true;
@@ -866,7 +873,10 @@ export class MI2 extends EventEmitter implements IBackend {
           }
         }
 
-        this.breakpoints.get(bkptPathLineId).set(sessionId, newBrk);
+        const bkptMap = this.breakpoints.get(bkptPathLineId);
+        if (bkptMap) {
+          bkptMap.set(sessionId, newBrk);
+        }
         return true;
       } else {
         throw new Error(
@@ -913,22 +923,26 @@ export class MI2 extends EventEmitter implements IBackend {
 
     if (breakpoint.raw) {
       location += '"' + escape(breakpoint.raw) + '"';
-    } else {
+    } else if (breakpoint.file) {
       location += '"' + escape(breakpoint.file) + ":" + breakpoint.line + '"';
+    } else {
+      throw new Error("Breakpoint must have either raw or file location");
     }
 
     // Map each location to a promise that sets the breakpoint
-    const promises = breakpoint.sessionIds.map((sessionId) => {
+    const sessionIds = breakpoint.sessionIds ?? [];
+    const promises = sessionIds.map((sessionId) => {
       return async () => {
         const bkptPathLineId = this.generateBreakpointId(
-          breakpoint.file,
-          breakpoint.line
+          breakpoint.file ?? "",
+          breakpoint.line ?? 0
         );
         if (this.breakpoints.get(bkptPathLineId)?.has(sessionId)) {
+          const bkptMap = this.breakpoints.get(bkptPathLineId);
           return {
             success: true,
             sessionId,
-            newBrk: this.breakpoints.get(bkptPathLineId).get(sessionId),
+            newBrk: bkptMap?.get(sessionId),
           };
         }
         try {
@@ -950,7 +964,7 @@ export class MI2 extends EventEmitter implements IBackend {
               sessionId: sessionId,
             };
             if (!this.breakpoints.has(bkptPathLineId)) {
-              this.breakpoints.set(newBrk.file, new Map());
+              this.breakpoints.set(bkptPathLineId, new Map());
             }
 
             // Handle condition
@@ -981,7 +995,10 @@ export class MI2 extends EventEmitter implements IBackend {
               }
             }
 
-            this.breakpoints.get(bkptPathLineId).set(sessionId, newBrk);
+            const bkptMap = this.breakpoints.get(bkptPathLineId);
+            if (bkptMap) {
+              bkptMap.set(sessionId, newBrk);
+            }
             return { success: true, sessionId, newBrk };
           } else {
             throw new Error(
@@ -989,7 +1006,9 @@ export class MI2 extends EventEmitter implements IBackend {
             );
           }
         } catch (error) {
-          return { success: false, sessionId, error: error.message };
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          return { success: false, sessionId, error: errorMessage };
         }
       };
     });
@@ -1009,24 +1028,35 @@ export class MI2 extends EventEmitter implements IBackend {
 
     if (
       !this.breakpoints.has(
-        this.generateBreakpointId(breakpoint.file, breakpoint.line)
+        this.generateBreakpointId(breakpoint.file ?? "", breakpoint.line ?? 0)
       )
     ) {
       return false;
     }
     return this.sendCommand(
-      "break-delete " + breakpoint.id + " --session " + breakpoint.sessionId
+      "break-delete " +
+        breakpoint.id +
+        " --session " +
+        (breakpoint.sessionId ?? "")
     ).then((result) => {
       if (result.resultRecords.resultClass === "done") {
         this.breakpoints
-          .get(this.generateBreakpointId(breakpoint.file, breakpoint.line))
-          ?.delete(breakpoint.sessionId);
+          .get(
+            this.generateBreakpointId(
+              breakpoint.file ?? "",
+              breakpoint.line ?? 0
+            )
+          )
+          ?.delete(breakpoint.sessionId ?? "");
         const bkpts = this.breakpoints.get(
-          this.generateBreakpointId(breakpoint.file, breakpoint.line)
+          this.generateBreakpointId(breakpoint.file ?? "", breakpoint.line ?? 0)
         );
         if (bkpts && bkpts.size === 0) {
           this.breakpoints.delete(
-            this.generateBreakpointId(breakpoint.file, breakpoint.line)
+            this.generateBreakpointId(
+              breakpoint.file ?? "",
+              breakpoint.line ?? 0
+            )
           );
         }
         return true;
@@ -1040,32 +1070,40 @@ export class MI2 extends EventEmitter implements IBackend {
       this.log("stderr", "removeBreakPoint");
     }
 
-    const promises = [];
+    const promises: Promise<boolean>[] = [];
     if (
       !this.breakpoints.has(
-        this.generateBreakpointId(breakpoint.file, breakpoint.line)
+        this.generateBreakpointId(breakpoint.file ?? "", breakpoint.line ?? 0)
       )
     ) {
       return false;
     }
-    this.breakpoints
-      .get(this.generateBreakpointId(breakpoint.file, breakpoint.line))
-      .forEach((bkpt, _) => {
+    const bkptMap = this.breakpoints.get(
+      this.generateBreakpointId(breakpoint.file ?? "", breakpoint.line ?? 0)
+    );
+    if (bkptMap) {
+      bkptMap.forEach((bkpt, _) => {
         promises.push(
-          this.sendCommand(
-            "break-delete " + bkpt.id + " --session " + bkpt.sessionId
-          ).then((result) => {
-            if (result.resultRecords.resultClass === "done") {
-              this.breakpoints.delete(
-                this.generateBreakpointId(breakpoint.file, breakpoint.line)
-              );
-              return true;
-            } else {
-              return false;
-            }
-          })
+          Promise.resolve(
+            this.sendCommand(
+              "break-delete " + bkpt.id + " --session " + (bkpt.sessionId ?? "")
+            ).then((result) => {
+              if (result.resultRecords.resultClass === "done") {
+                this.breakpoints.delete(
+                  this.generateBreakpointId(
+                    breakpoint.file ?? "",
+                    breakpoint.line ?? 0
+                  )
+                );
+                return true;
+              } else {
+                return false;
+              }
+            })
+          )
         );
       });
+    }
     const results = await Promise.all(promises);
     return results.some((result) => result === true);
   }
@@ -1080,21 +1118,26 @@ export class MI2 extends EventEmitter implements IBackend {
   }
   clearBreakPoints(source?: string): Thenable<any> {
     if (trace) this.log("stderr", "clearBreakPoints");
-    const promises = [];
+    const promises: Promise<boolean>[] = [];
     this.breakpoints.forEach((bkpts, pathId) => {
-      if (pathId.startsWith(source)) {
+      if (source && pathId.startsWith(source)) {
         bkpts.forEach((bkpt, _) => {
           promises.push(
-            this.sendCommand(
-              "break-delete " + bkpt.id + " --session " + bkpt.sessionId
-            ).then((result) => {
-              if (result.resultRecords.resultClass == "done") {
-                this.breakpoints.delete(pathId);
-                return true;
-              } else {
-                return false;
-              }
-            })
+            Promise.resolve(
+              this.sendCommand(
+                "break-delete " +
+                  bkpt.id +
+                  " --session " +
+                  (bkpt.sessionId ?? "")
+              ).then((result) => {
+                if (result.resultRecords.resultClass == "done") {
+                  this.breakpoints.delete(pathId);
+                  return true;
+                } else {
+                  return false;
+                }
+              })
+            )
           );
         });
       }
@@ -1393,7 +1436,7 @@ export class MI2 extends EventEmitter implements IBackend {
   sendRaw(raw: string) {
     if (this.printCalls) this.log("log", raw);
     if (this.isSSH) this.stream.write(raw + "\n");
-    else this.process.stdin.write(raw + "\n");
+    else if (this.process.stdin) this.process.stdin.write(raw + "\n");
   }
 
   sendCliCommand(
@@ -1445,21 +1488,21 @@ export class MI2 extends EventEmitter implements IBackend {
 
   prettyPrint: boolean = true;
   frameFilters: boolean = true;
-  printCalls: boolean;
-  debugOutput: boolean;
-  features: string[];
+  printCalls: boolean = false;
+  debugOutput: boolean = false;
+  features: string[] = [];
   public procEnv: any;
-  protected isSSH: boolean;
-  protected sshReady: boolean;
+  protected isSSH: boolean = false;
+  protected sshReady: boolean = false;
   protected currentToken: number = 1;
   protected handlers: { [index: number]: (info: MINode) => any } = {};
   // path+line ->single breakpoints
   public breakpoints: Map<string, Map<string, SingleBreakpoint>> = new Map();
-  protected buffer: string;
-  protected errbuf: string;
-  protected process: ChildProcess.ChildProcess;
-  protected stream;
-  protected sshConn;
+  protected buffer: string = "";
+  protected errbuf: string = "";
+  protected process!: ChildProcess.ChildProcess;
+  protected stream: any;
+  protected sshConn: any;
   protected vscodeFrameToDDBFrame: ThreadFrameMapper;
 }
 type ThreadFrameKey = {
