@@ -8,6 +8,7 @@ import { Breakpoint } from "vscode-debugadapter";
 import { DebugProtocol } from "vscode-debugprotocol";
 import { get } from "http";
 import { logger } from "../logger";
+import { SessionManager } from "../common/ddb_session_mgr";
 import { integer } from "yaml-language-server";
 import * as ddb_api from "../common/ddb_api";
 // class GDBDebugAdapterTracker implements vscode.DebugAdapterTracker {
@@ -76,7 +77,8 @@ function associateBreakpointWithSessions(
 
 async function getAvailableSessions(): Promise<ddb_api.Session[]> {
   try {
-    return await ddb_api.getSessions();
+    // Fetch latest session information (updates cache and returns fresh data)
+    return await SessionManager.getInstance().fetchAllSessions();
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     vscode.window.showErrorMessage("Failed to fetch sessions");

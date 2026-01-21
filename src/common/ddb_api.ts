@@ -1,7 +1,15 @@
 import axios from "axios";
-import * as vscode from "vscode";
 
 const apiBaseUrl = process.env.DDB_API_URL || "http://localhost:5000";
+
+// Conditionally import vscode - only available in extension host
+let vscode: any;
+try {
+  vscode = require("vscode");
+} catch (e) {
+  // vscode module not available (running in debug adapter process)
+  vscode = null;
+}
 
 enum Endpoint {
   GetSessions = "/sessions",
@@ -73,9 +81,14 @@ export async function waitForServiceReady(
   intervalMs?: number
 ): Promise<void> {
   // Read from VSCode settings or use defaults
-  const config = vscode.workspace.getConfiguration("ddb");
-  const attempts = maxAttempts ?? config.get<number>("pollMaxAttempts", 30);
-  const interval = intervalMs ?? config.get<number>("pollIntervalMs", 1000);
+  let attempts = maxAttempts ?? 30;
+  let interval = intervalMs ?? 1000;
+  
+  if (vscode) {
+    const config = vscode.workspace.getConfiguration("ddb");
+    attempts = maxAttempts ?? config.get("pollMaxAttempts", 30);
+    interval = intervalMs ?? config.get("pollIntervalMs", 1000);
+  }
 
   let currentAttempt = 0;
 

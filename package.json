@@ -47,6 +47,13 @@
           "description": "Interval in milliseconds between DDB service polling attempts",
           "minimum": 100,
           "maximum": 10000
+        },
+        "ddb.sessionManager.autoRefreshMs": {
+          "type": "number",
+          "default": 15000,
+          "description": "Auto-refresh interval for session manager data during active debug session (milliseconds)",
+          "minimum": 1000,
+          "maximum": 300000
         }
       }
     },

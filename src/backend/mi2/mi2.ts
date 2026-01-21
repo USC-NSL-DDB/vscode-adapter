@@ -371,14 +371,18 @@ export class MI2 extends EventEmitter implements IBackend {
     const lines = str.split("\n");
     let miOutputStarted = false;
     lines.forEach((line) => {
-      // console.log("raw Line:", line);
-      // if (couldBeOutput(line)) {
-      // 	// if (!gdbMatch.exec(line))
-      // 	// 	this.log("stdout", line);
-      // } else {
-      // if (line.trim() == "(ddb)") {
-      // 	miOutputStarted = true;
-      // } else if (miOutputStarted) {
+      if (line.trim().length === 0) return;
+      if (line.trim() === "(ddb)") return;
+
+      // Skip non-MI output (plain text from GDB)
+      // couldBeOutput() returns true for lines that are NOT valid MI output
+      if (couldBeOutput(line)) {
+        if (trace) {
+          this.log("stderr", `Skipping non-MI output: ${line}`);
+        }
+        return;
+      }
+
       console.log("parsing line:", ` ${line}`);
       const parsed = parseMI(line);
       if (this.debugOutput)
@@ -487,15 +491,23 @@ export class MI2 extends EventEmitter implements IBackend {
         });
         handled = true;
       }
+
       if (
         parsed.token == undefined &&
         parsed.resultRecords == undefined &&
         parsed.outOfBandRecord.length == 0
-      )
+      ) {
         handled = true;
-      if (!handled) this.log("log", "Unhandled: " + JSON.stringify(parsed));
+      }
+
+      if (!handled) {
+        this.log(
+          "log",
+          "Unhandled: " + JSON.stringify(parsed) + "; raw: " + line
+        );
+      }
+
       miOutputStarted = false;
-      // }
     });
   }
 

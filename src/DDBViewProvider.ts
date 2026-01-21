@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { Breakpoint } from "vscode-debugadapter";
 import { logger } from "./logger";
 import * as ddb_api from "./common/ddb_api";
+import { SessionManager } from "./common/ddb_session_mgr";
 
 class SessionsCommandsProvider
   implements
@@ -18,10 +19,21 @@ class SessionsCommandsProvider
     SessionItem | CommandItem | undefined | null | void
   > = this._onDidChangeTreeData.event;
 
-  constructor(private breakpointSessionsMap: Map<string, string[]>) {}
+  private sessionManager: SessionManager;
+  public isDebugSessionActive: boolean = false;
+
+  constructor(private breakpointSessionsMap: Map<string, string[]>) {
+    this.sessionManager = SessionManager.getInstance();
+  }
 
   refresh(): void {
     this._onDidChangeTreeData.fire();
+  }
+
+  clearSessionData(): void {
+    this.isDebugSessionActive = false;
+    this.sessionManager.clearCache();
+    this.refresh();
   }
 
   getTreeItem(
@@ -36,6 +48,17 @@ class SessionsCommandsProvider
     (SessionItem | SessionItemDetail | CommandItem | BreakPointItem)[]
   > {
     if (!element) {
+      // Root level: Show empty state message if no debug session active
+      if (!this.isDebugSessionActive) {
+        return [
+          new SessionItem(
+            "Start DDB to view sessions",
+            vscode.TreeItemCollapsibleState.None,
+            false
+          ),
+        ];
+      }
+
       // Root level: Sessions, Pending Commands, Finished Commands
       return [
         new SessionItem(
@@ -114,9 +137,15 @@ class SessionsCommandsProvider
     });
     return breakpointSessions;
   }
-  private async getSessions(): Promise<SessionItem[]> {
+  private getSessions(): SessionItem[] {
     try {
-      const sessions = await ddb_api.getSessions();
+      // Return empty if no debug session
+      if (!this.isDebugSessionActive) {
+        return [];
+      }
+
+      // Use SessionManager cache instead of direct API call
+      const sessions = this.sessionManager.getAllSessions();
 
       // Return sessions with collapsible state to make them expandable
       return sessions.map((session) => {
@@ -137,8 +166,8 @@ class SessionsCommandsProvider
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      vscode.window.showErrorMessage("Failed to fetch sessions");
-      logger.error(`Failed to fetch sessions: ${errorMessage}`);
+      vscode.window.showErrorMessage("Failed to fetch sessions from cache");
+      logger.error(`Failed to fetch sessions from cache: ${errorMessage}`);
       return [];
     }
   }
@@ -235,7 +264,6 @@ class BreakPointItem extends vscode.TreeItem {
   }
 }
 
-let periodicRefreshIntervalId: NodeJS.Timeout | undefined;
 export function activate(
   context: vscode.ExtensionContext,
   breakpointSessionsMap: Map<string, string[]>
@@ -243,43 +271,90 @@ export function activate(
   const sessionsCommandsProvider = new SessionsCommandsProvider(
     breakpointSessionsMap
   );
-  // vscode.window.registerTreeDataProvider('sessionsCommandsExplorer', sessionsCommandsProvider);
+
   const treeView = vscode.window.createTreeView("sessionsCommandsExplorer", {
     treeDataProvider: sessionsCommandsProvider,
   });
 
-  context.subscriptions.push(treeView); // Add TreeView to subscriptions
+  context.subscriptions.push(treeView);
 
-  const visibilityListener = treeView.onDidChangeVisibility((e) => {
-    sessionsCommandsProvider.refresh();
+  // Get SessionManager instance (but don't start auto-refresh yet)
+  const sessionManager = SessionManager.getInstance();
+
+  // Subscribe to SessionManager updates for automatic tree refresh
+  const sessionManagerUnsubscribe = sessionManager.onDataUpdated(() => {
+    // Only refresh if tree is visible and debug session is active
+    if (treeView.visible && sessionsCommandsProvider.isDebugSessionActive) {
+      sessionsCommandsProvider.refresh();
+    }
   });
-  sessionsCommandsProvider.refresh();
-  context.subscriptions.push(visibilityListener); // Add listener disposable to subscriptions
-  const refreshIntervalMs = 1000;
+
+  context.subscriptions.push({ dispose: sessionManagerUnsubscribe });
+
+  // Debug session START listener
   const debugStartListener = vscode.debug.onDidStartDebugSession(
-    (debugSession) => {
-      periodicRefreshIntervalId = setInterval(() => {
-        if (treeView.visible) {
-          sessionsCommandsProvider.refresh();
-        }
-      }, refreshIntervalMs);
+    async (debugSession) => {
+      // Mark debug session as active
+      sessionsCommandsProvider.isDebugSessionActive = true;
+
+      // Start SessionManager auto-refresh
+      sessionManager.startAutoRefresh();
+
+      // Trigger immediate update
+      await sessionManager.updateSessions();
+
+      // Refresh tree to show data
       sessionsCommandsProvider.refresh();
     }
   );
 
+  // Debug session STOP listener
   const debugStopListener = vscode.debug.onDidTerminateDebugSession(
     (debugSession) => {
-      clearInterval(periodicRefreshIntervalId);
+      // Stop SessionManager auto-refresh
+      sessionManager.stopAutoRefresh();
+
+      // Clear tree data
+      sessionsCommandsProvider.clearSessionData();
     }
   );
-  // Add the listener disposable to subscriptions for cleanup
+
   context.subscriptions.push(debugStartListener);
   context.subscriptions.push(debugStopListener);
+
+  // Visibility listener
+  const visibilityListener = treeView.onDidChangeVisibility((e) => {
+    if (e.visible && sessionsCommandsProvider.isDebugSessionActive) {
+      // Refresh tree when becoming visible during active debug session
+      sessionsCommandsProvider.refresh();
+    }
+  });
+
+  context.subscriptions.push(visibilityListener);
+
+  // Initial refresh
+  sessionsCommandsProvider.refresh();
+
+  // Manual refresh command - only works during active debug session
   const refreshCommand = vscode.commands.registerCommand(
     "sessionsCommandsExplorer.refresh",
-    () => sessionsCommandsProvider.refresh()
+    async () => {
+      if (!sessionsCommandsProvider.isDebugSessionActive) {
+        vscode.window.showInformationMessage(
+          "Cannot refresh: No active debug session"
+        );
+        return;
+      }
+
+      // Fetch fresh sessions using new API (updates cache and returns fresh data)
+      await sessionManager.fetchAllSessions();
+      // Tree will auto-refresh via event listener
+    }
   );
 
+  context.subscriptions.push(refreshCommand);
+
+  // Pause session command
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "sessionsCommandsExplorer.pauseSession",
@@ -296,6 +371,7 @@ export function activate(
     )
   );
 
+  // Continue session command
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "sessionsCommandsExplorer.continueSession",
@@ -311,7 +387,9 @@ export function activate(
       }
     )
   );
-  context.subscriptions.push(refreshCommand);
 }
 
-export function deactivate() {}
+export function deactivate() {
+  // Stop SessionManager auto-refresh when extension deactivates
+  SessionManager.getInstance().stopAutoRefresh();
+}
