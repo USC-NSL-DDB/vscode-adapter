@@ -61,10 +61,7 @@
       {
         "command": "ddbSessionsExplorer.refresh",
         "title": "Refresh Sessions",
-        "icon": {
-          "light": "images/refresh-svgrepo-com.svg",
-          "dark": "images/refresh-svgrepo-com.svg"
-        }
+        "icon": "$(refresh)"
       },
       {
         "command": "ddbSessionsExplorer.toggleGrouping",
@@ -74,10 +71,7 @@
       {
         "command": "ddbBreakpointsExplorer.refresh",
         "title": "Refresh Breakpoints",
-        "icon": {
-          "light": "images/refresh-svgrepo-com.svg",
-          "dark": "images/refresh-svgrepo-com.svg"
-        }
+        "icon": "$(refresh)"
       },
       {
         "command": "extension.showInfo",
@@ -634,11 +628,11 @@
       "debug": [
         {
           "id": "ddbSessionsExplorer",
-          "name": "Sessions"
+          "name": "DDB Sessions"
         },
         {
           "id": "ddbBreakpointsExplorer",
-          "name": "Breakpoints"
+          "name": "DDB Breakpoints"
         }
       ]
     },
