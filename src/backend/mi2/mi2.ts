@@ -8,7 +8,6 @@ import {
   RegisterValue,
   VariableObject,
   MIError,
-  SingleBreakpoint,
 } from "../backend";
 import * as ChildProcess from "child_process";
 import { EventEmitter } from "events";
@@ -674,22 +673,12 @@ export class MI2 extends EventEmitter implements IBackend {
     return Promise.all(promisses);
   }
 
-  setBreakPointCondition(
-    bkptNum: number,
-    condition: string,
-    sessionId: string
-  ): Thenable<any> {
+  setBreakPointCondition(bkptNum: number, condition: string): Thenable<any> {
     if (trace) this.log("stderr", "setBreakPointCondition");
-    return this.sendCommand(
-      "break-condition " + bkptNum + " " + condition + " --session " + sessionId
-    );
+    return this.sendCommand("break-condition " + bkptNum + " " + condition);
   }
 
-  setLogPoint(
-    bkptNum: number,
-    command: string,
-    sessionId: string
-  ): Thenable<any> {
+  setLogPoint(bkptNum: number, command: string): Thenable<any> {
     const regex = /{([a-z0-9A-Z-_\.\>\&\*\[\]]*)}/gm;
     let m: RegExpExecArray | null;
     let commands: string = "";
@@ -702,9 +691,7 @@ export class MI2 extends EventEmitter implements IBackend {
         commands += `\"print ${m[1]}\" `;
       }
     }
-    return this.sendCommand(
-      "break-commands " + bkptNum + " " + commands + " --session " + sessionId
-    );
+    return this.sendCommand("break-commands " + bkptNum + " " + commands);
   }
 
   setEntryBreakPoint(entryPoint: string): Thenable<any> {
@@ -786,119 +773,20 @@ export class MI2 extends EventEmitter implements IBackend {
   // 	});
   // }
 
-  async addSingleBreakPoint(breakpoint: SingleBreakpoint): Promise<Boolean> {
-    if (trace) this.log("stderr", "addSingleBreakPoint");
-
-    let location = "";
-    if (breakpoint.countCondition) {
-      if (breakpoint.countCondition[0] === ">") {
-        const count = numRegex.exec(
-          breakpoint.countCondition.substring(1)
-        )?.[0];
-        if (count) {
-          location += "-i " + count + " ";
-        } else {
-          this.log("stderr", "Invalid count condition format.");
-        }
-      } else {
-        const match = numRegex.exec(breakpoint.countCondition)?.[0];
-        if (match) {
-          if (match.length !== breakpoint.countCondition.length) {
-            this.log(
-              "stderr",
-              "Unsupported break count expression: '" +
-                breakpoint.countCondition +
-                "'. Only supports 'X' for breaking once after X times or '>X' for ignoring the first X breaks"
-            );
-            location += "-t ";
-          } else if (parseInt(match, 10) !== 0) {
-            location += "-t -i " + parseInt(match, 10) + " ";
-          }
-        } else {
-          this.log("stderr", "Invalid count condition format.");
-        }
-      }
+  private buildMultipleTargets(
+    groupIds: number[],
+    sessionIds: number[]
+  ): string {
+    const targets: string[] = [];
+    for (const gid of groupIds) {
+      targets.push(`g${gid}`);
     }
-
-    if (breakpoint.raw) {
-      location += '"' + escape(breakpoint.raw) + '"';
-    } else if (breakpoint.file) {
-      location += '"' + escape(breakpoint.file) + ":" + breakpoint.line + '"';
-    } else {
-      return true; // Cannot set breakpoint without file or raw location
+    for (const sid of sessionIds) {
+      targets.push(`s${sid}`);
     }
-
-    // Map each location to a promise that sets the breakpoint
-    const sessionId = breakpoint.sessionId ?? "";
-    const bkptPathLineId = this.generateBreakpointId(
-      breakpoint.file ?? "",
-      breakpoint.line ?? 0
-    );
-    if (this.breakpoints.get(bkptPathLineId)?.has(sessionId)) {
-      return true;
-    }
-    try {
-      const result = await this.sendCommand(
-        "break-insert -f " + location + " --session " + sessionId
-      );
-      if (result.resultRecords.resultClass === "done") {
-        const bkptNum = parseInt(result.result("bkpt.number"), 10);
-        const newBrk: SingleBreakpoint = {
-          id: bkptNum,
-          file: breakpoint.file ? breakpoint.file : result.result("bkpt.file"),
-          raw: breakpoint.raw,
-          line: breakpoint.line,
-          condition: breakpoint.condition,
-          logMessage: breakpoint.logMessage,
-          verified: true,
-          sessionId: sessionId,
-        };
-        if (!this.breakpoints.has(bkptPathLineId)) {
-          this.breakpoints.set(bkptPathLineId, new Map());
-        }
-
-        // Handle condition
-        if (breakpoint.condition) {
-          const condResult = await this.setBreakPointCondition(
-            bkptNum,
-            breakpoint.condition,
-            sessionId
-          );
-          if (condResult.resultRecords.resultClass !== "done") {
-            throw new Error(
-              `Failed to set condition for breakpoint ${bkptNum}`
-            );
-          }
-        }
-
-        // Handle log message
-        if (breakpoint.logMessage) {
-          const logResult = await this.setLogPoint(
-            bkptNum,
-            breakpoint.logMessage,
-            sessionId
-          );
-          if (logResult.resultRecords.resultClass !== "done") {
-            throw new Error(
-              `Failed to set log message for breakpoint ${bkptNum}`
-            );
-          }
-        }
-
-        const bkptMap = this.breakpoints.get(bkptPathLineId);
-        if (bkptMap) {
-          bkptMap.set(sessionId, newBrk);
-        }
-        return true;
-      } else {
-        throw new Error(
-          `Failed to insert breakpoint for location: ${location} and session: ${sessionId}`
-        );
-      }
-    } catch (error) {
-      return false;
-    }
+    return targets.join(",");
   }
+
   async addBreakPoint(breakpoint: Breakpoint): Promise<Breakpoint> {
     if (trace) this.log("stderr", "addBreakPoint");
 
@@ -941,183 +829,119 @@ export class MI2 extends EventEmitter implements IBackend {
       throw new Error("Breakpoint must have either raw or file location");
     }
 
-    // Map each location to a promise that sets the breakpoint
-    const sessionIds = breakpoint.sessionIds ?? [];
-    const promises = sessionIds.map((sessionId) => {
-      return async () => {
-        const bkptPathLineId = this.generateBreakpointId(
-          breakpoint.file ?? "",
-          breakpoint.line ?? 0
-        );
-        if (this.breakpoints.get(bkptPathLineId)?.has(sessionId)) {
-          const bkptMap = this.breakpoints.get(bkptPathLineId);
-          return {
-            success: true,
-            sessionId,
-            newBrk: bkptMap?.get(sessionId),
-          };
-        }
-        try {
-          const result = await this.sendCommand(
-            "break-insert -f " + location + " --session " + sessionId
+    // Build --multiple argument from groupIds and sessionIds
+    const multipleTargets = this.buildMultipleTargets(
+      breakpoint.groupIds ?? [],
+      breakpoint.sessionIds ?? []
+    );
+
+    const bkptPathLineId = this.generateBreakpointId(
+      breakpoint.file ?? "",
+      breakpoint.line ?? 0
+    );
+
+    // Check if breakpoint already exists at this location
+    if (this.breakpoints.has(bkptPathLineId)) {
+      return this.breakpoints.get(bkptPathLineId)!;
+    }
+
+    try {
+      // Send single unified command with --multiple flag
+      const command = multipleTargets
+        ? `break-insert --multiple ${multipleTargets} -f ${location}`
+        : `break-insert -f ${location}`;
+
+      const result = await this.sendCommand(command);
+
+      if (result.resultRecords.resultClass === "done") {
+        const bkptNum = parseInt(result.result("bkpt.number"), 10);
+
+        const newBreakpoint: Breakpoint = {
+          id: bkptNum,
+          file: breakpoint.file ?? result.result("bkpt.file"),
+          raw: breakpoint.raw,
+          line: breakpoint.line ?? parseInt(result.result("bkpt.line"), 10),
+          condition: breakpoint.condition,
+          countCondition: breakpoint.countCondition,
+          logMessage: breakpoint.logMessage,
+          groupIds: breakpoint.groupIds,
+          sessionIds: breakpoint.sessionIds,
+          verified: true,
+        };
+
+        // Handle condition (no session targeting needed - uses breakpoint ID only)
+        if (breakpoint.condition) {
+          const condResult = await this.setBreakPointCondition(
+            bkptNum,
+            breakpoint.condition
           );
-          if (result.resultRecords.resultClass === "done") {
-            const bkptNum = parseInt(result.result("bkpt.number"), 10);
-            const newBrk: SingleBreakpoint = {
-              id: bkptNum,
-              file: breakpoint.file
-                ? breakpoint.file
-                : result.result("bkpt.file"),
-              raw: breakpoint.raw,
-              line: parseInt(result.result("bkpt.line"), 10),
-              condition: breakpoint.condition,
-              logMessage: breakpoint.logMessage,
-              verified: true,
-              sessionId: sessionId,
-            };
-            if (!this.breakpoints.has(bkptPathLineId)) {
-              this.breakpoints.set(bkptPathLineId, new Map());
-            }
-
-            // Handle condition
-            if (breakpoint.condition) {
-              const condResult = await this.setBreakPointCondition(
-                bkptNum,
-                breakpoint.condition,
-                sessionId
-              );
-              if (condResult.resultRecords.resultClass !== "done") {
-                throw new Error(
-                  `Failed to set condition for breakpoint ${bkptNum}`
-                );
-              }
-            }
-
-            // Handle log message
-            if (breakpoint.logMessage) {
-              const logResult = await this.setLogPoint(
-                bkptNum,
-                breakpoint.logMessage,
-                sessionId
-              );
-              if (logResult.resultRecords.resultClass !== "done") {
-                throw new Error(
-                  `Failed to set log message for breakpoint ${bkptNum}`
-                );
-              }
-            }
-
-            const bkptMap = this.breakpoints.get(bkptPathLineId);
-            if (bkptMap) {
-              bkptMap.set(sessionId, newBrk);
-            }
-            return { success: true, sessionId, newBrk };
-          } else {
+          if (condResult.resultRecords.resultClass !== "done") {
             throw new Error(
-              `Failed to insert breakpoint for location: ${location} and session: ${sessionId}`
+              `Failed to set condition for breakpoint ${bkptNum}`
             );
           }
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
-          return { success: false, sessionId, error: errorMessage };
         }
-      };
-    });
-    const results = await Promise.all(
-      promises.map((promiseFunc) => promiseFunc())
-    );
-    const successfulResults = results.filter((result) => result.success);
 
-    breakpoint.sessionIds = successfulResults.map((result) => result.sessionId);
-    return breakpoint;
-  }
-
-  async removeSingleBreakPoint(breakpoint: SingleBreakpoint): Promise<boolean> {
-    if (trace) {
-      this.log("stderr", "removeBreakPoint");
-    }
-
-    if (
-      !this.breakpoints.has(
-        this.generateBreakpointId(breakpoint.file ?? "", breakpoint.line ?? 0)
-      )
-    ) {
-      return false;
-    }
-    return this.sendCommand(
-      "break-delete " +
-        breakpoint.id +
-        " --session " +
-        (breakpoint.sessionId ?? "")
-    ).then((result) => {
-      if (result.resultRecords.resultClass === "done") {
-        this.breakpoints
-          .get(
-            this.generateBreakpointId(
-              breakpoint.file ?? "",
-              breakpoint.line ?? 0
-            )
-          )
-          ?.delete(breakpoint.sessionId ?? "");
-        const bkpts = this.breakpoints.get(
-          this.generateBreakpointId(breakpoint.file ?? "", breakpoint.line ?? 0)
-        );
-        if (bkpts && bkpts.size === 0) {
-          this.breakpoints.delete(
-            this.generateBreakpointId(
-              breakpoint.file ?? "",
-              breakpoint.line ?? 0
-            )
+        // Handle log message (no session targeting needed)
+        if (breakpoint.logMessage) {
+          const logResult = await this.setLogPoint(
+            bkptNum,
+            breakpoint.logMessage
           );
+          if (logResult.resultRecords.resultClass !== "done") {
+            throw new Error(
+              `Failed to set log message for breakpoint ${bkptNum}`
+            );
+          }
         }
-        return true;
+
+        // Store single breakpoint
+        this.breakpoints.set(bkptPathLineId, newBreakpoint);
+
+        return newBreakpoint;
       } else {
-        return false;
+        throw new Error(`Failed to insert breakpoint for location: ${location}`);
       }
-    });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to add breakpoint: ${errorMessage}`);
+    }
   }
+
   async removeBreakPoint(breakpoint: Breakpoint): Promise<boolean> {
     if (trace) {
       this.log("stderr", "removeBreakPoint");
     }
 
-    const promises: Promise<boolean>[] = [];
-    if (
-      !this.breakpoints.has(
-        this.generateBreakpointId(breakpoint.file ?? "", breakpoint.line ?? 0)
-      )
-    ) {
+    const bkptPathLineId = this.generateBreakpointId(
+      breakpoint.file ?? "",
+      breakpoint.line ?? 0
+    );
+
+    if (!this.breakpoints.has(bkptPathLineId)) {
       return false;
     }
-    const bkptMap = this.breakpoints.get(
-      this.generateBreakpointId(breakpoint.file ?? "", breakpoint.line ?? 0)
-    );
-    if (bkptMap) {
-      bkptMap.forEach((bkpt, _) => {
-        promises.push(
-          Promise.resolve(
-            this.sendCommand(
-              "break-delete " + bkpt.id + " --session " + (bkpt.sessionId ?? "")
-            ).then((result) => {
-              if (result.resultRecords.resultClass === "done") {
-                this.breakpoints.delete(
-                  this.generateBreakpointId(
-                    breakpoint.file ?? "",
-                    breakpoint.line ?? 0
-                  )
-                );
-                return true;
-              } else {
-                return false;
-              }
-            })
-          )
-        );
-      });
+
+    const storedBreakpoint = this.breakpoints.get(bkptPathLineId);
+    if (!storedBreakpoint?.id) {
+      return false;
     }
-    const results = await Promise.all(promises);
-    return results.some((result) => result === true);
+
+    try {
+      // Single delete command - backend handles all sessions
+      const result = await this.sendCommand(
+        "break-delete " + storedBreakpoint.id
+      );
+
+      if (result.resultRecords.resultClass === "done") {
+        this.breakpoints.delete(bkptPathLineId);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      return false;
+    }
   }
   generateBreakpointId(file: string, line: number): string {
     return `${file}|||${line}`;
@@ -1131,18 +955,13 @@ export class MI2 extends EventEmitter implements IBackend {
   clearBreakPoints(source?: string): Thenable<any> {
     if (trace) this.log("stderr", "clearBreakPoints");
     const promises: Promise<boolean>[] = [];
-    this.breakpoints.forEach((bkpts, pathId) => {
-      if (source && pathId.startsWith(source)) {
-        bkpts.forEach((bkpt, _) => {
+    this.breakpoints.forEach((bkpt, pathId) => {
+      if (!source || pathId.startsWith(source)) {
+        if (bkpt.id) {
           promises.push(
             Promise.resolve(
-              this.sendCommand(
-                "break-delete " +
-                  bkpt.id +
-                  " --session " +
-                  (bkpt.sessionId ?? "")
-              ).then((result) => {
-                if (result.resultRecords.resultClass == "done") {
+              this.sendCommand("break-delete " + bkpt.id).then((result) => {
+                if (result.resultRecords.resultClass === "done") {
                   this.breakpoints.delete(pathId);
                   return true;
                 } else {
@@ -1151,7 +970,7 @@ export class MI2 extends EventEmitter implements IBackend {
               })
             )
           );
-        });
+        }
       }
     });
     return Promise.all(promises);
@@ -1508,8 +1327,8 @@ export class MI2 extends EventEmitter implements IBackend {
   protected sshReady: boolean = false;
   protected currentToken: number = 1;
   protected handlers: { [index: number]: (info: MINode) => any } = {};
-  // path+line ->single breakpoints
-  public breakpoints: Map<string, Map<string, SingleBreakpoint>> = new Map();
+  // path+line -> breakpoint (simplified: backend manages multi-session internally)
+  public breakpoints: Map<string, Breakpoint> = new Map();
   protected buffer: string = "";
   protected errbuf: string = "";
   protected process!: ChildProcess.ChildProcess;

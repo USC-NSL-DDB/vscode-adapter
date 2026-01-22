@@ -43,8 +43,13 @@ import * as ddb_api from "../common/ddb_api";
 // 			})
 // 	}
 // }
-const breakpointSessionsMap = new Map<string, string[]>(); // Map breakpoint ID to session IDs
-const breakpointSessionsMapExp = new Map<string, string[]>(); // Map breakpoint ID to session IDs
+// Map breakpoint ID to session selection (groups and individual sessions)
+interface BreakpointSelection {
+  groupIds: number[];
+  sessionIds: number[];
+}
+const breakpointSelectionsMap = new Map<string, BreakpointSelection>();
+const breakpointSessionsMapExp = new Map<string, string[]>(); // Map breakpoint ID to session IDs (for display)
 function getBreakpointId(bp: vscode.Breakpoint): string {
   // VSCode doesn't expose an ID directly, but you can generate one based on its properties
   if (bp instanceof vscode.SourceBreakpoint) {
@@ -67,12 +72,12 @@ function getBreakpointIdFromDAP(
   const normalizedPath = path.normalize(dapPath);
   return `${normalizedPath}:${bp.line}`;
 }
-function associateBreakpointWithSessions(
+function associateBreakpointWithSelection(
   bp: vscode.Breakpoint,
-  sessionIds: string[]
+  selection: BreakpointSelection
 ) {
   const bpId = getBreakpointId(bp);
-  breakpointSessionsMap.set(bpId, sessionIds);
+  breakpointSelectionsMap.set(bpId, selection);
 }
 
 async function getAvailableSessions(): Promise<ddb_api.Session[]> {
@@ -105,6 +110,13 @@ interface SessionQuickPickItem extends vscode.QuickPickItem {
   sessionId?: string; // Make it optional for separators
   groupId?: number; // Used to identify group ids
   groupHash?: string; // Used to identify group names
+  isGroupHeader?: boolean; // Distinguish group headers from session items
+}
+
+// Return type for session selection - tracks groups and individual sessions separately
+interface SessionSelection {
+  groupIds: number[]; // Groups selected (use g<id> in command)
+  sessionIds: number[]; // Individual sessions selected (use s<id> in command)
 }
 
 class LogicalGroup {
@@ -133,14 +145,12 @@ class LogicalGroup {
   }
 }
 
-async function promptForSessions(): Promise<
-  Array<{ sessionId: string }> | undefined
-> {
+async function promptForSessions(): Promise<SessionSelection | undefined> {
   const sessions = await getAvailableSessions();
 
   if (!sessions || sessions.length === 0) {
     vscode.window.showInformationMessage("No debug sessions available.");
-    return [];
+    return { groupIds: [], sessionIds: [] };
   }
 
   // 1. Group sessions by their groupId
@@ -188,7 +198,8 @@ async function promptForSessions(): Promise<
     const headerItem: SessionQuickPickItem = {
       label: `$(folder) ${logicalGroups.get(groupId)!.get_grp_repr()}`,
       description: `(${sessionGroup.length} sessions)`,
-      groupId: groupId, // Mark this as a group header
+      groupId: groupId,
+      isGroupHeader: true,
     };
     quickPickItems.push(headerItem);
 
@@ -199,7 +210,8 @@ async function promptForSessions(): Promise<
       const sessionItem: SessionQuickPickItem = {
         label: `   ${session.alias || "UNKNOWN"}`,
         description: `sid=${session.sid}`,
-        sessionId: session.sid,
+        sessionId: String(session.sid),
+        groupId: groupId, // Track which group this session belongs to
       };
       quickPickItems.push(sessionItem);
       groupItems.push(sessionItem);
@@ -213,7 +225,7 @@ async function promptForSessions(): Promise<
     const quickPick = vscode.window.createQuickPick<SessionQuickPickItem>();
     quickPick.items = quickPickItems;
     quickPick.canSelectMany = true;
-    quickPick.placeholder = "Select sessions to apply the breakpoint to";
+    quickPick.placeholder = "Select sessions or groups to apply the breakpoint to";
 
     let isUpdating = false;
     let previousSelection: readonly SessionQuickPickItem[] = [];
@@ -229,7 +241,7 @@ async function promptForSessions(): Promise<
       // Check if any group header was just selected (wasn't in previous, now in current)
       for (const item of selected) {
         if (
-          item.groupId &&
+          item.isGroupHeader &&
           groupHeaderToItems.has(item) &&
           !prevSet.has(item)
         ) {
@@ -243,7 +255,7 @@ async function promptForSessions(): Promise<
       // Check if any group header was just deselected (was in previous, not in current)
       for (const item of previousSelection) {
         if (
-          item.groupId &&
+          item.isGroupHeader &&
           groupHeaderToItems.has(item) &&
           !newSelection.has(item)
         ) {
@@ -262,11 +274,39 @@ async function promptForSessions(): Promise<
 
     quickPick.onDidAccept(() => {
       accepted = true;
-      const result = quickPick.selectedItems
-        .filter((item) => item.sessionId !== undefined)
-        .map((item) => ({ sessionId: item.sessionId! }));
+
+      const groupIds: number[] = [];
+      const sessionIds: number[] = [];
+
+      // Get set of selected group headers
+      const selectedGroupHeaders = new Set<number>();
+      for (const item of quickPick.selectedItems) {
+        if (item.isGroupHeader && item.groupId !== undefined) {
+          selectedGroupHeaders.add(item.groupId);
+          // Only add valid group IDs (not -1 for ungrouped)
+          if (item.groupId !== -1) {
+            groupIds.push(item.groupId);
+          }
+        }
+      }
+
+      // Add individual sessions that are NOT covered by a selected group
+      for (const item of quickPick.selectedItems) {
+        if (item.sessionId !== undefined && !item.isGroupHeader) {
+          // If this session's parent group was selected, don't add it individually
+          // (the backend will resolve group to sessions)
+          // Exception: ungrouped sessions (groupId === -1) must be added individually
+          if (
+            item.groupId === -1 ||
+            !selectedGroupHeaders.has(item.groupId!)
+          ) {
+            sessionIds.push(parseInt(item.sessionId, 10));
+          }
+        }
+      }
+
       quickPick.dispose();
-      resolve(result);
+      resolve({ groupIds, sessionIds });
     });
 
     quickPick.onDidHide(() => {
@@ -296,18 +336,20 @@ function convertToVSCodeBreakpoint(bp: any, source: any): vscode.Breakpoint {
 }
 
 declare module "vscode-debugprotocol" {
-  module DebugProtocol {
+  namespace DebugProtocol {
     interface SourceBreakpoint {
       source: {
         path: string;
         name: string;
       };
-      sessionIds?: string[];
+      groupIds?: number[];
+      sessionIds?: number[];
       transactionId?: number;
       sessionAliases?: string[];
     }
     interface Breakpoint {
-      sessionIds?: string[];
+      groupIds?: number[];
+      sessionIds?: number[];
     }
     interface SetBreakpointsArguments {
       transactionId?: number;
@@ -317,14 +359,17 @@ declare module "vscode-debugprotocol" {
     }
   }
 }
+
 declare module "vscode" {
   interface Breakpoint {
-    sessionIds?: string[];
+    groupIds?: number[];
+    sessionIds?: number[];
     // sessionAliases?: string[];
     processing?: boolean;
     transactionId?: number;
   }
 }
+
 async function handleSetBreakpoints(message: any) {
   console.log("Handling setBreakpoints message: ", message);
   console.log("debug0", message.arguments);
@@ -332,34 +377,44 @@ async function handleSetBreakpoints(message: any) {
     message.arguments as DebugProtocol.SetBreakpointsArguments;
   const breakpoints = messageArguments.breakpoints;
   const source = message.arguments.source;
-  const breakpointsToRemove = [];
   console.log("debug1", breakpoints);
   if (!breakpoints) {
     return;
   }
   for (const bp of breakpoints) {
-    // Check if the breakpoint already has session IDs
+    // Check if the breakpoint already has a selection
     const bkptLinePathId = getBreakpointIdFromDAP(bp, source.path);
-    if (!breakpointSessionsMap.has(bkptLinePathId)) {
-      breakpointSessionsMap.set(bkptLinePathId, []);
-    }
-    let sessionIdsToAssign = breakpointSessionsMap.get(bkptLinePathId);
-    if (!sessionIdsToAssign || sessionIdsToAssign.length === 0) {
-      let selectedSessions = await promptForSessions();
-      console.log("debug2", selectedSessions);
-      if (!selectedSessions || selectedSessions?.length === 0) {
-        const allSessions = await getAvailableSessions();
-        console.log("debug3", allSessions);
-        sessionIdsToAssign = allSessions.map((s) => String(s.sid));
+    let existingSelection = breakpointSelectionsMap.get(bkptLinePathId);
+
+    if (
+      !existingSelection ||
+      (existingSelection.groupIds.length === 0 &&
+        existingSelection.sessionIds.length === 0)
+    ) {
+      const selection = await promptForSessions();
+      console.log("debug2", selection);
+
+      if (!selection) {
+        // User cancelled - default to all sessions (empty means all)
+        existingSelection = { groupIds: [], sessionIds: [] };
+      } else if (
+        selection.groupIds.length === 0 &&
+        selection.sessionIds.length === 0
+      ) {
+        // No selection made - default to all sessions
+        existingSelection = { groupIds: [], sessionIds: [] };
       } else {
-        sessionIdsToAssign = selectedSessions.map((s) => s.sessionId);
+        existingSelection = selection;
       }
 
-      // Update the map with the determined session IDs (even if it's an empty list)
-      breakpointSessionsMap.set(bkptLinePathId, sessionIdsToAssign);
+      // Update the map with the selection
+      breakpointSelectionsMap.set(bkptLinePathId, existingSelection);
     }
-    console.log("debug4", sessionIdsToAssign);
-    bp.sessionIds = sessionIdsToAssign;
+
+    console.log("debug4", existingSelection);
+    // Assign both groupIds and sessionIds to the breakpoint
+    bp.groupIds = existingSelection.groupIds;
+    bp.sessionIds = existingSelection.sessionIds;
   }
   updateInlineDecorations();
   // Send the modified setBreakpoints request to the debug adapter
@@ -529,7 +584,7 @@ export function activate(context: vscode.ExtensionContext) {
   // context.subscriptions.push(disposable);
   vscode.debug.onDidStartDebugSession((session) => {
     console.log("Debug session started: ", session);
-    breakpointSessionsMap.clear();
+    breakpointSelectionsMap.clear();
     breakpointSessionsMapExp.clear();
   });
   vscode.debug.onDidChangeBreakpoints(async (event) => {
@@ -538,10 +593,13 @@ export function activate(context: vscode.ExtensionContext) {
       // const selectedSessions = await promptForSessions();
       bp.processing = true;
       bp.transactionId = trasactionId;
-      breakpointSessionsMap.set(getBreakpointId(bp), []);
+      breakpointSelectionsMap.set(getBreakpointId(bp), {
+        groupIds: [],
+        sessionIds: [],
+      });
     });
     event.removed.forEach((bp) => {
-      breakpointSessionsMap.delete(getBreakpointId(bp));
+      breakpointSelectionsMap.delete(getBreakpointId(bp));
     });
   });
   context.subscriptions.push(
@@ -572,7 +630,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.debug.removeBreakpoints(allBreakpoints);
 
         // Clear the maps
-        breakpointSessionsMap.clear();
+        breakpointSelectionsMap.clear();
         breakpointSessionsMapExp.clear();
       }
       updateInlineDecorations();

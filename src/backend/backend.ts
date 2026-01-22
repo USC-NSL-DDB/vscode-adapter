@@ -11,7 +11,8 @@ export interface Breakpoint {
   condition: string;
   countCondition?: string;
   logMessage?: string;
-  sessionIds?: string[];
+  groupIds?: number[];
+  sessionIds?: number[];
   allSessions?: boolean;
   hitCondition?: string;
   verified?: boolean;

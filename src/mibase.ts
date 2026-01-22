@@ -21,7 +21,6 @@ import {
   VariableObject,
   ValuesFormattingMode,
   MIError,
-  SingleBreakpoint,
 } from "./backend/backend";
 import { MINode } from "./backend/mi_parse";
 import { expandValue, isExpandable } from "./backend/gdb_expansion";
@@ -654,7 +653,9 @@ export class MI2DebugSession extends DebugSession {
       if (bkptArgs.sourceModified) {
         await this.miDebugger.clearBreakPoints(path);
       }
-      const removePromises = [];
+
+      // Remove breakpoints no longer in the request
+      const removePromises: Promise<boolean>[] = [];
       const breakpoints = bkptArgs.breakpoints ?? [];
       for (const [pathLineId, bkpt] of this.miDebugger.breakpoints) {
         if (pathLineId.startsWith(path)) {
@@ -663,87 +664,58 @@ export class MI2DebugSession extends DebugSession {
               brk.line == this.miDebugger.getLineFromBreakpointId(pathLineId)
           );
           if (!found) {
-            for (const [_, singleBkpt] of bkpt) {
-              removePromises.push(
-                this.miDebugger.removeSingleBreakPoint(singleBkpt)
-              );
-            }
+            removePromises.push(this.miDebugger.removeBreakPoint(bkpt));
           }
         }
       }
       await Promise.all(removePromises);
+
       const breakpointsResponse: DebugProtocol.Breakpoint[] = [];
+
+      // Add/update breakpoints
       for (const bkpt of breakpoints) {
         const bkptPathLineId = this.miDebugger.generateBreakpointId(
           path,
           bkpt.line
         );
-        const existedBreakpoints =
+        const existedBreakpoint =
           this.miDebugger.breakpoints.get(bkptPathLineId);
-        const sessionIds = bkpt.sessionIds ?? [];
-        const requestedBreakpoints: SingleBreakpoint[] = sessionIds.map(
-          (sessionId: string) => {
-            return {
-              file: path,
-              line: bkpt.line,
-              condition: bkpt.condition ?? "",
-              hitCondition: bkpt.hitCondition ?? "",
-              logMessage: bkpt.logMessage ?? "",
-              sessionId: sessionId,
-            };
+
+        // Check if update is needed
+        if (existedBreakpoint) {
+          const needUpdate =
+            existedBreakpoint.condition !== (bkpt.condition ?? "") ||
+            existedBreakpoint.countCondition !== (bkpt.hitCondition ?? "") ||
+            existedBreakpoint.logMessage !== (bkpt.logMessage ?? "");
+
+          if (needUpdate) {
+            await this.miDebugger.removeBreakPoint(existedBreakpoint);
+          } else {
+            // Reuse existing breakpoint - no changes needed
+            continue;
           }
-        );
-        //current may not needed
-        existedBreakpoints?.forEach((existedSingleBreakpoint) => {
-          if (
-            !requestedBreakpoints.some(
-              (requestedBreakpoint) =>
-                requestedBreakpoint.sessionId ==
-                existedSingleBreakpoint.sessionId
-            )
-          ) {
-            this.miDebugger.removeSingleBreakPoint(existedSingleBreakpoint);
-          }
-        });
-        const addBkptPromises = [];
-        //reuse existing ones
-        for (const singleBreakpoint of requestedBreakpoints) {
-          addBkptPromises.push(async () => {
-            if (existedBreakpoints?.has(singleBreakpoint.sessionId ?? "")) {
-              const needUpdate =
-                singleBreakpoint.condition != (bkpt.condition ?? "") ||
-                singleBreakpoint.hitCondition != (bkpt.hitCondition ?? "") ||
-                singleBreakpoint.logMessage != (bkpt.logMessage ?? "");
-              if (needUpdate) {
-                await this.miDebugger.removeSingleBreakPoint(singleBreakpoint);
-              } else {
-                // breakpointsResponse.push({
-                // 	line: singleBreakpoint.line,
-                // 	verified: singleBreakpoint.verified,
-                // });
-                return;
-              }
-            }
-            await this.miDebugger.addSingleBreakPoint({
-              file: path,
-              line: bkpt.line,
-              condition: bkpt.condition ?? "",
-              countCondition: bkpt.hitCondition ?? "",
-              logMessage: bkpt.logMessage ?? "",
-              sessionId: singleBreakpoint.sessionId,
-            });
-          });
         }
-        await Promise.all(addBkptPromises.map((p) => p()));
+
+        // Add new breakpoint with unified command
+        await this.miDebugger.addBreakPoint({
+          file: path,
+          line: bkpt.line,
+          condition: bkpt.condition ?? "",
+          countCondition: bkpt.hitCondition ?? "",
+          logMessage: bkpt.logMessage ?? "",
+          groupIds: bkpt.groupIds ?? [],
+          sessionIds: bkpt.sessionIds ?? [],
+        });
       }
-      //we return all the successful breakpoints
-      //only return the breakpoints are in the same file
+
+      // Build response from stored breakpoints
       const allResponse = [];
-      for (const [bkptId, sessionIds] of this.miDebugger.breakpoints) {
+      for (const [bkptId, bkpt] of this.miDebugger.breakpoints) {
         const breakpoint = {
           line: this.miDebugger.getLineFromBreakpointId(bkptId),
-          verified: sessionIds.size > 0,
-          sessionIds: Array.from(sessionIds.keys()),
+          verified: bkpt.verified ?? false,
+          groupIds: bkpt.groupIds,
+          sessionIds: bkpt.sessionIds,
           source: {
             name: this.miDebugger
               .getFileFromBreakpointId(bkptId)
