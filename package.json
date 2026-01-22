@@ -11,7 +11,7 @@
   "publisher": "ddb",
   "icon": "images/ddbicon.webp",
   "engines": {
-    "vscode": "^1.70.0"
+    "vscode": "^1.80.0"
   },
   "main": "./out/src/frontend/extension.js",
   "activationEvents": [
@@ -34,6 +34,16 @@
     "configuration": {
       "title": "DDB Debugger",
       "properties": {
+        "ddb.serviceUrl": {
+          "type": "string",
+          "default": "http://localhost:5000",
+          "description": "DDB backend service URL (e.g., http://localhost:5000). Used for both HTTP API and WebSocket notifications."
+        },
+        "ddb.notifications.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable WebSocket notifications for real-time updates"
+        },
         "ddb.pollMaxAttempts": {
           "type": "number",
           "default": 30,
@@ -692,14 +702,16 @@
     "lodash": "^4.17.21",
     "ssh2": "^1.6.0",
     "vscode-debugadapter": "^1.45.0",
-    "vscode-debugprotocol": "^1.45.0"
+    "vscode-debugprotocol": "^1.45.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@istanbuljs/nyc-config-typescript": "^1.0.2",
     "@types/lodash": "^4.17.23",
     "@types/mocha": "^5.2.6",
     "@types/node": "^25.0.9",
-    "@types/vscode": "^1.108.1",
+    "@types/vscode": "^1.80.0",
+    "@types/ws": "^8.5.13",
     "@typescript-eslint/eslint-plugin": "^8.53.1",
     "@typescript-eslint/parser": "^8.53.1",
     "cspell": "^6.0.0",

@@ -3,6 +3,7 @@ import { Breakpoint } from "vscode-debugadapter";
 import { logger } from "./logger";
 import * as ddb_api from "./common/ddb_api";
 import { SessionManager } from "./common/ddb_session_mgr";
+import { NotificationService } from "./common/ddb_notification_service";
 import { LogicalGroup } from "./common/ddb_api";
 
 // ============================================================================
@@ -170,7 +171,10 @@ class SessionsProvider
     );
   }
 
-  private formatSessionItemWithLogicalGroup(session: ddb_api.Session, group?: LogicalGroup): SessionItem {
+  private formatSessionItemWithLogicalGroup(
+    session: ddb_api.Session,
+    group?: LogicalGroup
+  ): SessionItem {
     if (!group) {
       return new SessionItem(
         `["Ungrouped", sid: ${session.sid}] ${session.alias}`,
@@ -185,7 +189,7 @@ class SessionsProvider
           "Belongs to Group (id)": "N/A",
           "Belongs to Group (alias)": "N/A",
         }
-      )
+      );
     }
     return new SessionItem(
       `[grp_id: ${group.id}, sid: ${session.sid}] ${session.alias}`,
@@ -200,7 +204,7 @@ class SessionsProvider
         "Belongs to Group (id)": String(group.id),
         "Belongs to Group (alias)": group.alias,
       }
-    )
+    );
   }
 
   private getSessionsForGroup(groupId: number): SessionItem[] {
@@ -273,17 +277,13 @@ class SessionsProvider
       const sessions = this.sessionManager.getSessionsByGroup(group.id);
       for (const session of sessions) {
         const groupInfo = `[${group.alias}]`;
-        items.push(
-          this.formatSessionItemWithLogicalGroup(session, group)
-        );
+        items.push(this.formatSessionItemWithLogicalGroup(session, group));
       }
     }
 
     // Add ungrouped sessions
     for (const session of ungroupedSessions) {
-      items.push(
-        this.formatSessionItemWithLogicalGroup(session)
-      );
+      items.push(this.formatSessionItemWithLogicalGroup(session));
     }
 
     return items;
@@ -481,6 +481,9 @@ export function activate(
   // Get SessionManager instance (but don't start auto-refresh yet)
   const sessionManager = SessionManager.getInstance();
 
+  // Get NotificationService instance for WebSocket notifications
+  const notificationService = NotificationService.getInstance();
+
   // Subscribe to SessionManager updates for automatic tree refresh
   const sessionManagerUnsubscribe = sessionManager.onDataUpdated(() => {
     // Only refresh if tree is visible and debug session is active
@@ -490,6 +493,45 @@ export function activate(
   });
 
   context.subscriptions.push({ dispose: sessionManagerUnsubscribe });
+
+  // Subscribe to SessionListChanged notifications from backend
+  const notificationUnsubscribe = notificationService.onNotification(
+    "SessionListChanged",
+    async () => {
+      if (sessionsProvider.isDebugSessionActive) {
+        logger.debug(
+          "[DDBViewProvider] SessionListChanged notification received, updating data"
+        );
+        await sessionManager.updateAll(); // Fetch fresh data
+        // View auto-refreshes via SessionManager.onDataUpdated listener
+      }
+    }
+  );
+
+  context.subscriptions.push({ dispose: notificationUnsubscribe });
+
+  // Subscribe to WebSocket connection state changes
+  const wsStateUnsubscribe = notificationService.onConnectionStateChange(
+    (connected) => {
+      if (sessionsProvider.isDebugSessionActive) {
+        if (connected) {
+          logger.debug(
+            "[DDBViewProvider] WebSocket connected, disabling polling"
+          );
+          sessionManager.setWebSocketActive(true);
+          sessionManager.stopAutoRefresh(); // Stop polling
+        } else {
+          logger.debug(
+            "[DDBViewProvider] WebSocket disconnected, enabling polling fallback"
+          );
+          sessionManager.setWebSocketActive(false);
+          sessionManager.startAutoRefresh(); // Resume polling as fallback
+        }
+      }
+    }
+  );
+
+  context.subscriptions.push({ dispose: wsStateUnsubscribe });
 
   // Debug session START listener
   const debugStartListener = vscode.debug.onDidStartDebugSession(
@@ -501,18 +543,50 @@ export function activate(
       // Reset to grouped mode and show description
       sessionsProvider.resetToGroupedMode();
 
-      // Start SessionManager auto-refresh
-      sessionManager.startAutoRefresh();
+      try {
+        // Ensure all DDB services are ready.
+        await ddb_api.waitForServiceReady();
 
-      // Trigger immediate update - fetch both sessions AND groups
-      // Tree will auto-refresh via onDataUpdated event when data is ready
-      await sessionManager.updateAll();
+        // Start WebSocket notification service
+        notificationService.start();
+
+        // Wait a moment for WebSocket to connect, then decide on polling
+        setTimeout(() => {
+          if (notificationService.isConnected()) {
+            logger.debug(
+              "[DDBViewProvider] WebSocket connected, disabling polling"
+            );
+            sessionManager.setWebSocketActive(true);
+            // Don't start polling - WebSocket will handle updates
+          } else {
+            logger.debug(
+              "[DDBViewProvider] WebSocket not connected, using polling"
+            );
+            sessionManager.setWebSocketActive(false);
+            sessionManager.startAutoRefresh(); // Start polling as fallback
+          }
+        }, 5000); // Wait 5 second for WebSocket connection
+
+        // Trigger immediate update - fetch both sessions AND groups
+        // Tree will auto-refresh via onDataUpdated event when data is ready
+        await sessionManager.updateAll();
+      } catch (error) {
+        logger.error(
+          `[DDBViewProvider] DDB service not ready: ${error instanceof Error ? error.message : String(error)
+          }`
+        );
+        return;
+      }
     }
   );
 
   // Debug session STOP listener
   const debugStopListener = vscode.debug.onDidTerminateDebugSession(
     (debugSession) => {
+      // Stop WebSocket notification service
+      notificationService.stop();
+      sessionManager.setWebSocketActive(false);
+
       // Stop SessionManager auto-refresh
       sessionManager.stopAutoRefresh();
 
@@ -596,8 +670,8 @@ export function activate(
           `Group Alias: ${item.group.alias}`,
           `Group ID: ${item.group.id}`,
           `Group Hash: ${item.group.hash}`,
-          `Number of Sessions: ${item.sessionCount}`
-        ].join('\n');
+          `Number of Sessions: ${item.sessionCount}`,
+        ].join("\n");
 
         vscode.window.showInformationMessage(message, { modal: true });
       }

@@ -120,6 +120,7 @@ export class SessionManager {
   private pendingUpdates: Set<string>;
   private readonly DEBOUNCE_MS = 500;
   private readonly AUTO_REFRESH_MS = 15000; // Default 15 seconds
+  private wsActive: boolean = false; // Flag to control polling when WebSocket is active
 
   // ============================================================================
   // Constructor (Private - Singleton Pattern)
@@ -803,11 +804,20 @@ export class SessionManager {
 
   /**
    * Start automatic periodic refresh of data.
+   * Will not start polling if WebSocket is active.
    *
    * @param intervalMs Optional custom interval in milliseconds (default: 5000)
    */
   public startAutoRefresh(intervalMs?: number): void {
     this.stopAutoRefresh();
+
+    // Don't start polling if WebSocket is handling updates
+    if (this.wsActive) {
+      console.debug(
+        "[SessionManager] WebSocket active, skipping auto-refresh polling"
+      );
+      return;
+    }
 
     // Read from VSCode config if not provided
     let interval = intervalMs;
@@ -821,7 +831,11 @@ export class SessionManager {
       interval = intervalMs || this.AUTO_REFRESH_MS;
     }
 
+    console.debug(
+      `[SessionManager] Starting auto-refresh with ${interval}ms interval`
+    );
     this.refreshInterval = setInterval(() => {
+      console.debug("[SessionManager] Auto-refresh triggered");
       this.updateAll().catch((error) => {
         console.error("Auto-refresh failed:", error);
       });
@@ -836,6 +850,18 @@ export class SessionManager {
       clearInterval(this.refreshInterval);
       this.refreshInterval = null;
     }
+  }
+
+  /**
+   * Set whether WebSocket notifications are active.
+   * When WebSocket is active, auto-refresh polling is disabled.
+   * When WebSocket is inactive, auto-refresh polling can resume.
+   *
+   * @param active - true if WebSocket is connected and handling updates
+   */
+  public setWebSocketActive(active: boolean): void {
+    this.wsActive = active;
+    console.log(`[SessionManager] WebSocket active: ${active}`);
   }
 
   /**

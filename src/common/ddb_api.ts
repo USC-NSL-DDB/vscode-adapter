@@ -1,7 +1,5 @@
 import axios from "axios";
 
-const apiBaseUrl = process.env.DDB_API_URL || "http://localhost:5000";
-
 // Conditionally import vscode - only available in extension host
 let vscode: any;
 try {
@@ -9,6 +7,38 @@ try {
 } catch (e) {
   // vscode module not available (running in debug adapter process)
   vscode = null;
+}
+
+/**
+ * Get the DDB service base URL from configuration or environment variable.
+ * Priority: 1) DDB_API_URL env var (backward compat), 2) vscode config, 3) default
+ */
+function getServiceUrl(): string {
+  // Priority 1: Environment variable (backward compatibility)
+  if (process.env.DDB_API_URL) {
+    return process.env.DDB_API_URL;
+  }
+  
+  // Priority 2: VS Code configuration
+  if (vscode) {
+    const config = vscode.workspace.getConfiguration("ddb");
+    return config.get("serviceUrl", "http://localhost:5000");
+  }
+  
+  // Priority 3: Default
+  return "http://localhost:5000";
+}
+
+/**
+ * Get the WebSocket URL for notifications.
+ * Converts http:// to ws:// and https:// to wss://, then adds the notifications endpoint.
+ */
+export function getWebSocketUrl(): string {
+  const baseUrl = getServiceUrl();
+  // Convert http://localhost:5000 → ws://localhost:5000
+  // Convert https://localhost:5000 → wss://localhost:5000
+  const wsUrl = baseUrl.replace(/^http/, 'ws');
+  return `${wsUrl}/notifications/subscribe`;
 }
 
 enum Endpoint {
@@ -23,7 +53,7 @@ enum Endpoint {
 }
 
 function get_url(endpoint: Endpoint): string {
-  return `${apiBaseUrl}${endpoint}`;
+  return `${getServiceUrl()}${endpoint}`;
 }
 
 export interface Session {
