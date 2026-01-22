@@ -10,7 +10,11 @@ import { get } from "http";
 import { logger } from "../logger";
 import { SessionManager } from "../common/ddb_session_mgr";
 import { integer } from "yaml-language-server";
-import * as ddb_api from "../common/ddb_api";
+import {
+  SessionSelectorProvider,
+  SessionSelection,
+  SessionSelectorItem,
+} from "./sessionSelector";
 // class GDBDebugAdapterTracker implements vscode.DebugAdapterTracker {
 // 	private stateEmitter: vscode.EventEmitter<any>;
 
@@ -80,235 +84,40 @@ function associateBreakpointWithSelection(
   breakpointSelectionsMap.set(bpId, selection);
 }
 
-// Define a custom QuickPickItem type that can hold our session data
-interface SessionQuickPickItem extends vscode.QuickPickItem {
-  sessionId?: number; // Session ID (number, optional for group headers)
-  groupId?: number; // Used to identify group ids
-  isGroupHeader?: boolean; // Distinguish group headers from session items
-}
-
-// Return type for session selection - tracks groups and individual sessions separately
-interface SessionSelection {
-  groupIds: number[]; // Groups selected (use g<id> in command)
-  sessionIds: number[]; // Individual sessions selected (use s<id> in command)
-}
+// SessionSelection is now imported from sessionSelector.ts
 
 async function promptForSessions(): Promise<SessionSelection | undefined> {
-  const sessionManager = SessionManager.getInstance();
+  // Get the session selector provider (registered in activate)
+  const sessionSelectorProvider = (global as any)
+    .sessionSelectorProvider as SessionSelectorProvider;
 
-  // Fetch fresh data for both sessions and groups
-  const [sessions, groups] = await Promise.all([
-    sessionManager.fetchAllSessions(),
-    sessionManager.fetchAllGroups(),
-  ]);
+  if (!sessionSelectorProvider) {
+    vscode.window.showErrorMessage("Session selector not initialized");
+    return undefined;
+  }
 
+  // Fetch fresh data
+  await SessionManager.getInstance().fetchAll();
+
+  const sessions = SessionManager.getInstance().getAllSessions();
   if (!sessions || sessions.length === 0) {
     vscode.window.showInformationMessage("No debug sessions available.");
     return { groupIds: [], sessionIds: [] };
   }
 
-  // 1. Build map from groupId -> LogicalGroup for quick lookup
-  const groupMap: Map<number, ddb_api.LogicalGroup> = new Map();
-  for (const group of groups) {
-    groupMap.set(group.id, group);
-  }
+  // Refresh the tree view data
+  sessionSelectorProvider.refresh();
 
-  // 2. Group sessions by their groupId
-  const groupedSessions: Map<number, ddb_api.Session[]> = new Map();
-  const ungroupedSessions: ddb_api.Session[] = [];
+  // Show the session selector view
+  await vscode.commands.executeCommand(
+    "setContext",
+    "ddb.sessionSelectorActive",
+    true
+  );
+  await vscode.commands.executeCommand("ddbSessionSelector.focus");
 
-  for (const session of sessions) {
-    if (session.group?.valid && session.group.id !== undefined) {
-      const groupId = session.group.id;
-      if (!groupedSessions.has(groupId)) {
-        groupedSessions.set(groupId, []);
-      }
-      groupedSessions.get(groupId)!.push(session);
-    } else {
-      ungroupedSessions.push(session);
-    }
-  }
-
-  // 3. Build QuickPick items with better visual hierarchy
-  const quickPickItems: SessionQuickPickItem[] = [];
-  const groupHeaderToItems: Map<SessionQuickPickItem, SessionQuickPickItem[]> =
-    new Map();
-
-  // Add grouped sessions first (sorted by group ID)
-  const sortedGroupIds = Array.from(groupedSessions.keys()).sort((a, b) => a - b);
-
-  for (const groupId of sortedGroupIds) {
-    const group = groupMap.get(groupId);
-    const sessionList = groupedSessions.get(groupId)!;
-
-    // Group header with folder icon
-    const headerItem: SessionQuickPickItem = {
-      label: `$(folder) ${group?.alias || `Group ${groupId}`}`,
-      description: `(${sessionList.length} sessions)`,
-      detail: group ? `ID: ${group.id} | Hash: ${group.hash}` : undefined,
-      groupId: groupId,
-      isGroupHeader: true,
-    };
-    quickPickItems.push(headerItem);
-
-    const groupItems: SessionQuickPickItem[] = [];
-
-    // Session items with indentation and debug icon
-    for (const session of sessionList) {
-      const sessionItem: SessionQuickPickItem = {
-        label: `    $(debug) ${session.alias || "UNKNOWN"}`,
-        description: `sid=${session.sid}`,
-        detail: `    Status: ${session.status} | Tag: ${session.tag}`,
-        sessionId: session.sid,
-        groupId: groupId,
-      };
-      quickPickItems.push(sessionItem);
-      groupItems.push(sessionItem);
-    }
-
-    groupHeaderToItems.set(headerItem, groupItems);
-  }
-
-  // Add ungrouped sessions (if any)
-  if (ungroupedSessions.length > 0) {
-    const ungroupedHeader: SessionQuickPickItem = {
-      label: `$(folder-opened) Ungrouped`,
-      description: `(${ungroupedSessions.length} sessions)`,
-      groupId: -1,
-      isGroupHeader: true,
-    };
-    quickPickItems.push(ungroupedHeader);
-
-    const ungroupedItems: SessionQuickPickItem[] = [];
-
-    for (const session of ungroupedSessions) {
-      const sessionItem: SessionQuickPickItem = {
-        label: `    $(debug) ${session.alias || "UNKNOWN"}`,
-        description: `sid=${session.sid}`,
-        detail: `    Status: ${session.status} | Tag: ${session.tag}`,
-        sessionId: session.sid,
-        groupId: -1,
-      };
-      quickPickItems.push(sessionItem);
-      ungroupedItems.push(sessionItem);
-    }
-
-    groupHeaderToItems.set(ungroupedHeader, ungroupedItems);
-  }
-
-  // 3. Use createQuickPick for more control over selection behavior
-  return new Promise((resolve) => {
-    const quickPick = vscode.window.createQuickPick<SessionQuickPickItem>();
-    quickPick.items = quickPickItems;
-    quickPick.canSelectMany = true;
-    quickPick.placeholder = "Select sessions or groups to apply the breakpoint to";
-
-    let isUpdating = false;
-    let previousSelection: readonly SessionQuickPickItem[] = [];
-    let accepted = false;
-
-    quickPick.onDidChangeSelection((selected) => {
-      if (isUpdating) return;
-      isUpdating = true;
-
-      const newSelection = new Set(selected);
-      const prevSet = new Set(previousSelection);
-
-      // Check if any group header was just selected (wasn't in previous, now in current)
-      for (const item of selected) {
-        if (
-          item.isGroupHeader &&
-          groupHeaderToItems.has(item) &&
-          !prevSet.has(item)
-        ) {
-          // Header was just selected - add all items in this group
-          for (const groupItem of groupHeaderToItems.get(item)!) {
-            newSelection.add(groupItem);
-          }
-        }
-      }
-
-      // Check if any group header was just deselected (was in previous, not in current)
-      for (const item of previousSelection) {
-        if (
-          item.isGroupHeader &&
-          groupHeaderToItems.has(item) &&
-          !newSelection.has(item)
-        ) {
-          // Header was just deselected - remove all items in this group
-          for (const groupItem of groupHeaderToItems.get(item)!) {
-            newSelection.delete(groupItem);
-          }
-        }
-      }
-
-      // Check if any child session was deselected while parent group is still selected
-      // If so, deselect the parent group header
-      for (const item of previousSelection) {
-        if (!item.isGroupHeader && item.groupId !== undefined && !newSelection.has(item)) {
-          // A session was just deselected - find and deselect its parent group header
-          for (const [header] of groupHeaderToItems) {
-            if (header.groupId === item.groupId && newSelection.has(header)) {
-              // Parent group header is selected but child was deselected - deselect header
-              newSelection.delete(header);
-              break;
-            }
-          }
-        }
-      }
-
-      const newSelectionArray = Array.from(newSelection);
-      quickPick.selectedItems = newSelectionArray;
-      previousSelection = newSelectionArray;
-      isUpdating = false;
-    });
-
-    quickPick.onDidAccept(() => {
-      accepted = true;
-
-      const groupIds: number[] = [];
-      const sessionIds: number[] = [];
-
-      // Get set of selected group headers
-      const selectedGroupHeaders = new Set<number>();
-      for (const item of quickPick.selectedItems) {
-        if (item.isGroupHeader && item.groupId !== undefined) {
-          selectedGroupHeaders.add(item.groupId);
-          // Only add valid group IDs (not -1 for ungrouped)
-          if (item.groupId !== -1) {
-            groupIds.push(item.groupId);
-          }
-        }
-      }
-
-      // Add individual sessions that are NOT covered by a selected group
-      for (const item of quickPick.selectedItems) {
-        if (item.sessionId !== undefined && !item.isGroupHeader) {
-          // If this session's parent group was selected, don't add it individually
-          // (the backend will resolve group to sessions)
-          // Exception: ungrouped sessions (groupId === -1) must be added individually
-          if (
-            item.groupId === -1 ||
-            !selectedGroupHeaders.has(item.groupId!)
-          ) {
-            sessionIds.push(item.sessionId); // Already a number now
-          }
-        }
-      }
-
-      quickPick.dispose();
-      resolve({ groupIds, sessionIds });
-    });
-
-    quickPick.onDidHide(() => {
-      quickPick.dispose();
-      if (!accepted) {
-        resolve(undefined);
-      }
-    });
-
-    quickPick.show();
-  });
+  // Wait for user selection (resolved by Apply/Cancel commands)
+  return sessionSelectorProvider.promptForSelection();
 }
 
 function convertToVSCodeBreakpoint(bp: any, source: any): vscode.Breakpoint {
@@ -639,6 +448,63 @@ export function activate(context: vscode.ExtensionContext) {
     new MyDebugAdapterTrackerFactory()
   );
   ddbviewactivate(context, breakpointSessionsMapExp);
+
+  // Register Session Selector TreeView with checkbox support
+  const sessionSelectorProvider = new SessionSelectorProvider();
+  const sessionSelectorTreeView = vscode.window.createTreeView(
+    "ddbSessionSelector",
+    {
+      treeDataProvider: sessionSelectorProvider,
+      manageCheckboxStateManually: true,
+    }
+  );
+
+  // Handle checkbox changes
+  sessionSelectorTreeView.onDidChangeCheckboxState((event) => {
+    for (const [item, state] of event.items) {
+      sessionSelectorProvider.handleCheckboxChange(
+        item as SessionSelectorItem,
+        state
+      );
+    }
+  });
+
+  // Register session selector commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ddbSessionSelector.applySelection", () => {
+      sessionSelectorProvider.confirmSelection();
+      vscode.commands.executeCommand(
+        "setContext",
+        "ddb.sessionSelectorActive",
+        false
+      );
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ddbSessionSelector.cancelSelection",
+      () => {
+        sessionSelectorProvider.cancelSelection();
+        vscode.commands.executeCommand(
+          "setContext",
+          "ddb.sessionSelectorActive",
+          false
+        );
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ddbSessionSelector.refresh", async () => {
+      await SessionManager.getInstance().fetchAll();
+      sessionSelectorProvider.refresh();
+    })
+  );
+
+  // Store the provider for use by promptForSessions
+  (global as any).sessionSelectorProvider = sessionSelectorProvider;
+
   // const rootPath =
   // 	vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
   // 		? vscode.workspace.workspaceFolders[0].uri.fsPath

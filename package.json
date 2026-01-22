@@ -97,6 +97,21 @@
         "command": "ddbSessionsExplorer.continueSession",
         "title": "Continue Session",
         "icon": "$(debug-continue)"
+      },
+      {
+        "command": "ddbSessionSelector.applySelection",
+        "title": "Apply Selection",
+        "icon": "$(check)"
+      },
+      {
+        "command": "ddbSessionSelector.cancelSelection",
+        "title": "Cancel Selection",
+        "icon": "$(close)"
+      },
+      {
+        "command": "ddbSessionSelector.refresh",
+        "title": "Refresh Sessions",
+        "icon": "$(refresh)"
       }
     ],
     "breakpoints": [
@@ -644,6 +659,11 @@
         {
           "id": "ddbBreakpointsExplorer",
           "name": "DDB Breakpoints"
+        },
+        {
+          "id": "ddbSessionSelector",
+          "name": "Session Selector",
+          "when": "ddb.sessionSelectorActive"
         }
       ]
     },
@@ -662,6 +682,21 @@
         {
           "command": "ddbBreakpointsExplorer.refresh",
           "when": "view == ddbBreakpointsExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "ddbSessionSelector.applySelection",
+          "when": "view == ddbSessionSelector",
+          "group": "navigation"
+        },
+        {
+          "command": "ddbSessionSelector.cancelSelection",
+          "when": "view == ddbSessionSelector",
+          "group": "navigation"
+        },
+        {
+          "command": "ddbSessionSelector.refresh",
+          "when": "view == ddbSessionSelector",
           "group": "navigation"
         }
       ],
