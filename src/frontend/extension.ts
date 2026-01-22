@@ -129,169 +129,221 @@ async function promptForSessions(): Promise<SessionSelection | undefined> {
     }
   }
 
-  // 3. Build QuickPick items with better visual hierarchy
-  const quickPickItems: SessionQuickPickItem[] = [];
-  const groupHeaderToItems: Map<SessionQuickPickItem, SessionQuickPickItem[]> =
-    new Map();
-
-  // Add grouped sessions first (sorted by group ID)
-  const sortedGroupIds = Array.from(groupedSessions.keys()).sort((a, b) => a - b);
-
-  for (const groupId of sortedGroupIds) {
-    const group = groupMap.get(groupId);
-    const sessionList = groupedSessions.get(groupId)!;
-
-    // Group header with folder icon
-    const headerItem: SessionQuickPickItem = {
-      label: `$(folder) ${group?.alias || `Group ${groupId}`}`,
-      description: `(${sessionList.length} sessions)`,
-      detail: group ? `ID: ${group.id} | Hash: ${group.hash}` : undefined,
-      groupId: groupId,
-      isGroupHeader: true,
-    };
-    quickPickItems.push(headerItem);
-
-    const groupItems: SessionQuickPickItem[] = [];
-
-    // Session items with indentation and debug icon
-    for (const session of sessionList) {
-      const sessionItem: SessionQuickPickItem = {
-        label: `    $(debug) ${session.alias || "UNKNOWN"}`,
-        description: `sid=${session.sid}`,
-        detail: `    Status: ${session.status} | Tag: ${session.tag}`,
-        sessionId: session.sid,
-        groupId: groupId,
-      };
-      quickPickItems.push(sessionItem);
-      groupItems.push(sessionItem);
-    }
-
-    groupHeaderToItems.set(headerItem, groupItems);
-  }
-
-  // Add ungrouped sessions (if any)
-  if (ungroupedSessions.length > 0) {
-    const ungroupedHeader: SessionQuickPickItem = {
-      label: `$(folder-opened) Ungrouped`,
-      description: `(${ungroupedSessions.length} sessions)`,
-      groupId: -1,
-      isGroupHeader: true,
-    };
-    quickPickItems.push(ungroupedHeader);
-
-    const ungroupedItems: SessionQuickPickItem[] = [];
-
-    for (const session of ungroupedSessions) {
-      const sessionItem: SessionQuickPickItem = {
-        label: `    $(debug) ${session.alias || "UNKNOWN"}`,
-        description: `sid=${session.sid}`,
-        detail: `    Status: ${session.status} | Tag: ${session.tag}`,
-        sessionId: session.sid,
-        groupId: -1,
-      };
-      quickPickItems.push(sessionItem);
-      ungroupedItems.push(sessionItem);
-    }
-
-    groupHeaderToItems.set(ungroupedHeader, ungroupedItems);
-  }
-
-  // 3. Use createQuickPick for more control over selection behavior
+  // 3. Use createQuickPick with toggle button for switching views
   return new Promise((resolve) => {
     const quickPick = vscode.window.createQuickPick<SessionQuickPickItem>();
-    quickPick.items = quickPickItems;
     quickPick.canSelectMany = true;
-    quickPick.placeholder = "Select sessions or groups to apply the breakpoint to";
 
-    let isUpdating = false;
-    let previousSelection: readonly SessionQuickPickItem[] = [];
+    let isGroupsView = true; // Start with Groups view
     let accepted = false;
 
-    quickPick.onDidChangeSelection((selected) => {
-      if (isUpdating) return;
-      isUpdating = true;
+    // Track selected groups across view switches
+    const selectedGroupIds = new Set<number>();
+    const selectedSessionIds = new Set<number>();
 
-      const newSelection = new Set(selected);
-      const prevSet = new Set(previousSelection);
+    // Build items for Groups view (shows only logical groups)
+    function buildGroupItems(): SessionQuickPickItem[] {
+      const items: SessionQuickPickItem[] = [];
+      const sortedGroupIds = Array.from(groupedSessions.keys()).sort(
+        (a, b) => a - b
+      );
 
-      // Check if any group header was just selected (wasn't in previous, now in current)
-      for (const item of selected) {
-        if (
-          item.isGroupHeader &&
-          groupHeaderToItems.has(item) &&
-          !prevSet.has(item)
-        ) {
-          // Header was just selected - add all items in this group
-          for (const groupItem of groupHeaderToItems.get(item)!) {
-            newSelection.add(groupItem);
+      for (const groupId of sortedGroupIds) {
+        const group = groupMap.get(groupId);
+        const sessionList = groupedSessions.get(groupId)!;
+
+        const groupItem: SessionQuickPickItem = {
+          label: `$(folder) ${group?.alias || `Group ${groupId}`}`,
+          description: `(${sessionList.length} sessions)`,
+          detail: group ? `Group ID: ${group.id} | Hash: ${group.hash}` : undefined,
+          groupId: groupId,
+          isGroupHeader: true,
+        };
+        items.push(groupItem);
+      }
+
+      // Add separator for ungrouped sessions info (not selectable)
+      if (ungroupedSessions.length > 0) {
+        items.push({
+          label: "Ungrouped Sessions",
+          kind: vscode.QuickPickItemKind.Separator,
+        } as SessionQuickPickItem);
+        items.push({
+          label: `$(info) ${ungroupedSessions.length} ungrouped sessions (switch to Sessions view to select)`,
+          description: "",
+          detail: "Ungrouped sessions can only be selected individually",
+        } as SessionQuickPickItem);
+      }
+
+      return items;
+    }
+
+    // Build items for Sessions view (shows all individual sessions)
+    function buildSessionItems(): SessionQuickPickItem[] {
+      const items: SessionQuickPickItem[] = [];
+      const sortedGroupIds = Array.from(groupedSessions.keys()).sort(
+        (a, b) => a - b
+      );
+
+      // Add grouped sessions
+      for (const groupId of sortedGroupIds) {
+        const group = groupMap.get(groupId);
+        const sessionList = groupedSessions.get(groupId)!;
+
+        // Add group separator
+        const groupSelected = selectedGroupIds.has(groupId);
+        items.push({
+          label: groupSelected
+            ? `Group: ${group?.alias || `${groupId}`}`
+            : `Group: ${group?.alias || `${groupId}`}`,
+          kind: vscode.QuickPickItemKind.Separator,
+        } as SessionQuickPickItem);
+
+        // Add sessions under this group
+        for (const session of sessionList) {
+          const sessionItem: SessionQuickPickItem = {
+            label: `$(debug) ${session.alias || "UNKNOWN"}`,
+            description: groupSelected
+              ? "Group Breakpoint (parent group selected)"
+              : "Session Breakpoint",
+            detail: `Session ID: ${session.sid} | Status: ${session.status} | Tag: ${session.tag}`,
+            sessionId: session.sid,
+            groupId: groupId,
+          };
+          items.push(sessionItem);
+        }
+      }
+
+      // Add ungrouped sessions
+      if (ungroupedSessions.length > 0) {
+        items.push({
+          label: "Ungrouped Sessions",
+          kind: vscode.QuickPickItemKind.Separator,
+        } as SessionQuickPickItem);
+
+        for (const session of ungroupedSessions) {
+          const sessionItem: SessionQuickPickItem = {
+            label: `$(debug) ${session.alias || "UNKNOWN"}`,
+            description: "Session Breakpoint",
+            detail: `Session ID: ${session.sid} | Status: ${session.status} | Tag: ${session.tag}`,
+            sessionId: session.sid,
+            groupId: -1,
+          };
+          items.push(sessionItem);
+        }
+      }
+
+      return items;
+    }
+
+    // Update the view
+    function updateView() {
+      if (isGroupsView) {
+        quickPick.placeholder =
+          "Select logical groups (use toggle to switch to Sessions view)";
+        quickPick.items = buildGroupItems();
+
+        // Restore selected groups
+        const items = quickPick.items.filter(
+          (item) => item.isGroupHeader && selectedGroupIds.has(item.groupId!)
+        );
+        quickPick.selectedItems = items;
+      } else {
+        quickPick.placeholder =
+          "Select individual sessions (use toggle to switch to Groups view)";
+        quickPick.items = buildSessionItems();
+
+        // Restore selected sessions (excluding those whose group is selected)
+        const items = quickPick.items.filter(
+          (item) =>
+            item.sessionId !== undefined &&
+            selectedSessionIds.has(item.sessionId)
+        );
+        quickPick.selectedItems = items;
+      }
+    }
+
+    // Function to create toggle button based on current view
+    function createToggleButton(): vscode.QuickInputButton {
+      return {
+        iconPath: new vscode.ThemeIcon(
+          isGroupsView ? "list-flat" : "list-tree"
+        ),
+        tooltip: isGroupsView
+          ? "Switch to Sessions view"
+          : "Switch to Groups view",
+      };
+    }
+
+    quickPick.buttons = [createToggleButton()];
+
+    // Handle toggle button click
+    quickPick.onDidTriggerButton(() => {
+      // Save current selections before switching
+      if (isGroupsView) {
+        // Save selected groups
+        for (const item of quickPick.selectedItems) {
+          if (item.isGroupHeader && item.groupId !== undefined) {
+            selectedGroupIds.add(item.groupId);
+          }
+        }
+      } else {
+        // Save selected sessions
+        selectedSessionIds.clear();
+        for (const item of quickPick.selectedItems) {
+          if (item.sessionId !== undefined && !item.isGroupHeader) {
+            selectedSessionIds.add(item.sessionId);
           }
         }
       }
 
-      // Check if any group header was just deselected (was in previous, not in current)
-      for (const item of previousSelection) {
-        if (
-          item.isGroupHeader &&
-          groupHeaderToItems.has(item) &&
-          !newSelection.has(item)
-        ) {
-          // Header was just deselected - remove all items in this group
-          for (const groupItem of groupHeaderToItems.get(item)!) {
-            newSelection.delete(groupItem);
-          }
-        }
-      }
+      // Toggle view
+      isGroupsView = !isGroupsView;
 
-      // Check if any child session was deselected while parent group is still selected
-      // If so, deselect the parent group header
-      for (const item of previousSelection) {
-        if (!item.isGroupHeader && item.groupId !== undefined && !newSelection.has(item)) {
-          // A session was just deselected - find and deselect its parent group header
-          for (const [header] of groupHeaderToItems) {
-            if (header.groupId === item.groupId && newSelection.has(header)) {
-              // Parent group header is selected but child was deselected - deselect header
-              newSelection.delete(header);
-              break;
-            }
-          }
-        }
-      }
+      // Update button by recreating it
+      quickPick.buttons = [createToggleButton()];
 
-      const newSelectionArray = Array.from(newSelection);
-      quickPick.selectedItems = newSelectionArray;
-      previousSelection = newSelectionArray;
-      isUpdating = false;
+      // Rebuild items
+      updateView();
     });
 
+    // Handle selection changes
+    quickPick.onDidChangeSelection((selected) => {
+      if (isGroupsView) {
+        // In Groups view, track selected groups
+        selectedGroupIds.clear();
+        for (const item of selected) {
+          if (item.isGroupHeader && item.groupId !== undefined) {
+            selectedGroupIds.add(item.groupId);
+          }
+        }
+      } else {
+        // In Sessions view, track selected sessions
+        selectedSessionIds.clear();
+        for (const item of selected) {
+          if (item.sessionId !== undefined) {
+            selectedSessionIds.add(item.sessionId);
+          }
+        }
+      }
+    });
+
+    // Handle accept
     quickPick.onDidAccept(() => {
       accepted = true;
 
-      const groupIds: number[] = [];
+      // Build final selection
+      const groupIds: number[] = Array.from(selectedGroupIds);
       const sessionIds: number[] = [];
 
-      // Get set of selected group headers
-      const selectedGroupHeaders = new Set<number>();
-      for (const item of quickPick.selectedItems) {
-        if (item.isGroupHeader && item.groupId !== undefined) {
-          selectedGroupHeaders.add(item.groupId);
-          // Only add valid group IDs (not -1 for ungrouped)
-          if (item.groupId !== -1) {
-            groupIds.push(item.groupId);
-          }
-        }
-      }
-
-      // Add individual sessions that are NOT covered by a selected group
-      for (const item of quickPick.selectedItems) {
-        if (item.sessionId !== undefined && !item.isGroupHeader) {
-          // If this session's parent group was selected, don't add it individually
-          // (the backend will resolve group to sessions)
-          // Exception: ungrouped sessions (groupId === -1) must be added individually
-          if (
-            item.groupId === -1 ||
-            !selectedGroupHeaders.has(item.groupId!)
-          ) {
-            sessionIds.push(item.sessionId); // Already a number now
+      // Only include sessions that are NOT covered by a selected group
+      for (const sid of selectedSessionIds) {
+        const session = sessions.find((s) => s.sid === sid);
+        if (session) {
+          const sessionGroupId = session.group?.valid ? session.group.id : -1;
+          // Include if ungrouped OR if parent group is not selected
+          if (sessionGroupId === -1 || !selectedGroupIds.has(sessionGroupId)) {
+            sessionIds.push(sid);
           }
         }
       }
@@ -307,6 +359,8 @@ async function promptForSessions(): Promise<SessionSelection | undefined> {
       }
     });
 
+    // Initialize view and show
+    updateView();
     quickPick.show();
   });
 }
@@ -447,8 +501,7 @@ async function handleSetBreakpoints(message: any) {
 }
 
 class MyDebugAdapterTrackerFactory
-  implements vscode.DebugAdapterTrackerFactory
-{
+  implements vscode.DebugAdapterTrackerFactory {
   createDebugAdapterTracker(
     session: vscode.DebugSession
   ): vscode.ProviderResult<vscode.DebugAdapterTracker> {
@@ -542,10 +595,8 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
       const decoration = {
         range: range,
         hoverMessage: new vscode.MarkdownString(
-          `**Breakpoint Info**\n- Line: ${
-            bp.location.range.start.line
-          }\n- Column: ${
-            bp.location.range.start.character
+          `**Breakpoint Info**\n- Line: ${bp.location.range.start.line
+          }\n- Column: ${bp.location.range.start.character
           }\n- Session IDs: ${bp.sessionIds?.join(", ")}`
         ),
         renderOptions: {
