@@ -44,11 +44,11 @@ import * as ddb_api from "../common/ddb_api";
 // 	}
 // }
 // Map breakpoint ID to session selection (groups and individual sessions)
-interface BreakpointSelection {
+interface BreakpointTarget {
   groupIds: number[];
   sessionIds: number[];
 }
-const breakpointSelectionsMap = new Map<string, BreakpointSelection>();
+const breakpointSelectionsMap = new Map<string, BreakpointTarget>();
 const breakpointSessionsMapExp = new Map<string, string[]>(); // Map breakpoint ID to session IDs (for display)
 function getBreakpointId(bp: vscode.Breakpoint): string {
   // VSCode doesn't expose an ID directly, but you can generate one based on its properties
@@ -74,42 +74,16 @@ function getBreakpointIdFromDAP(
 }
 function associateBreakpointWithSelection(
   bp: vscode.Breakpoint,
-  selection: BreakpointSelection
+  selection: BreakpointTarget
 ) {
   const bpId = getBreakpointId(bp);
   breakpointSelectionsMap.set(bpId, selection);
 }
 
-async function getAvailableSessions(): Promise<ddb_api.Session[]> {
-  try {
-    // Fetch latest session information (updates cache and returns fresh data)
-    return await SessionManager.getInstance().fetchAllSessions();
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    vscode.window.showErrorMessage("Failed to fetch sessions");
-    logger.error(`Failed to fetch sessions: ${errorMessage}`);
-    return [];
-  }
-}
-// async function promptForSessions(): Promise<Array<{ sessionId: string }>> {
-// 	const sessions = await getAvailableSessions(); // Implement this function
-// 	return await vscode.window.showQuickPick(
-// 		sessions.map(session => ({
-// 			label: `[${session.alias}] sid=${session.sid}, tag=${session.tag}`,
-// 			description: session.status,
-// 			sessionId: session.sid
-// 		})),
-// 		{
-// 			canPickMany: true,
-// 			placeHolder: 'Select sessions to apply the breakpoint to'
-// 		}
-// 	);
-// }
 // Define a custom QuickPickItem type that can hold our session data
 interface SessionQuickPickItem extends vscode.QuickPickItem {
-  sessionId?: string; // Make it optional for separators
+  sessionId?: number; // Session ID (number, optional for group headers)
   groupId?: number; // Used to identify group ids
-  groupHash?: string; // Used to identify group names
   isGroupHeader?: boolean; // Distinguish group headers from session items
 }
 
@@ -119,85 +93,59 @@ interface SessionSelection {
   sessionIds: number[]; // Individual sessions selected (use s<id> in command)
 }
 
-class LogicalGroup {
-  groupHash: string;
-  groupId: number;
-
-  constructor(groupHash: string, groupId: number) {
-    this.groupHash = groupHash;
-    this.groupId = groupId;
-  }
-
-  get_grp_id(): number {
-    return this.groupId;
-  }
-
-  get_grp_hash(): string {
-    return this.groupHash;
-  }
-
-  get_grp_repr(): string {
-    if (this.groupId === -1) {
-      return "Ungrouped";
-    } else {
-      return `${this.groupHash} (id: ${this.groupId})`;
-    }
-  }
-}
-
 async function promptForSessions(): Promise<SessionSelection | undefined> {
-  const sessions = await getAvailableSessions();
+  const sessionManager = SessionManager.getInstance();
+
+  // Fetch fresh data for both sessions and groups
+  const [sessions, groups] = await Promise.all([
+    sessionManager.fetchAllSessions(),
+    sessionManager.fetchAllGroups(),
+  ]);
 
   if (!sessions || sessions.length === 0) {
     vscode.window.showInformationMessage("No debug sessions available.");
     return { groupIds: [], sessionIds: [] };
   }
 
-  // 1. Group sessions by their groupId
-  const logicalGroups: Map<number, LogicalGroup> = new Map();
-  const groupedSessions: Map<number, any[]> = new Map();
-  const UNGROUPED_KEY = "Ungrouped";
-
-  for (const session of sessions) {
-    let groupHash: string;
-    let groupId: number;
-    if (
-      session.group === undefined ||
-      session.group === null ||
-      !session.group.valid
-    ) {
-      groupHash = UNGROUPED_KEY;
-      groupId = -1;
-    } else {
-      const group = session.group;
-      groupHash = String(group.hash);
-      groupId = group.id;
-    }
-    const logicalGroup = new LogicalGroup(groupHash, groupId);
-    if (!logicalGroups.has(logicalGroup.get_grp_id())) {
-      logicalGroups.set(logicalGroup.get_grp_id(), logicalGroup);
-    }
-    if (!groupedSessions.has(logicalGroup.get_grp_id())) {
-      groupedSessions.set(logicalGroup.get_grp_id(), []);
-    }
-    groupedSessions.get(logicalGroup.get_grp_id())!.push(session);
+  // 1. Build map from groupId -> LogicalGroup for quick lookup
+  const groupMap: Map<number, ddb_api.LogicalGroup> = new Map();
+  for (const group of groups) {
+    groupMap.set(group.id, group);
   }
 
-  // 2. Build the list for the Quick Pick UI, with group headers
-  const quickPickItems: SessionQuickPickItem[] = [];
-  const sortedGroupIds = Array.from(groupedSessions.keys()).sort();
+  // 2. Group sessions by their groupId
+  const groupedSessions: Map<number, ddb_api.Session[]> = new Map();
+  const ungroupedSessions: ddb_api.Session[] = [];
 
-  // Track which items belong to which group header
+  for (const session of sessions) {
+    if (session.group?.valid && session.group.id !== undefined) {
+      const groupId = session.group.id;
+      if (!groupedSessions.has(groupId)) {
+        groupedSessions.set(groupId, []);
+      }
+      groupedSessions.get(groupId)!.push(session);
+    } else {
+      ungroupedSessions.push(session);
+    }
+  }
+
+  // 3. Build QuickPick items with better visual hierarchy
+  const quickPickItems: SessionQuickPickItem[] = [];
   const groupHeaderToItems: Map<SessionQuickPickItem, SessionQuickPickItem[]> =
     new Map();
 
-  for (const groupId of sortedGroupIds) {
-    const sessionGroup = groupedSessions.get(groupId)!;
+  // Add grouped sessions first (sorted by group ID)
+  const sortedGroupIds = Array.from(groupedSessions.keys()).sort((a, b) => a - b);
 
-    // Add a visually distinct HEADER item for the group
+  for (const groupId of sortedGroupIds) {
+    const group = groupMap.get(groupId);
+    const sessionList = groupedSessions.get(groupId)!;
+
+    // Group header with folder icon
     const headerItem: SessionQuickPickItem = {
-      label: `$(folder) ${logicalGroups.get(groupId)!.get_grp_repr()}`,
-      description: `(${sessionGroup.length} sessions)`,
+      label: `$(folder) ${group?.alias || `Group ${groupId}`}`,
+      description: `(${sessionList.length} sessions)`,
+      detail: group ? `ID: ${group.id} | Hash: ${group.hash}` : undefined,
       groupId: groupId,
       isGroupHeader: true,
     };
@@ -205,19 +153,47 @@ async function promptForSessions(): Promise<SessionSelection | undefined> {
 
     const groupItems: SessionQuickPickItem[] = [];
 
-    // Add the actual selectable session items for this group
-    for (const session of sessionGroup) {
+    // Session items with indentation and debug icon
+    for (const session of sessionList) {
       const sessionItem: SessionQuickPickItem = {
-        label: `   ${session.alias || "UNKNOWN"}`,
+        label: `    $(debug) ${session.alias || "UNKNOWN"}`,
         description: `sid=${session.sid}`,
-        sessionId: String(session.sid),
-        groupId: groupId, // Track which group this session belongs to
+        detail: `    Status: ${session.status} | Tag: ${session.tag}`,
+        sessionId: session.sid,
+        groupId: groupId,
       };
       quickPickItems.push(sessionItem);
       groupItems.push(sessionItem);
     }
 
     groupHeaderToItems.set(headerItem, groupItems);
+  }
+
+  // Add ungrouped sessions (if any)
+  if (ungroupedSessions.length > 0) {
+    const ungroupedHeader: SessionQuickPickItem = {
+      label: `$(folder-opened) Ungrouped`,
+      description: `(${ungroupedSessions.length} sessions)`,
+      groupId: -1,
+      isGroupHeader: true,
+    };
+    quickPickItems.push(ungroupedHeader);
+
+    const ungroupedItems: SessionQuickPickItem[] = [];
+
+    for (const session of ungroupedSessions) {
+      const sessionItem: SessionQuickPickItem = {
+        label: `    $(debug) ${session.alias || "UNKNOWN"}`,
+        description: `sid=${session.sid}`,
+        detail: `    Status: ${session.status} | Tag: ${session.tag}`,
+        sessionId: session.sid,
+        groupId: -1,
+      };
+      quickPickItems.push(sessionItem);
+      ungroupedItems.push(sessionItem);
+    }
+
+    groupHeaderToItems.set(ungroupedHeader, ungroupedItems);
   }
 
   // 3. Use createQuickPick for more control over selection behavior
@@ -266,6 +242,21 @@ async function promptForSessions(): Promise<SessionSelection | undefined> {
         }
       }
 
+      // Check if any child session was deselected while parent group is still selected
+      // If so, deselect the parent group header
+      for (const item of previousSelection) {
+        if (!item.isGroupHeader && item.groupId !== undefined && !newSelection.has(item)) {
+          // A session was just deselected - find and deselect its parent group header
+          for (const [header] of groupHeaderToItems) {
+            if (header.groupId === item.groupId && newSelection.has(header)) {
+              // Parent group header is selected but child was deselected - deselect header
+              newSelection.delete(header);
+              break;
+            }
+          }
+        }
+      }
+
       const newSelectionArray = Array.from(newSelection);
       quickPick.selectedItems = newSelectionArray;
       previousSelection = newSelectionArray;
@@ -300,7 +291,7 @@ async function promptForSessions(): Promise<SessionSelection | undefined> {
             item.groupId === -1 ||
             !selectedGroupHeaders.has(item.groupId!)
           ) {
-            sessionIds.push(parseInt(item.sessionId, 10));
+            sessionIds.push(item.sessionId); // Already a number now
           }
         }
       }
@@ -376,9 +367,9 @@ async function handleSetBreakpoints(message: any) {
   const messageArguments =
     message.arguments as DebugProtocol.SetBreakpointsArguments;
   const breakpoints = messageArguments.breakpoints;
-  const source = message.arguments.source;
+  const source = messageArguments.source;
   console.log("debug1", breakpoints);
-  if (!breakpoints) {
+  if (!breakpoints || breakpoints.length === 0 || !source || !source.path) {
     return;
   }
   for (const bp of breakpoints) {
