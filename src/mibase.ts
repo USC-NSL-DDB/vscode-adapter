@@ -38,6 +38,15 @@ import { send } from "process";
 import { cloneDeep } from "lodash";
 import { get } from "http";
 const trace = process.env.TRACE?.toLowerCase() === "true";
+
+// Deferred promise for synchronizing breakpoint requests
+interface DeferredBreakpointRequest {
+  promise: Promise<DebugProtocol.SetBreakpointsResponse>;
+  resolve: (response: DebugProtocol.SetBreakpointsResponse) => void;
+  reject: (error: any) => void;
+  resolved: boolean;
+}
+
 class ExtendedVariable {
   constructor(public name: string, public options: { arg: any }) {}
 }
@@ -753,7 +762,9 @@ export class MI2DebugSession extends DebugSession {
       sessionresponse.body = {
         breakpoints: breakpointsResponse,
       };
-      this.bkptRequests[args.seq][0](sessionresponse);
+      const deferred = this.getOrCreateBkptRequest(args.seq);
+      deferred.resolve(sessionresponse);
+      deferred.resolved = true;
       bkptResponse.body = {
         breakpoints: allResponse,
       };
@@ -786,8 +797,30 @@ export class MI2DebugSession extends DebugSession {
       );
     }
   }
-  private bkptRequests: Record<number, any> = {};
+  private bkptRequests: Map<number, DeferredBreakpointRequest> = new Map();
   private bkptmap = new Map<string, DebugProtocol.SourceBreakpoint[]>();
+
+  // Helper to get or create a deferred breakpoint request
+  // This ensures synchronization regardless of which request arrives first
+  private getOrCreateBkptRequest(seq: number): DeferredBreakpointRequest {
+    if (!this.bkptRequests.has(seq)) {
+      let resolve: (r: DebugProtocol.SetBreakpointsResponse) => void;
+      let reject: (e: any) => void;
+      const promise = new Promise<DebugProtocol.SetBreakpointsResponse>(
+        (res, rej) => {
+          resolve = res;
+          reject = rej;
+        }
+      );
+      this.bkptRequests.set(seq, {
+        promise,
+        resolve: resolve!,
+        reject: reject!,
+        resolved: false,
+      });
+    }
+    return this.bkptRequests.get(seq)!;
+  }
   protected override setBreakPointsRequest(
     response: DebugProtocol.SetBreakpointsResponse,
     args: DebugProtocol.SetBreakpointsArguments
@@ -802,11 +835,9 @@ export class MI2DebugSession extends DebugSession {
         `setBreakPointsRequestResponse${JSON.stringify(response, null, 2)}`
       );
     }
-    const waitForAysyncSession =
-      new Promise<DebugProtocol.SetBreakpointsResponse>((resolve, reject) => {
-        this.bkptRequests[response.request_seq] = [resolve, reject];
-      });
-    waitForAysyncSession.then(
+    const deferred = this.getOrCreateBkptRequest(response.request_seq);
+
+    deferred.promise.then(
       (cresponse) => {
         response.body = cresponse.body;
         if (trace)
@@ -819,9 +850,11 @@ export class MI2DebugSession extends DebugSession {
             )}`
           );
         this.sendResponse(response);
+        this.bkptRequests.delete(response.request_seq); // cleanup
       },
       (error) => {
         this.sendErrorResponse(response, 9, error.toString());
+        this.bkptRequests.delete(response.request_seq); // cleanup
       }
     );
   }

@@ -7,12 +7,10 @@ import {
   resolveSrcToGroups,
 } from "./ddb_api";
 
-// Conditionally import vscode - only available in extension host
 let vscode: any;
 try {
   vscode = require("vscode");
 } catch (e) {
-  // vscode module not available (running in debug adapter process)
   vscode = null;
 }
 
