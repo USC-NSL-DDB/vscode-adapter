@@ -953,7 +953,7 @@ export class MI2 extends EventEmitter implements IBackend {
     return id.split("|||")[0];
   }
   clearBreakPoints(source?: string): Thenable<any> {
-    if (trace) this.log("stderr", "clearBreakPoints");
+    if (trace) console.log("clearBreakPoints: source=", source);
     const promises: Promise<boolean>[] = [];
     this.breakpoints.forEach((bkpt, pathId) => {
       if (!source || pathId.startsWith(source)) {

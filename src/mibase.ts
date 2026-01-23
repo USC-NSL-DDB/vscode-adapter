@@ -47,7 +47,7 @@ interface DeferredBreakpointRequest {
 }
 
 class ExtendedVariable {
-  constructor(public name: string, public options: { arg: any }) {}
+  constructor(public name: string, public options: { arg: any }) { }
 }
 
 class VariableScope {
@@ -56,7 +56,7 @@ class VariableScope {
     public readonly threadId: number,
     public readonly level: number,
     public readonly session: number
-  ) {}
+  ) { }
 
   public static variableName(handle: number, name: string): string {
     return `var_${handle}_${name}`;
@@ -149,8 +149,8 @@ export class MI2DebugSession extends DebugSession {
           this.handleMsg(
             "stderr",
             "Code-Debug WARNING: Utility Command Server: Error in command socket " +
-              err.toString() +
-              "\nCode-Debug WARNING: The examine memory location command won't work"
+            err.toString() +
+            "\nCode-Debug WARNING: The examine memory location command won't work"
           );
       });
       if (!fs.existsSync(systemPath.join(os.tmpdir(), "code-debug-sockets")))
@@ -171,8 +171,8 @@ export class MI2DebugSession extends DebugSession {
         this.handleMsg(
           "stderr",
           "Code-Debug WARNING: Utility Command Server: Failed to start " +
-            errorMessage +
-            "\nCode-Debug WARNING: The examine memory location command won't work"
+          errorMessage +
+          "\nCode-Debug WARNING: The examine memory location command won't work"
         );
       }
     }
@@ -252,7 +252,7 @@ export class MI2DebugSession extends DebugSession {
         this.miDebugger
           .sendCommand(`exec-interrupt --session ${sessionId}`)
           .then(
-            () => {},
+            () => { },
             (err) => {
               if (trace)
                 this.miDebugger.log(
@@ -644,8 +644,8 @@ export class MI2DebugSession extends DebugSession {
     args: any,
     request?: DebugProtocol.Request
   ): Promise<void> {
-    // return
     if (command.includes("setSessionBreakpoints")) {
+      console.log("setSessionBreakpoints", args);
       const bkptArgs = args.arguments as DebugProtocol.SetBreakpointsArguments;
       let sessionresponse = response as DebugProtocol.SetBreakpointsResponse;
       let path = bkptArgs.source.path ?? "";
@@ -798,13 +798,9 @@ export class MI2DebugSession extends DebugSession {
     args: DebugProtocol.SetBreakpointsArguments
   ): void {
     if (trace) {
-      this.miDebugger.log(
-        "stderr",
-        `setBreakPointsRequest${JSON.stringify(args, null, 2)}`
-      );
-      this.miDebugger.log(
-        "stderr",
-        `setBreakPointsRequestResponse${JSON.stringify(response, null, 2)}`
+      console.debug(
+        "setBreakPointsRequest: args=",
+        args
       );
     }
     const deferred = this.getOrCreateBkptRequest(response.request_seq);
@@ -813,13 +809,9 @@ export class MI2DebugSession extends DebugSession {
       (cresponse) => {
         response.body = cresponse.body;
         if (trace)
-          this.miDebugger.log(
-            "stderr",
-            `setBreakPointsRequest send response ${JSON.stringify(
-              response,
-              null,
-              2
-            )}`
+          console.debug(
+            "setBreakPointsRequest: response=",
+            response
           );
         this.sendResponse(response);
         this.bkptRequests.delete(response.request_seq); // cleanup

@@ -513,7 +513,7 @@ async function handleSetBreakpoints(message: any) {
   const breakpoints = messageArguments.breakpoints;
   const source = messageArguments.source;
   console.log("debug1", breakpoints);
-  if (!breakpoints || breakpoints.length === 0 || !source || !source.path) {
+  if (!breakpoints || !source || !source.path) {
     return;
   }
 
@@ -533,8 +533,11 @@ async function handleSetBreakpoints(message: any) {
       const selection = await promptForSessions(source);
       console.log("debug2", selection);
 
-      if (!selection) {
-        // User cancelled - remove the breakpoint from UI
+      const noSelection = (!selection) || (selection.groupIds.length === 0 &&
+        selection.sessionIds.length === 0);
+
+      if (noSelection) {
+        // User cancelled / select none - remove the breakpoint from UI
         console.log(
           "User cancelled session selection, removing breakpoint:",
           bkptLinePathId
@@ -557,12 +560,6 @@ async function handleSetBreakpoints(message: any) {
 
         // Skip this breakpoint - don't send to debug adapter
         continue;
-      } else if (
-        selection.groupIds.length === 0 &&
-        selection.sessionIds.length === 0
-      ) {
-        // No selection made - default to all sessions
-        existingSelection = { groupIds: [], sessionIds: [] };
       } else {
         existingSelection = selection;
       }
@@ -580,13 +577,7 @@ async function handleSetBreakpoints(message: any) {
     breakpointsToSend.push(bp);
   }
 
-  updateInlineDecorations();
-
-  // Only send to debug adapter if there are breakpoints to send
-  if (breakpointsToSend.length === 0) {
-    console.log("No breakpoints to send (all were cancelled)");
-    return;
-  }
+  // updateInlineDecorations();
 
   // Send the modified setBreakpoints request to the debug adapter
   message.arguments.breakpoints = breakpointsToSend;
@@ -627,8 +618,7 @@ async function handleSetBreakpoints(message: any) {
 }
 
 class MyDebugAdapterTrackerFactory
-  implements vscode.DebugAdapterTrackerFactory
-{
+  implements vscode.DebugAdapterTrackerFactory {
   createDebugAdapterTracker(
     session: vscode.DebugSession
   ): vscode.ProviderResult<vscode.DebugAdapterTracker> {
@@ -722,10 +712,8 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
       const decoration = {
         range: range,
         hoverMessage: new vscode.MarkdownString(
-          `**Breakpoint Info**\n- Line: ${
-            bp.location.range.start.line
-          }\n- Column: ${
-            bp.location.range.start.character
+          `**Breakpoint Info**\n- Line: ${bp.location.range.start.line
+          }\n- Column: ${bp.location.range.start.character
           }\n- Session IDs: ${bp.sessionIds?.join(", ")}`
         ),
         renderOptions: {
@@ -758,21 +746,8 @@ export function activate(context: vscode.ExtensionContext) {
     breakpointSelectionsMap.clear();
     breakpointSessionsMapExp.clear();
   });
-  vscode.debug.onDidChangeBreakpoints(async (event) => {
-    console.log("Breakpoints changed: ", event);
-    event.added.forEach(async (bp) => {
-      // const selectedSessions = await promptForSessions();
-      bp.processing = true;
-      bp.transactionId = trasactionId;
-      breakpointSelectionsMap.set(getBreakpointId(bp), {
-        groupIds: [],
-        sessionIds: [],
-      });
-    });
-    event.removed.forEach((bp) => {
-      breakpointSelectionsMap.delete(getBreakpointId(bp));
-    });
-  });
+  // vscode.debug.onDidChangeBreakpoints(async (event) => {
+  // });
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => {
       updateInlineDecorations();
@@ -788,7 +763,20 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Update decorations when breakpoints change
   context.subscriptions.push(
-    vscode.debug.onDidChangeBreakpoints(() => {
+    vscode.debug.onDidChangeBreakpoints((event) => {
+      console.log("Breakpoints changed: ", event);
+      event.added.forEach(async (bp) => {
+        // const selectedSessions = await promptForSessions();
+        bp.processing = true;
+        bp.transactionId = trasactionId;
+        breakpointSelectionsMap.set(getBreakpointId(bp), {
+          groupIds: [],
+          sessionIds: [],
+        });
+      });
+      event.removed.forEach((bp) => {
+        breakpointSelectionsMap.delete(getBreakpointId(bp));
+      });
       updateInlineDecorations();
     })
   );
