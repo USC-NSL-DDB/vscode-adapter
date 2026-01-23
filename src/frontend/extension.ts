@@ -157,24 +157,13 @@ async function promptForSessions(source: DebugProtocol.Source): Promise<SessionS
   }
 
   const groupedSessions: Map<number, ddb_api.Session[]> = new Map();
-  const ungroupedSessions: ddb_api.Session[] = [];
-
-  for (const session of sessions) {
-    if (session.group?.valid 
-      && session.group !== undefined 
-      && session.group.id !== undefined 
-      && session.group.id !== -1
-    ) {
-      const groupId = session.group.id;
-      if (groupMap.has(groupId)) {
-        // Sessions belongs to one of groups associated with the source
-        if (!groupedSessions.has(groupId)) {
-          groupedSessions.set(groupId, []);
-        }
-        groupedSessions.get(groupId)!.push(session);
-      }
-    } else {
-      ungroupedSessions.push(session);
+  let ungroupedSessions: ddb_api.Session[] = sessionManager.getUngroupedSessions();
+  
+  for (const group of groups) {
+    const groupId = group.id;
+    if (groupId !== undefined) {
+      const sess = sessionManager.getSessionsByGroup(groupId);
+      groupedSessions.set(groupId, sess);
     }
   }
 

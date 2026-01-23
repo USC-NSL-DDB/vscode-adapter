@@ -5,6 +5,7 @@ import {
   getGroups,
   getGroup,
   resolveSrcToGroups,
+  resolveSrcToGroupIds,
 } from "./ddb_api";
 
 let vscode: any;
@@ -101,7 +102,7 @@ export class SessionManager {
   private groupsByAlias: Map<string, LogicalGroup[]>;
   private sessionsByGroup: Map<number, Set<number>>;
   private ungroupedSessions: Set<number>;
-  private srcToGroups: Map<string, LogicalGroup[]>;
+  private srcToGroups: Map<string, Set<number>>;
 
   // ============================================================================
   // Metadata
@@ -296,8 +297,8 @@ export class SessionManager {
    */
   public async updateSrcMappings(src: string): Promise<void> {
     try {
-      const groups = await resolveSrcToGroups(src);
-      this.srcToGroups.set(src, groups);
+      const group_ids = await resolveSrcToGroupIds(src);
+      this.srcToGroups.set(src, group_ids);
       this.notifyListeners();
     } catch (error) {
       console.error(`Failed to update src mappings for ${src}:`, error);
@@ -651,7 +652,15 @@ export class SessionManager {
       this.warnNotInitialized("getGroupsBySrc");
       return [];
     }
-    return this.srcToGroups.get(src) || [];
+    let grpIds = this.srcToGroups.get(src);
+    let groups: LogicalGroup[] = [];
+    for (const gid of grpIds || []) {
+      let grp = this.getGroup(gid);
+      if (grp) {
+        groups.push(grp);
+      }
+    }
+    return groups;
   }
 
   // ============================================================================
