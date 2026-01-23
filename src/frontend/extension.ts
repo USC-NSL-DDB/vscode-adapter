@@ -11,6 +11,7 @@ import { logger } from "../logger";
 import { SessionManager } from "../common/ddb_session_mgr";
 import { integer } from "yaml-language-server";
 import * as ddb_api from "../common/ddb_api";
+import { Session } from "../common/ddb_api";
 // class GDBDebugAdapterTracker implements vscode.DebugAdapterTracker {
 // 	private stateEmitter: vscode.EventEmitter<any>;
 
@@ -44,12 +45,49 @@ import * as ddb_api from "../common/ddb_api";
 // 	}
 // }
 // Map breakpoint ID to session selection (groups and individual sessions)
+declare module "vscode-debugprotocol" {
+  namespace DebugProtocol {
+    interface SourceBreakpoint {
+      source: {
+        path: string;
+        name: string;
+      };
+      groupIds?: number[];
+      sessionIds?: number[];
+      transactionId?: number;
+      sessionAliases?: string[];
+    }
+    interface Breakpoint {
+      groupIds?: number[];
+      sessionIds?: number[];
+    }
+    interface SetBreakpointsArguments {
+      transactionId?: number;
+    }
+    interface SetBreakpointsResponse {
+      transactionId?: number;
+    }
+  }
+}
+
+declare module "vscode" {
+  interface Breakpoint {
+    groupIds?: number[];
+    sessionIds?: number[];
+    // sessionAliases?: string[];
+    processing?: boolean;
+    transactionId?: number;
+  }
+}
+
 interface BreakpointTarget {
   groupIds: number[];
   sessionIds: number[];
 }
+
 const breakpointSelectionsMap = new Map<string, BreakpointTarget>();
 const breakpointSessionsMapExp = new Map<string, string[]>(); // Map breakpoint ID to session IDs (for display)
+
 function getBreakpointId(bp: vscode.Breakpoint): string {
   // VSCode doesn't expose an ID directly, but you can generate one based on its properties
   if (bp instanceof vscode.SourceBreakpoint) {
@@ -64,6 +102,7 @@ function getBreakpointId(bp: vscode.Breakpoint): string {
     return ""; // Handle other breakpoint types if necessary
   }
 }
+
 function getBreakpointIdFromDAP(
   bp: DebugProtocol.SourceBreakpoint,
   dapPath: string
@@ -72,6 +111,7 @@ function getBreakpointIdFromDAP(
   const normalizedPath = path.normalize(dapPath);
   return `${normalizedPath}:${bp.line}`;
 }
+
 function associateBreakpointWithSelection(
   bp: vscode.Breakpoint,
   selection: BreakpointTarget
@@ -93,43 +133,51 @@ interface SessionSelection {
   sessionIds: number[]; // Individual sessions selected (use s<id> in command)
 }
 
-async function promptForSessions(): Promise<SessionSelection | undefined> {
+async function promptForSessions(source: DebugProtocol.Source): Promise<SessionSelection | undefined> {
+  if (!source || !source.path) {
+    vscode.window.showErrorMessage("Invalid source for breakpoint.");
+    return undefined;
+  }
+  const src_path = path.normalize(source.path);
   const sessionManager = SessionManager.getInstance();
-
-  // Fetch fresh data for both sessions and groups
-  const [sessions, groups] = await Promise.all([
-    sessionManager.fetchAllSessions(),
-    sessionManager.fetchAllGroups(),
+  const [_, groups] = await Promise.all([
+    sessionManager.immediateUpdateAll(),
+    sessionManager.fetchGroupsBySrc(src_path)
   ]);
+  const sessions = sessionManager.getAllSessions();
 
   if (!sessions || sessions.length === 0) {
     vscode.window.showInformationMessage("No debug sessions available.");
     return { groupIds: [], sessionIds: [] };
   }
 
-  // 1. Build map from groupId -> LogicalGroup for quick lookup
   const groupMap: Map<number, ddb_api.LogicalGroup> = new Map();
   for (const group of groups) {
     groupMap.set(group.id, group);
   }
 
-  // 2. Group sessions by their groupId
   const groupedSessions: Map<number, ddb_api.Session[]> = new Map();
   const ungroupedSessions: ddb_api.Session[] = [];
 
   for (const session of sessions) {
-    if (session.group?.valid && session.group.id !== undefined) {
+    if (session.group?.valid 
+      && session.group !== undefined 
+      && session.group.id !== undefined 
+      && session.group.id !== -1
+    ) {
       const groupId = session.group.id;
-      if (!groupedSessions.has(groupId)) {
-        groupedSessions.set(groupId, []);
+      if (groupMap.has(groupId)) {
+        // Sessions belongs to one of groups associated with the source
+        if (!groupedSessions.has(groupId)) {
+          groupedSessions.set(groupId, []);
+        }
+        groupedSessions.get(groupId)!.push(session);
       }
-      groupedSessions.get(groupId)!.push(session);
     } else {
       ungroupedSessions.push(session);
     }
   }
 
-  // 3. Use createQuickPick with toggle button for switching views
   return new Promise((resolve) => {
     const quickPick = vscode.window.createQuickPick<SessionQuickPickItem>();
     quickPick.canSelectMany = true;
@@ -380,40 +428,6 @@ function convertToVSCodeBreakpoint(bp: any, source: any): vscode.Breakpoint {
   );
 }
 
-declare module "vscode-debugprotocol" {
-  namespace DebugProtocol {
-    interface SourceBreakpoint {
-      source: {
-        path: string;
-        name: string;
-      };
-      groupIds?: number[];
-      sessionIds?: number[];
-      transactionId?: number;
-      sessionAliases?: string[];
-    }
-    interface Breakpoint {
-      groupIds?: number[];
-      sessionIds?: number[];
-    }
-    interface SetBreakpointsArguments {
-      transactionId?: number;
-    }
-    interface SetBreakpointsResponse {
-      transactionId?: number;
-    }
-  }
-}
-
-declare module "vscode" {
-  interface Breakpoint {
-    groupIds?: number[];
-    sessionIds?: number[];
-    // sessionAliases?: string[];
-    processing?: boolean;
-    transactionId?: number;
-  }
-}
 
 async function handleSetBreakpoints(message: any) {
   console.log("Handling setBreakpoints message: ", message);
@@ -436,7 +450,7 @@ async function handleSetBreakpoints(message: any) {
       (existingSelection.groupIds.length === 0 &&
         existingSelection.sessionIds.length === 0)
     ) {
-      const selection = await promptForSessions();
+      const selection = await promptForSessions(source);
       console.log("debug2", selection);
 
       if (!selection) {

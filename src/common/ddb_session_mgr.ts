@@ -116,7 +116,7 @@ export class SessionManager {
   private refreshInterval: NodeJS.Timeout | null;
   private debounceTimeout: NodeJS.Timeout | null;
   private pendingUpdates: Set<string>;
-  private readonly DEBOUNCE_MS = 500;
+  private readonly DEBOUNCE_MS = 50; // Debounce interval in milliseconds
   private readonly AUTO_REFRESH_MS = 15000; // Default 15 seconds
   private wsActive: boolean = false; // Flag to control polling when WebSocket is active
 
@@ -168,6 +168,7 @@ export class SessionManager {
       this.executeQueuedUpdates();
     }, this.DEBOUNCE_MS);
   }
+
 
   /**
    * Execute all queued updates in an optimized manner.
@@ -235,6 +236,10 @@ export class SessionManager {
     this.scheduleUpdate("all");
     await this.waitForPendingUpdates();
   }
+  
+  public async immediateUpdateAll(): Promise<void> {
+    this.performUpdateAll();
+  }
 
   /**
    * Update only sessions.
@@ -243,6 +248,10 @@ export class SessionManager {
   public async updateSessions(): Promise<void> {
     this.scheduleUpdate("sessions");
     await this.waitForPendingUpdates();
+  }
+
+  public async immediateUpdateSessions(): Promise<void> {
+    this.performUpdateSessions();
   }
 
   /**
@@ -254,6 +263,10 @@ export class SessionManager {
     await this.waitForPendingUpdates();
   }
 
+  public async immediateUpdateGroups(): Promise<void> {
+    this.performUpdateGroups();
+  }
+
   /**
    * Update a specific logical group by ID.
    * Debounced to prevent rapid consecutive calls.
@@ -261,6 +274,10 @@ export class SessionManager {
   public async updateGroup(groupId: number): Promise<void> {
     this.scheduleUpdate({ type: "group", id: groupId });
     await this.waitForPendingUpdates();
+  }
+
+  public async immediateUpdateGroup(groupId: number): Promise<void> {
+    this.performUpdateGroup(groupId);
   }
 
   /**
@@ -650,12 +667,22 @@ export class SessionManager {
     return this.getAllSessions();
   }
 
+  public async immediateFetchAllSessions(): Promise<Session[]> {
+    await this.immediateUpdateSessions();
+    return this.getAllSessions();
+  }
+
   /**
    * Fetch a specific session with fresh data from backend.
    * Updates the cache, then returns the fresh data.
    */
   public async fetchSession(sid: number): Promise<Session | undefined> {
     await this.updateSessions();
+    return this.getSession(sid);
+  }
+
+  public async immediateFetchSession(sid: number): Promise<Session | undefined> {
+    await this.immediateUpdateSessions();
     return this.getSession(sid);
   }
 
@@ -668,12 +695,22 @@ export class SessionManager {
     return this.getAllGroups();
   }
 
+  public async immediateFetchAllGroups(): Promise<LogicalGroup[]> {
+    await this.immediateUpdateGroups();
+    return this.getAllGroups();
+  }
+
   /**
    * Fetch a specific group with fresh data from backend.
    * Updates the cache, then returns the fresh data.
    */
   public async fetchGroup(groupId: number): Promise<LogicalGroup | undefined> {
     await this.updateGroup(groupId);
+    return this.getGroup(groupId);
+  }
+
+  public async immediateFetchGroup(groupId: number): Promise<LogicalGroup | undefined> {
+    await this.immediateUpdateGroup(groupId);
     return this.getGroup(groupId);
   }
 
@@ -692,12 +729,28 @@ export class SessionManager {
     };
   }
 
+  public async immediateFetchAll(): Promise<{
+    sessions: Session[];
+    groups: LogicalGroup[];
+  }> {
+    await this.immediateUpdateAll();
+    return {
+      sessions: this.getAllSessions(),
+      groups: this.getAllGroups(),
+    };
+  }
+
   /**
    * Fetch sessions for a specific group with fresh data from backend.
    * Updates the specific group, then returns sessions belonging to it.
    */
   public async fetchSessionsByGroup(groupId: number): Promise<Session[]> {
     await this.updateGroup(groupId);
+    return this.getSessionsByGroup(groupId);
+  }
+
+  public async immediateFetchSessionsByGroup(groupId: number): Promise<Session[]> {
+    await this.immediateUpdateGroup(groupId);
     return this.getSessionsByGroup(groupId);
   }
 
@@ -708,6 +761,11 @@ export class SessionManager {
   public async fetchGroupsBySrc(src: string): Promise<LogicalGroup[]> {
     await this.updateSrcMappings(src);
     return this.getGroupsBySrc(src);
+  }
+
+  // Just an alias to fetchGroupsBySrc.
+  public async immediateFetchGroupsBySrc(src: string): Promise<LogicalGroup[]> {
+    return this.fetchGroupsBySrc(src);
   }
 
   // ============================================================================
