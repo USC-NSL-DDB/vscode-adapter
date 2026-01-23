@@ -133,46 +133,136 @@ interface SessionSelection {
   sessionIds: number[]; // Individual sessions selected (use s<id> in command)
 }
 
-async function promptForSessions(source: DebugProtocol.Source): Promise<SessionSelection | undefined> {
+async function promptForSessions(
+  source: DebugProtocol.Source
+): Promise<SessionSelection | undefined> {
   if (!source || !source.path) {
     vscode.window.showErrorMessage("Invalid source for breakpoint.");
     return undefined;
   }
   const src_path = path.normalize(source.path);
   const sessionManager = SessionManager.getInstance();
-  const [_, groups] = await Promise.all([
-    sessionManager.immediateUpdateAll(),
-    sessionManager.fetchGroupsBySrc(src_path)
-  ]);
-  const sessions = sessionManager.getAllSessions();
 
-  if (!sessions || sessions.length === 0) {
-    vscode.window.showInformationMessage("No debug sessions available.");
-    return { groupIds: [], sessionIds: [] };
-  }
-
-  const groupMap: Map<number, ddb_api.LogicalGroup> = new Map();
-  for (const group of groups) {
-    groupMap.set(group.id, group);
-  }
-
-  const groupedSessions: Map<number, ddb_api.Session[]> = new Map();
-  let ungroupedSessions: ddb_api.Session[] = sessionManager.getUngroupedSessions();
-  
-  for (const group of groups) {
-    const groupId = group.id;
-    if (groupId !== undefined) {
-      const sess = sessionManager.getSessionsByGroup(groupId);
-      groupedSessions.set(groupId, sess);
-    }
-  }
-
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     const quickPick = vscode.window.createQuickPick<SessionQuickPickItem>();
     quickPick.canSelectMany = true;
 
-    let isGroupsView = true; // Start with Groups view
+    // Create cancel button
+    const cancelButton: vscode.QuickInputButton = {
+      iconPath: new vscode.ThemeIcon("close"),
+      tooltip: "Cancel",
+    };
+
+    // Show immediately with loading state
+    quickPick.busy = true;
+    quickPick.enabled = false;
+    quickPick.placeholder = "Loading sessions and groups...";
+    quickPick.items = [
+      {
+        label: "$(loading~spin) Loading...",
+        description: "Fetching sessions and logical groups",
+        detail: "This may take a moment",
+      } as SessionQuickPickItem,
+    ];
+    quickPick.buttons = [cancelButton];
+    quickPick.ignoreFocusOut = true; // Keep open during loading
+    quickPick.show();
+
     let accepted = false;
+    let timedOut = false;
+
+    // Set up 30 second timeout
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      quickPick.dispose();
+      vscode.window.showWarningMessage(
+        "Loading sessions timed out after 30 seconds. Please try again or check your connection."
+      );
+      resolve(undefined);
+    }, 30000);
+
+    // Handle cancel button click during loading
+    const cancelDisposable = quickPick.onDidTriggerButton((button) => {
+      if (button === cancelButton) {
+        clearTimeout(timeoutId);
+        quickPick.dispose();
+        resolve(undefined);
+      }
+    });
+
+    // Handle early dismissal during loading
+    quickPick.onDidHide(() => {
+      clearTimeout(timeoutId);
+      quickPick.dispose();
+      if (!accepted && !timedOut) {
+        resolve(undefined);
+      }
+    });
+
+    // Fetch data asynchronously
+    let groups: ddb_api.LogicalGroup[];
+    let sessions: ddb_api.Session[];
+    let groupMap: Map<number, ddb_api.LogicalGroup>;
+    let groupedSessions: Map<number, ddb_api.Session[]>;
+    let ungroupedSessions: ddb_api.Session[];
+
+    try {
+      const [_, fetchedGroups] = await Promise.all([
+        sessionManager.immediateUpdateAll(),
+        sessionManager.fetchGroupsBySrc(src_path),
+      ]);
+
+      groups = fetchedGroups;
+
+      // Clear timeout since loading succeeded
+      clearTimeout(timeoutId);
+
+      if (timedOut) {
+        return; // Already handled by timeout
+      }
+
+      sessions = sessionManager.getAllSessions();
+
+      if (!sessions || sessions.length === 0) {
+        quickPick.dispose();
+        vscode.window.showInformationMessage("No debug sessions available.");
+        resolve({ groupIds: [], sessionIds: [] });
+        return;
+      }
+
+      // Build data structures
+      groupMap = new Map();
+      for (const group of groups) {
+        groupMap.set(group.id, group);
+      }
+
+      groupedSessions = new Map();
+      ungroupedSessions = sessionManager.getUngroupedSessions();
+
+      for (const group of groups) {
+        const groupId = group.id;
+        if (groupId !== undefined) {
+          const sess = sessionManager.getSessionsByGroup(groupId);
+          groupedSessions.set(groupId, sess);
+        }
+      }
+
+      // Data loaded - update UI state
+      quickPick.busy = false;
+      quickPick.enabled = true;
+      quickPick.ignoreFocusOut = false;
+
+      // Remove cancel button, add toggle button
+      cancelDisposable.dispose();
+    } catch (error) {
+      clearTimeout(timeoutId);
+      quickPick.dispose();
+      vscode.window.showErrorMessage(`Failed to load sessions: ${error}`);
+      resolve(undefined);
+      return;
+    }
+
+    let isGroupsView = true; // Start with Groups view
 
     // Track selected groups across view switches
     const selectedGroupIds = new Set<number>();
@@ -192,7 +282,9 @@ async function promptForSessions(source: DebugProtocol.Source): Promise<SessionS
         const groupItem: SessionQuickPickItem = {
           label: `$(folder) ${group?.alias || `Group ${groupId}`}`,
           description: `(${sessionList.length} sessions)`,
-          detail: group ? `Group ID: ${group.id} | Hash: ${group.hash}` : undefined,
+          detail: group
+            ? `Group ID: ${group.id} | Hash: ${group.hash}`
+            : undefined,
           groupId: groupId,
           isGroupHeader: true,
         };
@@ -312,9 +404,10 @@ async function promptForSessions(source: DebugProtocol.Source): Promise<SessionS
       };
     }
 
+    // Set toggle button (after loading)
     quickPick.buttons = [createToggleButton()];
 
-    // Handle toggle button click
+    // Handle toggle button click (replace cancel handler)
     quickPick.onDidTriggerButton(() => {
       // Save current selections before switching
       if (isGroupsView) {
@@ -389,16 +482,11 @@ async function promptForSessions(source: DebugProtocol.Source): Promise<SessionS
       resolve({ groupIds, sessionIds });
     });
 
-    quickPick.onDidHide(() => {
-      quickPick.dispose();
-      if (!accepted) {
-        resolve(undefined);
-      }
-    });
+    // Note: onDidHide is already set up earlier to handle dismissal during loading
+    // and will also handle dismissal after data is loaded
 
-    // Initialize view and show
+    // Initialize view with loaded data (QuickPick is already shown during loading)
     updateView();
-    quickPick.show();
   });
 }
 
@@ -417,7 +505,6 @@ function convertToVSCodeBreakpoint(bp: any, source: any): vscode.Breakpoint {
   );
 }
 
-
 async function handleSetBreakpoints(message: any) {
   console.log("Handling setBreakpoints message: ", message);
   console.log("debug0", message.arguments);
@@ -429,6 +516,10 @@ async function handleSetBreakpoints(message: any) {
   if (!breakpoints || breakpoints.length === 0 || !source || !source.path) {
     return;
   }
+
+  // Track breakpoints to actually send to the debug adapter
+  const breakpointsToSend: DebugProtocol.SourceBreakpoint[] = [];
+
   for (const bp of breakpoints) {
     // Check if the breakpoint already has a selection
     const bkptLinePathId = getBreakpointIdFromDAP(bp, source.path);
@@ -443,8 +534,29 @@ async function handleSetBreakpoints(message: any) {
       console.log("debug2", selection);
 
       if (!selection) {
-        // User cancelled - default to all sessions (empty means all)
-        existingSelection = { groupIds: [], sessionIds: [] };
+        // User cancelled - remove the breakpoint from UI
+        console.log(
+          "User cancelled session selection, removing breakpoint:",
+          bkptLinePathId
+        );
+
+        const allBreakpoints = vscode.debug.breakpoints;
+        const bpToRemove = allBreakpoints.find((vsbp) => {
+          if (vsbp instanceof vscode.SourceBreakpoint) {
+            return getBreakpointId(vsbp) === bkptLinePathId;
+          }
+          return false;
+        });
+
+        if (bpToRemove) {
+          vscode.debug.removeBreakpoints([bpToRemove]);
+        }
+
+        // Clean up the map entry
+        breakpointSelectionsMap.delete(bkptLinePathId);
+
+        // Skip this breakpoint - don't send to debug adapter
+        continue;
       } else if (
         selection.groupIds.length === 0 &&
         selection.sessionIds.length === 0
@@ -463,10 +575,21 @@ async function handleSetBreakpoints(message: any) {
     // Assign both groupIds and sessionIds to the breakpoint
     bp.groupIds = existingSelection.groupIds;
     bp.sessionIds = existingSelection.sessionIds;
+
+    // Add to the list of breakpoints to send
+    breakpointsToSend.push(bp);
   }
+
   updateInlineDecorations();
+
+  // Only send to debug adapter if there are breakpoints to send
+  if (breakpointsToSend.length === 0) {
+    console.log("No breakpoints to send (all were cancelled)");
+    return;
+  }
+
   // Send the modified setBreakpoints request to the debug adapter
-  // message.arguments.breakpoints = message.arguments.breakpoints.filter(bp => !breakpointsToRemove.includes(bp));
+  message.arguments.breakpoints = breakpointsToSend;
   const session = vscode.debug.activeDebugSession;
   if (!session) {
     return;
@@ -504,7 +627,8 @@ async function handleSetBreakpoints(message: any) {
 }
 
 class MyDebugAdapterTrackerFactory
-  implements vscode.DebugAdapterTrackerFactory {
+  implements vscode.DebugAdapterTrackerFactory
+{
   createDebugAdapterTracker(
     session: vscode.DebugSession
   ): vscode.ProviderResult<vscode.DebugAdapterTracker> {
@@ -598,8 +722,10 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
       const decoration = {
         range: range,
         hoverMessage: new vscode.MarkdownString(
-          `**Breakpoint Info**\n- Line: ${bp.location.range.start.line
-          }\n- Column: ${bp.location.range.start.character
+          `**Breakpoint Info**\n- Line: ${
+            bp.location.range.start.line
+          }\n- Column: ${
+            bp.location.range.start.character
           }\n- Session IDs: ${bp.sessionIds?.join(", ")}`
         ),
         renderOptions: {
