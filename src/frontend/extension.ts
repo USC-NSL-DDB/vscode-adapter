@@ -602,6 +602,7 @@ async function handleSetBreakpoints(message: any) {
       );
       if (found) {
         vscodebp.sessionIds = found.sessionIds;
+        vscodebp.groupIds = found.groupIds;
         vscodebp.processing = false;
       }
     }
@@ -704,7 +705,10 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
         backgroundColor = "rgba(255, 165, 0, 0.2)"; // Light orange background
         foregroundColor = "#D68000"; // Darker orange text
       } else {
-        statusText = `✓ Sessions: ${bp.sessionIds?.join(", ")}`;
+        const groupPart = bp.groupIds?.length ? `Groups: ${bp.groupIds.join(", ")}` : "";
+        const sessionPart = bp.sessionIds?.length ? `Sessions: ${bp.sessionIds.join(", ")}` : "";
+        const separator = groupPart && sessionPart ? " | " : "";
+        statusText = `✓ ${groupPart}${separator}${sessionPart}`;
         backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
         foregroundColor = "#008000"; // Darker green text
       }
@@ -712,9 +716,10 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
       const decoration = {
         range: range,
         hoverMessage: new vscode.MarkdownString(
-          `**Breakpoint Info**\n- Line: ${bp.location.range.start.line
+          `**Breakpoint Info**\n- Line: ${bp.location.range.start.line + 1
           }\n- Column: ${bp.location.range.start.character
-          }\n- Session IDs: ${bp.sessionIds?.join(", ")}`
+          }\n- Group IDs: ${bp.groupIds?.join(", ") || "none"
+          }\n- Session IDs: ${bp.sessionIds?.join(", ") || "none"}`
         ),
         renderOptions: {
           before: {
