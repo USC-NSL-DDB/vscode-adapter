@@ -714,7 +714,7 @@ export class MI2DebugSession extends DebugSession {
         const breakpoint = {
           line: this.miDebugger.getLineFromBreakpointId(bkptId),
           verified: bkpt.verified ?? false,
-          subbkpts: bkpt.subbkpts,
+          subbkpts: bkpt.subbkpts ?? [],
           source: {
             name: this.miDebugger
               .getFileFromBreakpointId(bkptId)

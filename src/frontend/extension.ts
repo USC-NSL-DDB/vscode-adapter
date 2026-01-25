@@ -617,7 +617,9 @@ async function handleSetBreakpoints(message: any) {
           bpUri.endsWith(bp.source.path)
       );
       if (found) {
-        vscodebp.subbkpts = found.subbkpts;
+        // Update the map with data from backend response (source of truth for decorations)
+        const bpId = getBreakpointId(vscodebp);
+        breakpointSelectionsMap.set(bpId, { subbkpts: found.subbkpts ?? [] });
         vscodebp.processing = false;
       }
     }
@@ -716,13 +718,17 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
       let backgroundColor: string;
       let foregroundColor: string;
 
+      // Look up subbkpts from the map (source of truth) - VSCode breakpoint objects don't support custom properties
+      const bpId = getBreakpointId(bp);
+      const selection = breakpointSelectionsMap.get(bpId);
+
       if (bp.processing) {
         statusText = "⟳ Processing...";
         backgroundColor = "rgba(255, 165, 0, 0.2)"; // Light orange background
         foregroundColor = "#D68000"; // Darker orange text
       } else {
-        const groupIds = extractGroupIds(bp.subbkpts);
-        const sessionIds = extractSessionIds(bp.subbkpts);
+        const groupIds = extractGroupIds(selection?.subbkpts);
+        const sessionIds = extractSessionIds(selection?.subbkpts);
         const groupPart = groupIds.length ? `Groups: ${groupIds.join(", ")}` : "";
         const sessionPart = sessionIds.length ? `Sessions: ${sessionIds.join(", ")}` : "";
         const separator = groupPart && sessionPart ? " | " : "";
@@ -731,8 +737,8 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
         foregroundColor = "#008000"; // Darker green text
       }
 
-      const groupIdsDisplay = extractGroupIds(bp.subbkpts);
-      const sessionIdsDisplay = extractSessionIds(bp.subbkpts);
+      const groupIdsDisplay = extractGroupIds(selection?.subbkpts);
+      const sessionIdsDisplay = extractSessionIds(selection?.subbkpts);
       const decoration = {
         range: range,
         hoverMessage: new vscode.MarkdownString(
@@ -794,6 +800,7 @@ export function activate(context: vscode.ExtensionContext) {
         // const selectedSessions = await promptForSessions();
         bp.processing = true;
         bp.transactionId = trasactionId;
+        bp.subbkpts = [];  // Initialize subbkpts on the breakpoint object
         breakpointSelectionsMap.set(getBreakpointId(bp), {
           subbkpts: [],
         });

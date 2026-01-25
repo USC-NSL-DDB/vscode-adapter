@@ -906,7 +906,9 @@ export class MI2 extends EventEmitter implements IBackend {
 
       if (result.resultRecords.resultClass === "done") {
         const bkptNum = parseInt(result.result("bkpt.id"), 10);
-        const subbkpts = this.buildSubBkptsFromPayload(result);
+        const subbkptsFromDebugger = this.buildSubBkptsFromPayload(result);
+        // Use debugger response if available, otherwise preserve incoming subbkpts from frontend
+        const subbkpts = subbkptsFromDebugger.length > 0 ? subbkptsFromDebugger : breakpoint.subbkpts;
 
         const newBreakpoint: Breakpoint = {
           id: bkptNum,
