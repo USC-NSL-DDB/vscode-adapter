@@ -3,6 +3,19 @@ import { DebugProtocol } from "vscode-debugprotocol/lib/debugProtocol";
 
 export type ValuesFormattingMode = "disabled" | "parseText" | "prettyPrinters";
 
+export enum SubBkptType {
+  Group = "group",
+  Session = "session",
+}
+
+export interface SubBkpt {
+  id?: number;
+  type: SubBkptType;
+  // If type is Group, target is group id
+  // If type is Session, target is session id
+  target: number;
+}
+
 export interface Breakpoint {
   id?: number;
   file?: string;
@@ -11,12 +24,14 @@ export interface Breakpoint {
   condition: string;
   countCondition?: string;
   logMessage?: string;
-  groupIds?: number[];
-  sessionIds?: number[];
+  subbkpts: SubBkpt[];
+  // groupIds?: number[];
+  // sessionIds?: number[];
   allSessions?: boolean;
   hitCondition?: string;
   verified?: boolean;
 }
+
 export interface SingleBreakpoint {
   id?: number;
   file?: string;
@@ -29,6 +44,7 @@ export interface SingleBreakpoint {
   verified?: boolean;
   sessionId?: string;
 }
+
 export interface Thread {
   id: number;
   targetId: string;
@@ -233,6 +249,7 @@ export interface MIError extends Error {
   readonly message: string;
   readonly source: string;
 }
+
 export interface MIErrorConstructor {
   new (message: string, source: string): MIError;
   readonly prototype: MIError;

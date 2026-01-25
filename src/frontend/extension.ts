@@ -12,6 +12,27 @@ import { SessionManager } from "../common/ddb_session_mgr";
 import { integer } from "yaml-language-server";
 import * as ddb_api from "../common/ddb_api";
 import { Session } from "../common/ddb_api";
+
+// SubBkpt types (matching backend/backend.ts)
+enum SubBkptType {
+  Group = "group",
+  Session = "session",
+}
+
+interface SubBkpt {
+  id?: number;
+  type: SubBkptType;
+  target: number;
+}
+
+// Helper functions to extract groupIds/sessionIds from subbkpts for display
+function extractGroupIds(subbkpts: SubBkpt[] | undefined): number[] {
+  return subbkpts?.filter(s => s.type === SubBkptType.Group).map(s => s.target) || [];
+}
+
+function extractSessionIds(subbkpts: SubBkpt[] | undefined): number[] {
+  return subbkpts?.filter(s => s.type === SubBkptType.Session).map(s => s.target) || [];
+}
 // class GDBDebugAdapterTracker implements vscode.DebugAdapterTracker {
 // 	private stateEmitter: vscode.EventEmitter<any>;
 
@@ -52,14 +73,12 @@ declare module "vscode-debugprotocol" {
         path: string;
         name: string;
       };
-      groupIds?: number[];
-      sessionIds?: number[];
+      subbkpts?: SubBkpt[];
       transactionId?: number;
       sessionAliases?: string[];
     }
     interface Breakpoint {
-      groupIds?: number[];
-      sessionIds?: number[];
+      subbkpts?: SubBkpt[];
     }
     interface SetBreakpointsArguments {
       transactionId?: number;
@@ -72,17 +91,14 @@ declare module "vscode-debugprotocol" {
 
 declare module "vscode" {
   interface Breakpoint {
-    groupIds?: number[];
-    sessionIds?: number[];
-    // sessionAliases?: string[];
+    subbkpts?: SubBkpt[];
     processing?: boolean;
     transactionId?: number;
   }
 }
 
 interface BreakpointTarget {
-  groupIds: number[];
-  sessionIds: number[];
+  subbkpts: SubBkpt[];
 }
 
 const breakpointSelectionsMap = new Map<string, BreakpointTarget>();
@@ -127,10 +143,9 @@ interface SessionQuickPickItem extends vscode.QuickPickItem {
   isGroupHeader?: boolean; // Distinguish group headers from session items
 }
 
-// Return type for session selection - tracks groups and individual sessions separately
+// Return type for session selection - unified SubBkpt array
 interface SessionSelection {
-  groupIds: number[]; // Groups selected (use g<id> in command)
-  sessionIds: number[]; // Individual sessions selected (use s<id> in command)
+  subbkpts: SubBkpt[]; // Combined groups and sessions as SubBkpt array
 }
 
 async function promptForSessions(
@@ -226,7 +241,7 @@ async function promptForSessions(
       if (!sessions || sessions.length === 0) {
         quickPick.dispose();
         vscode.window.showInformationMessage("No debug sessions available.");
-        resolve({ groupIds: [], sessionIds: [] });
+        resolve({ subbkpts: [] });
         return;
       }
 
@@ -462,9 +477,13 @@ async function promptForSessions(
     quickPick.onDidAccept(() => {
       accepted = true;
 
-      // Build final selection
-      const groupIds: number[] = Array.from(selectedGroupIds);
-      const sessionIds: number[] = [];
+      // Build final selection as SubBkpt array
+      const subbkpts: SubBkpt[] = [];
+
+      // Add selected groups
+      for (const groupId of selectedGroupIds) {
+        subbkpts.push({ type: SubBkptType.Group, target: groupId });
+      }
 
       // Only include sessions that are NOT covered by a selected group
       for (const sid of selectedSessionIds) {
@@ -473,13 +492,13 @@ async function promptForSessions(
           const sessionGroupId = session.group?.valid ? session.group.id : -1;
           // Include if ungrouped OR if parent group is not selected
           if (sessionGroupId === -1 || !selectedGroupIds.has(sessionGroupId)) {
-            sessionIds.push(sid);
+            subbkpts.push({ type: SubBkptType.Session, target: sid });
           }
         }
       }
 
       quickPick.dispose();
-      resolve({ groupIds, sessionIds });
+      resolve({ subbkpts });
     });
 
     // Note: onDidHide is already set up earlier to handle dismissal during loading
@@ -527,14 +546,12 @@ async function handleSetBreakpoints(message: any) {
 
     if (
       !existingSelection ||
-      (existingSelection.groupIds.length === 0 &&
-        existingSelection.sessionIds.length === 0)
+      existingSelection.subbkpts.length === 0
     ) {
       const selection = await promptForSessions(source);
       console.log("debug2", selection);
 
-      const noSelection = (!selection) || (selection.groupIds.length === 0 &&
-        selection.sessionIds.length === 0);
+      const noSelection = (!selection) || selection.subbkpts.length === 0;
 
       if (noSelection) {
         // User cancelled / select none - remove the breakpoint from UI
@@ -569,9 +586,8 @@ async function handleSetBreakpoints(message: any) {
     }
 
     console.log("debug4", existingSelection);
-    // Assign both groupIds and sessionIds to the breakpoint
-    bp.groupIds = existingSelection.groupIds;
-    bp.sessionIds = existingSelection.sessionIds;
+    // Assign subbkpts to the breakpoint
+    bp.subbkpts = existingSelection.subbkpts;
 
     // Add to the list of breakpoints to send
     breakpointsToSend.push(bp);
@@ -601,8 +617,7 @@ async function handleSetBreakpoints(message: any) {
           bpUri.endsWith(bp.source.path)
       );
       if (found) {
-        vscodebp.sessionIds = found.sessionIds;
-        vscodebp.groupIds = found.groupIds;
+        vscodebp.subbkpts = found.subbkpts;
         vscodebp.processing = false;
       }
     }
@@ -610,9 +625,10 @@ async function handleSetBreakpoints(message: any) {
   breakpointSessionsMapExp.clear();
   //@ts-ignore
   for (const bp of response.breakpoints) {
+    // Extract sessionIds for backward compatibility with display map
     breakpointSessionsMapExp.set(
       getBreakpointIdFromDAP(bp, bp.source.path),
-      bp.sessionIds
+      extractSessionIds(bp.subbkpts).map(String)
     );
   }
   updateInlineDecorations();
@@ -705,21 +721,25 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
         backgroundColor = "rgba(255, 165, 0, 0.2)"; // Light orange background
         foregroundColor = "#D68000"; // Darker orange text
       } else {
-        const groupPart = bp.groupIds?.length ? `Groups: ${bp.groupIds.join(", ")}` : "";
-        const sessionPart = bp.sessionIds?.length ? `Sessions: ${bp.sessionIds.join(", ")}` : "";
+        const groupIds = extractGroupIds(bp.subbkpts);
+        const sessionIds = extractSessionIds(bp.subbkpts);
+        const groupPart = groupIds.length ? `Groups: ${groupIds.join(", ")}` : "";
+        const sessionPart = sessionIds.length ? `Sessions: ${sessionIds.join(", ")}` : "";
         const separator = groupPart && sessionPart ? " | " : "";
         statusText = `✓ ${groupPart}${separator}${sessionPart}`;
         backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
         foregroundColor = "#008000"; // Darker green text
       }
 
+      const groupIdsDisplay = extractGroupIds(bp.subbkpts);
+      const sessionIdsDisplay = extractSessionIds(bp.subbkpts);
       const decoration = {
         range: range,
         hoverMessage: new vscode.MarkdownString(
           `**Breakpoint Info**\n- Line: ${bp.location.range.start.line + 1
           }\n- Column: ${bp.location.range.start.character
-          }\n- Group IDs: ${bp.groupIds?.join(", ") || "none"
-          }\n- Session IDs: ${bp.sessionIds?.join(", ") || "none"}`
+          }\n- Group IDs: ${groupIdsDisplay.join(", ") || "none"
+          }\n- Session IDs: ${sessionIdsDisplay.join(", ") || "none"}`
         ),
         renderOptions: {
           before: {
@@ -775,8 +795,7 @@ export function activate(context: vscode.ExtensionContext) {
         bp.processing = true;
         bp.transactionId = trasactionId;
         breakpointSelectionsMap.set(getBreakpointId(bp), {
-          groupIds: [],
-          sessionIds: [],
+          subbkpts: [],
         });
       });
       event.removed.forEach((bp) => {

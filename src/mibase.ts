@@ -618,6 +618,7 @@ export class MI2DebugSession extends DebugSession {
           raw: brk.name ?? "",
           condition: brk.condition ?? "",
           countCondition: brk.hitCondition ?? "",
+          subbkpts: [],
         })
       );
     });
@@ -703,19 +704,17 @@ export class MI2DebugSession extends DebugSession {
           condition: bkpt.condition ?? "",
           countCondition: bkpt.hitCondition ?? "",
           logMessage: bkpt.logMessage ?? "",
-          groupIds: bkpt.groupIds ?? [],
-          sessionIds: bkpt.sessionIds ?? [],
+          subbkpts: bkpt.subbkpts ?? [],
         });
       }
 
       // Build response from stored breakpoints
-      const allResponse = [];
+      const allResponse: DebugProtocol.Breakpoint[] = [];
       for (const [bkptId, bkpt] of this.miDebugger.breakpoints) {
         const breakpoint = {
           line: this.miDebugger.getLineFromBreakpointId(bkptId),
           verified: bkpt.verified ?? false,
-          groupIds: bkpt.groupIds,
-          sessionIds: bkpt.sessionIds,
+          subbkpts: bkpt.subbkpts,
           source: {
             name: this.miDebugger
               .getFileFromBreakpointId(bkptId)

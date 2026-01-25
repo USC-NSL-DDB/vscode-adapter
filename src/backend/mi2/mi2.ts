@@ -8,6 +8,8 @@ import {
   RegisterValue,
   VariableObject,
   MIError,
+  SubBkpt,
+  SubBkptType,
 } from "../backend";
 import * as ChildProcess from "child_process";
 import { EventEmitter } from "events";
@@ -198,7 +200,7 @@ export class MI2 extends EventEmitter implements IBackend {
     attach: boolean,
     autorun: string[]
   ): Thenable<any> {
-    return new Promise((resolve, reject) => {});
+    return new Promise((resolve, reject) => { });
   }
 
   protected initCommands(target: string, cwd: string, attach: boolean = false) {
@@ -472,7 +474,7 @@ export class MI2 extends EventEmitter implements IBackend {
                       this.log(
                         "console",
                         "Not implemented stop reason (assuming exception): " +
-                          reason
+                        reason
                       );
                       this.emit("stopped", parsed);
                       break;
@@ -596,8 +598,8 @@ export class MI2 extends EventEmitter implements IBackend {
     return new Promise((resolve, reject) => {
       this.sendCommand(
         "record-time-and-next" +
-          ` --thread ${thread}` +
-          (reverse ? " --reverse" : "")
+        ` --thread ${thread}` +
+        (reverse ? " --reverse" : "")
       ).then((info) => {
         resolve(info.resultRecords.resultClass == "running");
       }, reject);
@@ -612,8 +614,8 @@ export class MI2 extends EventEmitter implements IBackend {
     return new Promise((resolve, reject) => {
       this.sendCommand(
         "record-time-and-step" +
-          ` --thread ${thread}` +
-          (reverse ? " --reverse" : "")
+        ` --thread ${thread}` +
+        (reverse ? " --reverse" : "")
       ).then((info) => {
         resolve(info.resultRecords.resultClass == "running");
       }, reject);
@@ -628,8 +630,8 @@ export class MI2 extends EventEmitter implements IBackend {
     return new Promise((resolve, reject) => {
       this.sendCommand(
         "record-time-and-finish" +
-          ` --thread ${thread}` +
-          (reverse ? " --reverse" : "")
+        ` --thread ${thread}` +
+        (reverse ? " --reverse" : "")
       ).then((info) => {
         resolve(info.resultRecords.resultClass == "running");
       }, reject);
@@ -774,17 +776,67 @@ export class MI2 extends EventEmitter implements IBackend {
   // }
 
   private buildMultipleTargets(
-    groupIds: number[],
-    sessionIds: number[]
+    subbkpts: SubBkpt[]
   ): string {
     const targets: string[] = [];
-    for (const gid of groupIds) {
-      targets.push(`g${gid}`);
-    }
-    for (const sid of sessionIds) {
-      targets.push(`s${sid}`);
+    for (const subbkpt of subbkpts) {
+      if (subbkpt.type === SubBkptType.Group) {
+        if (typeof subbkpt.target === "number") {
+          targets.push(`g${subbkpt.target}`);
+        } else {
+          console.error("Invalid group target:", subbkpt.target);
+        }
+      }
+      if (subbkpt.type === SubBkptType.Session) {
+        if (typeof subbkpt.target === "number") {
+          targets.push(`s${subbkpt.target}`);
+        } else {
+          console.error("Invalid session target:", subbkpt.target);
+        }
+      } else {
+        console.error("Invalid session target:", subbkpt.target);
+      }
     }
     return targets.join(",");
+  }
+
+  private buildSubBkptsFromPayload(result: MINode): SubBkpt[] {
+    const subbkpts: SubBkpt[] = [];
+    for (const subbkpt_obj of result.result("subbkpt")) {
+      const target_id = subbkpt_obj["target_id"];
+      const id = subbkpt_obj["id"];
+      const type_str = subbkpt_obj["type"];
+
+      let type: SubBkptType;
+      if (type_str === "group") {
+        type = SubBkptType.Group;
+      } else if (type_str === "session") {
+        type = SubBkptType.Session;
+      } else {
+        console.error("Unknown subbkpt type:", type_str);
+        continue;
+      }
+
+      const subbkpt: SubBkpt = {
+        id: parseInt(id, 10),
+        type: type,
+        target: parseInt(target_id, 10)
+      };
+      subbkpts.push(subbkpt);
+    }
+    return subbkpts;
+  }
+
+  public extractGroupIds(subbkpts: SubBkpt[]): number[] {
+    return subbkpts
+      .filter(s => s.type === SubBkptType.Group)
+      .map(s => s.target);
+  }
+
+  public extractSessionIds(subbkpts: SubBkpt[]): number[] {
+    return subbkpts
+      .filter(s => s.type === SubBkptType.Session)
+      .map(s => s.target);
   }
 
   async addBreakPoint(breakpoint: Breakpoint): Promise<Breakpoint> {
@@ -808,8 +860,8 @@ export class MI2 extends EventEmitter implements IBackend {
             this.log(
               "stderr",
               "Unsupported break count expression: '" +
-                breakpoint.countCondition +
-                "'. Only supports 'X' for breaking once after X times or '>X' for ignoring the first X breaks"
+              breakpoint.countCondition +
+              "'. Only supports 'X' for breaking once after X times or '>X' for ignoring the first X breaks"
             );
             location += "-t ";
           } else if (parseInt(match, 10) !== 0) {
@@ -831,8 +883,7 @@ export class MI2 extends EventEmitter implements IBackend {
 
     // Build --multiple argument from groupIds and sessionIds
     const multipleTargets = this.buildMultipleTargets(
-      breakpoint.groupIds ?? [],
-      breakpoint.sessionIds ?? []
+      breakpoint.subbkpts
     );
 
     const bkptPathLineId = this.generateBreakpointId(
@@ -854,18 +905,18 @@ export class MI2 extends EventEmitter implements IBackend {
       const result = await this.sendCommand(command);
 
       if (result.resultRecords.resultClass === "done") {
-        const bkptNum = parseInt(result.result("bkpt.number"), 10);
+        const bkptNum = parseInt(result.result("bkpt.id"), 10);
+        const subbkpts = this.buildSubBkptsFromPayload(result);
 
         const newBreakpoint: Breakpoint = {
           id: bkptNum,
-          file: breakpoint.file ?? result.result("bkpt.file"),
+          file: breakpoint.file ?? result.result("bkpt.fullname"),
           raw: breakpoint.raw,
           line: breakpoint.line ?? parseInt(result.result("bkpt.line"), 10),
           condition: breakpoint.condition,
           countCondition: breakpoint.countCondition,
           logMessage: breakpoint.logMessage,
-          groupIds: breakpoint.groupIds,
-          sessionIds: breakpoint.sessionIds,
+          subbkpts: subbkpts,
           verified: true,
         };
 
@@ -944,13 +995,13 @@ export class MI2 extends EventEmitter implements IBackend {
     }
   }
   generateBreakpointId(file: string, line: number): string {
-    return `${file}|||${line}`;
+    return `${file}:${line}`;
   }
   getLineFromBreakpointId(id: string): number {
-    return parseInt(id.split("|||")[1]);
+    return parseInt(id.split(":")[1]);
   }
   getFileFromBreakpointId(id: string): string {
-    return id.split("|||")[0];
+    return id.split(":")[0];
   }
   clearBreakPoints(source?: string): Thenable<any> {
     if (trace) console.log("clearBreakPoints: source=", source);
