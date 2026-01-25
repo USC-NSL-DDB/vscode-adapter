@@ -9,7 +9,6 @@ import { DebugProtocol } from "vscode-debugprotocol";
 import { get } from "http";
 import { logger } from "../logger";
 import { SessionManager } from "../common/ddb_session_mgr";
-import { integer } from "yaml-language-server";
 import * as ddb_api from "../common/ddb_api";
 import { Session } from "../common/ddb_api";
 
