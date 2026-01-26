@@ -731,6 +731,33 @@ export function activate(
       }
     )
   );
+
+  // Kill session command
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ddbSessionsExplorer.killSession",
+      async (item: SessionItem) => {
+        const sessionId = item.sessionId;
+
+        // Show confirmation dialog
+        const result = await vscode.window.showWarningMessage(
+          `Are you sure you want to kill session ${sessionId}? This will terminate the process.`,
+          { modal: true },
+          "Yes",
+          "No"
+        );
+
+        if (result !== "Yes") {
+          return; // User cancelled
+        }
+
+        const debugSession = vscode.debug.activeDebugSession;
+        if (debugSession) {
+          debugSession.customRequest("send-signal", { sessionId: sessionId });
+        }
+      }
+    )
+  );
 }
 
 export function deactivate() {

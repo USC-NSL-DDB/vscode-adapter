@@ -767,6 +767,17 @@ export class MI2DebugSession extends DebugSession {
         }
       );
     }
+
+    // send-signal
+    if (command == "send-signal") {
+      const session_id = args.arguments.sessionId;
+      const signame = args.arguments.signal || "SIGINT";
+
+      this.miDebugger.sendCommand(
+        `send-signal ${signame} --session ${session_id}`
+      );
+      this.sendResponse(response);
+    }
   }
   private bkptRequests: Map<number, DeferredBreakpointRequest> = new Map();
   private bkptmap = new Map<string, DebugProtocol.SourceBreakpoint[]>();

@@ -97,6 +97,11 @@
         "command": "ddbSessionsExplorer.continueSession",
         "title": "Continue Session",
         "icon": "$(debug-continue)"
+      },
+      {
+        "command": "ddbSessionsExplorer.killSession",
+        "title": "Kill Session",
+        "icon": "$(debug-stop)"
       }
     ],
     "breakpoints": [
@@ -666,6 +671,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "ddbSessionsExplorer.killSession",
+          "when": "viewItem == sessionItem",
+          "group": "inline"
+        },
         {
           "command": "ddbSessionsExplorer.pauseSession",
           "when": "viewItem == sessionItem",
