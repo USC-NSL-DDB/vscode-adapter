@@ -7,7 +7,7 @@
     "distributed-debugger"
   ],
   "license": "public domain",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "ddb",
   "icon": "images/ddbicon.webp",
   "engines": {
