@@ -97,6 +97,16 @@
         "command": "ddbSessionsExplorer.continueSession",
         "title": "Continue Session",
         "icon": "$(debug-continue)"
+      },
+      {
+        "command": "ddbSessionsExplorer.killSession",
+        "title": "Kill Session",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "ddbSessionsExplorer.sendSignal",
+        "title": "Send Signal",
+        "icon": "$(broadcast)"
       }
     ],
     "breakpoints": [
@@ -666,6 +676,16 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "ddbSessionsExplorer.sendSignal",
+          "when": "viewItem == sessionItem",
+          "group": "inline"
+        },
+        {
+          "command": "ddbSessionsExplorer.killSession",
+          "when": "viewItem == sessionItem",
+          "group": "inline"
+        },
         {
           "command": "ddbSessionsExplorer.pauseSession",
           "when": "viewItem == sessionItem",

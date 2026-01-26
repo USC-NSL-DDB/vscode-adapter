@@ -731,6 +731,102 @@ export function activate(
       }
     )
   );
+
+  // Kill session command
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ddbSessionsExplorer.killSession",
+      async (item: SessionItem) => {
+        const sessionId = item.sessionId;
+
+        // Show confirmation dialog
+        const result = await vscode.window.showWarningMessage(
+          `Are you sure you want to kill session ${sessionId}? This will terminate the process.`,
+          { modal: true },
+          "Yes",
+          "No"
+        );
+
+        if (result !== "Yes") {
+          return; // User cancelled
+        }
+
+        const debugSession = vscode.debug.activeDebugSession;
+        if (debugSession) {
+          debugSession.customRequest("send-signal", {
+            sessionId: sessionId,
+            signal: "SIGINT",
+          });
+        }
+      }
+    )
+  );
+
+  // Send signal command
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ddbSessionsExplorer.sendSignal",
+      async (item: SessionItem) => {
+        const sessionId = item.sessionId;
+        const debugSession = vscode.debug.activeDebugSession;
+        if (!debugSession) {
+          vscode.window.showErrorMessage("No active debug session");
+          return;
+        }
+
+        // Create QuickPick with loading state
+        interface SignalQuickPickItem extends vscode.QuickPickItem {
+          signalName: string;
+        }
+        const quickPick = vscode.window.createQuickPick<SignalQuickPickItem>();
+        quickPick.title = `Send Signal to Session ${sessionId}`;
+        quickPick.placeholder = "Loading available signals...";
+        quickPick.busy = true;
+        quickPick.enabled = false;
+        quickPick.ignoreFocusOut = true;
+        quickPick.matchOnDescription = true;
+        quickPick.show();
+
+        try {
+          // Fetch signal list from debugger
+          const response = await debugSession.customRequest("list-signals", {
+            sessionId,
+          });
+          const signals = response.signals;
+
+          // Populate QuickPick
+          quickPick.items = signals.map((sig: any) => ({
+            label: sig.name,
+            description: `stop:${sig.stop} print:${sig.print} pass:${sig.pass}`,
+            detail: sig.desc,
+            signalName: sig.name,
+          }));
+
+          quickPick.busy = false;
+          quickPick.enabled = true;
+          quickPick.placeholder = "Select a signal to send";
+        } catch (error) {
+          quickPick.dispose();
+          vscode.window.showErrorMessage(`Failed to fetch signals: ${error}`);
+          return;
+        }
+
+        // Handle selection
+        quickPick.onDidAccept(() => {
+          const selected = quickPick.selectedItems[0];
+          if (selected) {
+            debugSession.customRequest("send-signal", {
+              sessionId,
+              signal: selected.signalName,
+            });
+          }
+          quickPick.dispose();
+        });
+
+        quickPick.onDidHide(() => quickPick.dispose());
+      }
+    )
+  );
 }
 
 export function deactivate() {
