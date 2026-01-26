@@ -36,6 +36,7 @@ import { Debugger } from "inspector";
 import { send } from "process";
 import { cloneDeep } from "lodash";
 import { get } from "http";
+import { buffer } from "stream/consumers";
 const trace = process.env.TRACE?.toLowerCase() === "true";
 
 // Deferred promise for synchronizing breakpoint requests
@@ -423,6 +424,7 @@ export class MI2DebugSession extends DebugSession {
 					// Optionally provide the signal details only to the primary thread
 					event.body.description = `Paused on signal: ${info.record("signal-name")}`;
 				}
+				this.bufferedStopEvents.set(curr_thread_id, { reason: reason, description: event.body.description, preserveFocusHint: !is_primary });
 				this.sendEvent(event);
 			}
 		} else {
@@ -529,6 +531,9 @@ export class MI2DebugSession extends DebugSession {
 
 		return { success: false, tid };
 	}
+
+	protected bufferedStopEvents: Map<number, { reason: string; description?: string; preserveFocusHint: boolean }> = new Map();
+
 	protected async threadCreatedEvent(info: MINode) {
 		if (trace)
 			this.miDebugger.log(
@@ -560,14 +565,16 @@ export class MI2DebugSession extends DebugSession {
 		this.threadIdToSessionId.set(threadId, parseInt(info.record("session-id")));
 		let thread_state = MINode.valueOf(thread_info[0], "state");
 		this.sendEvent(new ThreadEvent("started", threadId));
-		if (thread_state == "stopped") {
-			const event = new StoppedEvent("", threadId);
+		if (thread_state == "stopped" && this.bufferedStopEvents.has(threadId)) {
+			const event: DebugProtocol.StoppedEvent = new StoppedEvent("", threadId);
 			//@ts-ignore
-			event.body.preserveFocusHint = true;
+			event.body.preserveFocusHint = this.bufferedStopEvents.get(threadId)!.preserveFocusHint;
+			event.body.reason = this.bufferedStopEvents.get(threadId)!.reason;
+			event.body.description = this.bufferedStopEvents.get(threadId)!.description;
 			this.sendEvent(event);
+			this.bufferedStopEvents.delete(threadId);
 		}
 	}
-
 	protected threadExitedEvent(info: MINode) {
 		if (trace)
 			this.miDebugger.log("stderr", `threadExitedEvent${JSON.stringify(info)}`);
