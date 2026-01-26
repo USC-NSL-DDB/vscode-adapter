@@ -102,6 +102,11 @@
         "command": "ddbSessionsExplorer.killSession",
         "title": "Kill Session",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "ddbSessionsExplorer.sendSignal",
+        "title": "Send Signal",
+        "icon": "$(broadcast)"
       }
     ],
     "breakpoints": [
@@ -671,6 +676,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "ddbSessionsExplorer.sendSignal",
+          "when": "viewItem == sessionItem",
+          "group": "inline"
+        },
         {
           "command": "ddbSessionsExplorer.killSession",
           "when": "viewItem == sessionItem",

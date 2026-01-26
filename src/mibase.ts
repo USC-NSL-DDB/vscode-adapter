@@ -744,7 +744,7 @@ export class MI2DebugSession extends DebugSession {
     }
     // continue
     if (command == "continue") {
-      const session_id = args.arguments.session_id;
+      const session_id = args.session_id;
 
       new Promise((resolve, reject) => {
         if (trace)
@@ -768,15 +768,48 @@ export class MI2DebugSession extends DebugSession {
       );
     }
 
+    // list-signals
+    if (command == "list-signals") {
+      const session_id = args.sessionId;
+
+      this.miDebugger
+        .sendCommand(`list-signals --session ${session_id}`)
+        .then(
+          (result) => {
+            const rawSignals = result.result("signals") || [];
+            const signals = rawSignals.map((sig: any) => ({
+              name: sig.name,
+              stop: sig.stop,
+              print: sig.print,
+              pass: sig.pass,
+              desc: sig.desc,
+            }));
+            response.body = { signals };
+            this.sendResponse(response);
+          },
+          (msg) => {
+            this.sendErrorResponse(response, 4, `Could not list signals: ${msg}`);
+          }
+        );
+      return;
+    }
+
     // send-signal
     if (command == "send-signal") {
-      const session_id = args.arguments.sessionId;
-      const signame = args.arguments.signal || "SIGINT";
+      const session_id = args.sessionId;
+      const signame = args.signal;
+
+      // No-op if missing required args
+      if (!session_id || !signame) {
+        this.sendResponse(response);
+        return;
+      }
 
       this.miDebugger.sendCommand(
         `send-signal ${signame} --session ${session_id}`
       );
       this.sendResponse(response);
+      return;
     }
   }
   private bkptRequests: Map<number, DeferredBreakpointRequest> = new Map();
