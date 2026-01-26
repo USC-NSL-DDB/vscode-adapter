@@ -772,25 +772,23 @@ export class MI2DebugSession extends DebugSession {
     if (command == "list-signals") {
       const session_id = args.sessionId;
 
-      this.miDebugger
-        .sendCommand(`list-signals --session ${session_id}`)
-        .then(
-          (result) => {
-            const rawSignals = result.result("signals") || [];
-            const signals = rawSignals.map((sig: any) => ({
-              name: sig.name,
-              stop: sig.stop,
-              print: sig.print,
-              pass: sig.pass,
-              desc: sig.desc,
-            }));
-            response.body = { signals };
-            this.sendResponse(response);
-          },
-          (msg) => {
-            this.sendErrorResponse(response, 4, `Could not list signals: ${msg}`);
-          }
+      try {
+        const result = await this.miDebugger.sendCommand(
+          `list-signals --session ${session_id}`
         );
+        const rawSignals = result.result("signals") || [];
+        const signals = rawSignals.map((sig: any) => ({
+          name: MINode.valueOf(sig, "name"),
+          stop: MINode.valueOf(sig, "stop"),
+          print: MINode.valueOf(sig, "print"),
+          pass: MINode.valueOf(sig, "pass"),
+          desc: MINode.valueOf(sig, "description"),
+        }));
+        response.body = { signals };
+        this.sendResponse(response);
+      } catch (msg) {
+        this.sendErrorResponse(response, 4, `Could not list signals: ${msg}`);
+      }
       return;
     }
 
