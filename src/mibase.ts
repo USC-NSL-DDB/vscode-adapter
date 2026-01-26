@@ -100,6 +100,7 @@ export class MI2DebugSession extends DebugSession {
     DebugProtocol.GotoTarget & { path: string }
   > = new Map();
   protected stoppedSessions: Set<number> = new Set();
+  protected pendingInterrupts: Set<number> = new Set();
 
   public constructor(
     debuggerLinesStartAt1: boolean,
@@ -242,23 +243,26 @@ export class MI2DebugSession extends DebugSession {
     for (const sessionId of allSessionIds) {
       if (
         sessionId !== excludeSessionId &&
-        !this.stoppedSessions.has(sessionId)
+        !this.stoppedSessions.has(sessionId) &&
+		!this.pendingInterrupts.has(sessionId)
       ) {
         if (trace)
           this.miDebugger.log(
             "stderr",
             `Interrupting running session ${sessionId}`
           );
+		this.pendingInterrupts.add(sessionId);
         this.miDebugger
           .sendCommand(`exec-interrupt --session ${sessionId}`)
           .then(
-            () => { },
+            () => { this.pendingInterrupts.delete(sessionId);},
             (err) => {
               if (trace)
                 this.miDebugger.log(
                   "stderr",
                   `Failed to interrupt session ${sessionId}: ${err}`
                 );
+				this.pendingInterrupts.delete(sessionId);
             }
           );
       }
