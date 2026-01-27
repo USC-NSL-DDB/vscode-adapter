@@ -908,7 +908,7 @@ export class MI2DebugSession extends DebugSession {
         this.miDebugger
           .sendCommand(`record-time-and-continue --session ${session_id}`)
           .then((info) => {
-            this.markSessionRunning(session_id);
+            // this.markSessionRunning(session_id);
             resolve(info.resultRecords.resultClass == "done");
           }, reject);
       }).then(
