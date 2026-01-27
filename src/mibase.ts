@@ -70,10 +70,17 @@ export enum RunCommand {
 	NONE,
 }
 
+export enum SessionState {
+	UNKNOWN,   // Just created, no *running or *stopped yet
+	RUNNING,   // Received *running event
+	STOPPED,   // Received *stopped event
+}
+
 type M_Thread = {
 	id: number;
 	name: string;
 	groupId: string;
+	pending?: boolean;  // true while waiting for thread-info response
 };
 let fakeThreadId = -1;
 export class MI2DebugSession extends DebugSession {
@@ -100,7 +107,7 @@ export class MI2DebugSession extends DebugSession {
 		number,
 		DebugProtocol.GotoTarget & { path: string }
 	> = new Map();
-	protected stoppedSessions: Set<number> = new Set();
+	protected sessionStates: Map<number, SessionState> = new Map();
 	protected pendingInterrupts: Set<number> = new Set();
 
 	public constructor(
@@ -213,38 +220,53 @@ export class MI2DebugSession extends DebugSession {
 		if (type == "log") type = "stderr";
 		this.sendEvent(new OutputEvent(msg, type));
 	}
-	private getAllSessionIds(): Set<number> {
-		return new Set(this.threadIdToSessionId.values());
-	}
-
 	private markSessionStopped(sessionId: number): void {
-		this.stoppedSessions.add(sessionId);
+		this.sessionStates.set(sessionId, SessionState.STOPPED);
 		if (trace)
 			this.miDebugger.log(
 				"stderr",
-				`Session ${sessionId} marked as stopped. Stopped sessions: ${[
-					...this.stoppedSessions,
-				].join(", ")}`
+				`Session ${sessionId} marked as STOPPED. Session states: ${this.formatSessionStates()}`
 			);
 	}
 
-	private markSessionRunning(sessionId: number): void {
-		this.stoppedSessions.delete(sessionId);
+	private markSessionRunning(sessionId: number,thread_id: number): void {
+		this.sessionStates.set(sessionId, SessionState.RUNNING);
+		this.miDebugger.log(
+				"stderr",
+				`Session ${sessionId} marked as RUNNING by thread ${thread_id}. Session states: ${this.formatSessionStates()}`
+			);
 		if (trace)
 			this.miDebugger.log(
 				"stderr",
-				`Session ${sessionId} marked as running. Stopped sessions: ${[
-					...this.stoppedSessions,
-				].join(", ")}`
+				`Session ${sessionId} marked as RUNNING. Session states: ${this.formatSessionStates()}`
 			);
+	}
+
+	private markSessionCreated(sessionId: number): void {
+		// Only set to UNKNOWN if not already tracked
+		if (!this.sessionStates.has(sessionId)) {
+			this.sessionStates.set(sessionId, SessionState.UNKNOWN);
+			if (trace)
+				this.miDebugger.log(
+					"stderr",
+					`Session ${sessionId} marked as UNKNOWN. Session states: ${this.formatSessionStates()}`
+				);
+		}
+	}
+
+	private formatSessionStates(): string {
+		const entries: string[] = [];
+		for (const [id, state] of this.sessionStates) {
+			entries.push(`${id}:${SessionState[state]}`);
+		}
+		return entries.join(", ");
 	}
 
 	private interruptRunningSessions(excludeSessionId?: number): void {
-		const allSessionIds = this.getAllSessionIds();
-		for (const sessionId of allSessionIds) {
+		for (const [sessionId, state] of this.sessionStates) {
 			if (
 				sessionId !== excludeSessionId &&
-				!this.stoppedSessions.has(sessionId) &&
+				state === SessionState.RUNNING &&
 				!this.pendingInterrupts.has(sessionId)
 			) {
 				if (trace)
@@ -466,7 +488,7 @@ export class MI2DebugSession extends DebugSession {
 
 			// Mark session as running
 			if (sessionId !== undefined) {
-				this.markSessionRunning(sessionId);
+				this.markSessionRunning(sessionId, threadId);
 			}
 
 			const event = new ContinuedEvent(threadId, false);
@@ -542,11 +564,35 @@ export class MI2DebugSession extends DebugSession {
 			);
 		let threadId = parseInt(info.record("id"));
 		const session_id = parseInt(info.record("session-id"));
+		const groupId = info.record("group-id");
+
+		// Mark session as UNKNOWN if not already tracked
+		this.markSessionCreated(session_id);
+
+		// Add thread immediately in pending state before the async call
+		// This ensures threadExitedEvent will find it if the thread exits quickly
+		this.m_threads.set(threadId, {
+			id: threadId,
+			name: `Thread ${threadId} (loading...)`,
+			groupId: groupId,
+			pending: true,
+		});
+		this.threadIdToSessionId.set(threadId, session_id);
+
 		let thread_response = await this.miDebugger.sendCommand(
 			`thread-info --thread ${threadId}`
 		);
+
+		// Check if thread was deleted while we were waiting (by threadExitedEvent)
+		if (!this.m_threads.has(threadId)) {
+			return;
+		}
+
 		const thread_info = thread_response.result("threads");
 		if (thread_info.length != 1) {
+			// No valid thread info, remove the pending entry
+			this.m_threads.delete(threadId);
+			this.threadIdToSessionId.delete(threadId);
 			return;
 		}
 		const name = MINode.valueOf(thread_info[0], "name");
@@ -556,13 +602,13 @@ export class MI2DebugSession extends DebugSession {
 		if (parsed_tid_result.success) {
 			parsed_target_id = parsed_tid_result.tid;
 		}
+
+		// Update the thread with full info (no longer pending)
 		this.m_threads.set(threadId, {
 			id: threadId,
-			// name: `[${info.record("session-alias")}]: Thread ${thread_id}, sid = ${info.record("session-id") }`,
-			name: `${name} [tid=${parsed_target_id}, sid=${session_id}]`,
-			groupId: info.record("group-id"),
+			name: `${name} [tid=${parsed_target_id}, sid=${session_id}], ddb_tid=${threadId}`,
+			groupId: groupId,
 		});
-		this.threadIdToSessionId.set(threadId, parseInt(info.record("session-id")));
 		let thread_state = MINode.valueOf(thread_info[0], "state");
 		this.sendEvent(new ThreadEvent("started", threadId));
 		if (thread_state == "stopped" && this.bufferedStopEvents.has(threadId)) {
@@ -575,10 +621,12 @@ export class MI2DebugSession extends DebugSession {
 			this.bufferedStopEvents.delete(threadId);
 		}
 	}
+
 	protected threadExitedEvent(info: MINode) {
 		if (trace)
 			this.miDebugger.log("stderr", `threadExitedEvent${JSON.stringify(info)}`);
 		var threadId = parseInt(info.record("id"));
+		// Thread will always be in m_threads (added immediately by threadCreatedEvent)
 		this.m_threads.delete(threadId);
 		this.threadIdToSessionId.delete(threadId);
 		this.sendEvent(new ThreadEvent("exited", threadId));

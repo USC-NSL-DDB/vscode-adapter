@@ -1360,6 +1360,7 @@ export class MI2 extends EventEmitter implements IBackend {
         } else resolve(node);
       };
       this.sendRaw(sel + "-" + command);
+      // this.log("log", `--> ${sel}-${command}\n`);
     });
   }
 
