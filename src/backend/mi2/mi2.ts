@@ -1078,23 +1078,25 @@ export class MI2 extends EventEmitter implements IBackend {
     const result = await this.sendCommand(`bt-remote --thread ${thread}`);
     const stack = result.result("stack");
 
-    return stack.map((element: any) => {
-      const level = MINode.valueOf(element, "level");
-      const addr = MINode.valueOf(element, "addr");
-      const func = MINode.valueOf(element, "func");
-      const filename = MINode.valueOf(element, "file");
-      const session_id = MINode.valueOf(element, "session");
-      const thread_id = MINode.valueOf(element, "thread");
-      let file: string = MINode.valueOf(element, "fullname");
-      if (!file) {
-        // Fallback to using `file` if `fullname` is not provided.
-        // GDB does this for some reason when frame filters are used.
-        file = filename;
-      }
-      if (file) {
-        if (this.isSSH) file = path.posix.normalize(file);
-        else file = path.normalize(file);
-      }
+		return stack.map((element: any) => {
+			const level = parseInt(MINode.valueOf(element, "level")) || 0;
+			const addr = MINode.valueOf(element, "addr");
+			const func = MINode.valueOf(element, "func");
+			const filename = MINode.valueOf(element, "file");
+			const session_id = parseInt(MINode.valueOf(element, "session")) || 0;
+			const thread_id = parseInt(MINode.valueOf(element, "thread")) || 0;
+			let file: string = MINode.valueOf(element, "fullname");
+			if (!file) {
+				// Fallback to using `file` if `fullname` is not provided.
+				// GDB does this for some reason when frame filters are used.
+				file = filename
+			}
+			if (file) {
+				if (this.isSSH)
+					file = path.posix.normalize(file);
+				else
+					file = path.normalize(file);
+			}
 
       let line = 0;
       const lnstr = MINode.valueOf(element, "line");
@@ -1358,6 +1360,7 @@ export class MI2 extends EventEmitter implements IBackend {
         } else resolve(node);
       };
       this.sendRaw(sel + "-" + command);
+      // this.log("log", `--> ${sel}-${command}\n`);
     });
   }
 
