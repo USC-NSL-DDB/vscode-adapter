@@ -4,10 +4,11 @@
   "description": "Distributed debug adapter for DDB",
   "keywords": [
     "gdb",
-    "distributed-debugger"
+    "distributed-debugger",
+    "ddb"
   ],
   "license": "public domain",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "publisher": "ddb",
   "icon": "images/ddbicon.webp",
   "engines": {
