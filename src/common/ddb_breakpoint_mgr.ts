@@ -433,6 +433,12 @@ export class BreakpointManager {
       this.updateListeners.delete(callback);
     };
   }
+  
+  // Used to notify listeners externally (e.g., from extension.ts)
+  // So that it can refresh its view.
+  public notifyDataChange(): void {
+    this.notifyListeners();
+  }
 
   /**
    * Notify all registered listeners that data has been updated.

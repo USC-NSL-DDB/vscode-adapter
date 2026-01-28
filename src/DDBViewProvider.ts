@@ -5,7 +5,7 @@ import { logger } from "./logger";
 import * as ddb_api from "./common/ddb_api";
 import { SessionManager } from "./common/ddb_session_mgr";
 import { BreakpointManager } from "./common/ddb_breakpoint_mgr";
-import { NotificationService } from "./common/ddb_notification_service";
+import { NotificationService, BreakpointChangedPayload } from "./common/ddb_notification_service";
 import { LogicalGroup, DDBBreakpoint, SubBreakpoint } from "./common/ddb_api";
 
 // ============================================================================
@@ -301,11 +301,11 @@ type BreakpointTreeItem =
   | BreakpointFileItem
   | BreakpointItem
   | SubBreakpointItem
+  | GroupSessionItem
   | PlaceholderItem;
 
 class BreakpointsProvider
-  implements vscode.TreeDataProvider<BreakpointTreeItem>
-{
+  implements vscode.TreeDataProvider<BreakpointTreeItem> {
   private _onDidChangeTreeData: vscode.EventEmitter<
     BreakpointTreeItem | undefined | null | void
   > = new vscode.EventEmitter<BreakpointTreeItem | undefined | null | void>();
@@ -414,6 +414,16 @@ class BreakpointsProvider
       return this.getSubBreakpointItems(element.breakpoint.subbkpts);
     }
 
+    if (element instanceof SubBreakpointItem) {
+      // Sub-breakpoint level: if it's a group, show sessions within it
+      if (element.subbkpt.type === "group") {
+        const groupId = element.subbkpt.target_group!;
+        return this.getSessionsInGroup(groupId);
+      }
+      // Sessions are not expandable
+      return [];
+    }
+
     return [];
   }
 
@@ -455,6 +465,16 @@ class BreakpointsProvider
 
       return new SubBreakpointItem(sub, displayName);
     });
+  }
+
+  private getSessionsInGroup(groupId: number): GroupSessionItem[] {
+    const group = this.sessionManager.getGroup(groupId);
+    if (!group) {
+      return [];
+    }
+
+    const sessions = this.sessionManager.getSessionsByGroup(groupId);
+    return sessions.map((session) => new GroupSessionItem(session, group));
   }
 }
 
@@ -549,11 +569,11 @@ class BreakpointItem extends vscode.TreeItem {
     this.description = breakpoint.enabled ? "" : "(disabled)";
     this.tooltip = new vscode.MarkdownString(
       `**Breakpoint ${breakpoint.id}**\n\n` +
-        `- File: ${breakpoint.location.src}\n` +
-        `- Line: ${breakpoint.location.line}\n` +
-        `- Enabled: ${breakpoint.enabled}\n` +
-        `- Hit count: ${breakpoint.times}\n` +
-        `- Sub-breakpoints: ${breakpoint.subbkpts.length}`
+      `- File: ${breakpoint.location.src}\n` +
+      `- Line: ${breakpoint.location.line}\n` +
+      `- Enabled: ${breakpoint.enabled}\n` +
+      `- Hit count: ${breakpoint.times}\n` +
+      `- Sub-breakpoints: ${breakpoint.subbkpts.length}`
     );
     this.iconPath = new vscode.ThemeIcon(
       breakpoint.enabled ? "debug-breakpoint" : "debug-breakpoint-disabled"
@@ -562,12 +582,18 @@ class BreakpointItem extends vscode.TreeItem {
 }
 
 // Represents a sub-breakpoint (session or group assignment)
+// Groups are expandable to show sessions within them
 class SubBreakpointItem extends vscode.TreeItem {
   constructor(
     public readonly subbkpt: SubBreakpoint,
     displayName: string
   ) {
-    super(displayName, vscode.TreeItemCollapsibleState.None);
+    // Groups are expandable to show sessions within them
+    const collapsibleState =
+      subbkpt.type === "group"
+        ? vscode.TreeItemCollapsibleState.Collapsed
+        : vscode.TreeItemCollapsibleState.None;
+    super(displayName, collapsibleState);
     this.contextValue =
       subbkpt.type === "group" ? "groupSubBkpt" : "sessionSubBkpt";
     this.iconPath = new vscode.ThemeIcon(
@@ -576,6 +602,29 @@ class SubBreakpointItem extends vscode.TreeItem {
     const targetId =
       subbkpt.type === "group" ? subbkpt.target_group : subbkpt.target_session;
     this.tooltip = `${subbkpt.type === "group" ? "Group" : "Session"} ID: ${targetId}`;
+  }
+}
+
+// Represents a session within a group (when expanding group sub-breakpoints)
+class GroupSessionItem extends vscode.TreeItem {
+  constructor(
+    public readonly session: ddb_api.Session,
+    public readonly group: LogicalGroup
+  ) {
+    super(
+      session.alias || `Session ${session.sid}`,
+      vscode.TreeItemCollapsibleState.None
+    );
+    this.contextValue = "groupSessionItem";
+    this.iconPath = new vscode.ThemeIcon("debug");
+    this.description = session.status;
+    this.tooltip = new vscode.MarkdownString(
+      `**Session ${session.sid}**\n\n` +
+        `- Alias: ${session.alias || "none"}\n` +
+        `- Status: ${session.status}\n` +
+        `- Tag: ${session.tag}\n` +
+        `- Group: ${group.alias || `Group ${group.id}`}`
+    );
   }
 }
 
@@ -659,11 +708,10 @@ export function activate(context: vscode.ExtensionContext) {
       breakpointsProvider.refresh();
     }
   });
-
   context.subscriptions.push({ dispose: breakpointManagerUnsubscribe });
 
   // Subscribe to SessionListChanged notifications from backend
-  const notificationUnsubscribe = notificationService.onNotification(
+  const sessionNotificationUnsubscribe = notificationService.onNotification(
     "SessionListChanged",
     async () => {
       if (sessionsProvider.isDebugSessionActive) {
@@ -675,8 +723,95 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
   );
+  context.subscriptions.push({ dispose: sessionNotificationUnsubscribe });
+  
+  // Subscribe to BreakpointChanged notifications from backend
+  const bkptNotificationUnsubscribe = notificationService.onNotification(
+    "BreakpointChanged",
+    async (data: BreakpointChangedPayload) => {
+      if (sessionsProvider.isDebugSessionActive) {
+        logger.debug(
+          `[DDBViewProvider] BreakpointChanged notification received, type: ${data.type}`
+        );
 
-  context.subscriptions.push({ dispose: notificationUnsubscribe });
+        if (data.type === "TargetChanged") {
+          // Session was added to or removed from a group - group membership changed
+          // The breakpoint targets haven't changed, just the underlying group composition
+          logger.debug(
+            `[DDBViewProvider] TargetChanged: refreshing session data`
+          );
+          await sessionManager.updateAll();
+          breakpointManager.notifyDataChange(); // Notify breakpoint view to refresh as well
+        }
+
+        if (data.type === "Removed") {
+          const breakpointId = data.data as number;
+          logger.debug(
+            `[DDBViewProvider] Breakpoint ${breakpointId} removed from backend`
+          );
+
+          // Get the breakpoint info before it's removed from cache (for cleanup)
+          const removedBp = breakpointManager.getBreakpoint(breakpointId);
+
+          // Refresh the cache
+          await breakpointManager.immediateUpdateAll();
+
+          // If we had the breakpoint info, clean up VSCode breakpoint and decorations
+          if (removedBp) {
+            const bpId = `${path.normalize(removedBp.location.src)}:${removedBp.location.line}`;
+            // Remove from selections map via command
+            await vscode.commands.executeCommand(
+              "ddb.internal.removeBreakpointSelection",
+              bpId
+            );
+          }
+          // Update editor decorations
+          await vscode.commands.executeCommand("ddb.internal.updateDecorations");
+        }
+
+        if (data.type === "Added") {
+          const newBreakpoint = data.data as DDBBreakpoint;
+          logger.debug(
+            `[DDBViewProvider] Breakpoint ${newBreakpoint.id} added on backend`
+          );
+
+          // Refresh cache to include the new breakpoint
+          await breakpointManager.immediateUpdateAll();
+
+          // Sync selections map with all breakpoints
+          const allBreakpoints = breakpointManager.getAllBreakpoints();
+          await vscode.commands.executeCommand(
+            "ddb.internal.syncBreakpointSelections",
+            allBreakpoints
+          );
+
+          // Update editor decorations
+          await vscode.commands.executeCommand("ddb.internal.updateDecorations");
+        }
+
+        if (data.type === "Updated") {
+          const updatedBreakpoint = data.data as DDBBreakpoint;
+          logger.debug(
+            `[DDBViewProvider] Breakpoint ${updatedBreakpoint.id} updated`
+          );
+
+          // Refresh all breakpoints
+          await breakpointManager.immediateUpdateAll();
+
+          // Sync selections map with all breakpoints
+          const allBreakpoints = breakpointManager.getAllBreakpoints();
+          await vscode.commands.executeCommand(
+            "ddb.internal.syncBreakpointSelections",
+            allBreakpoints
+          );
+
+          // Update editor decorations
+          await vscode.commands.executeCommand("ddb.internal.updateDecorations");
+        }
+      }
+    }
+  );
+  context.subscriptions.push({ dispose: bkptNotificationUnsubscribe });
 
   // Subscribe to WebSocket connection state changes
   const wsStateUnsubscribe = notificationService.onConnectionStateChange(

@@ -828,6 +828,52 @@ export function activate(context: vscode.ExtensionContext) {
       updateInlineDecorations();
     })
   );
+
+  // Internal commands for DDBViewProvider to trigger decoration updates
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ddb.internal.updateDecorations", () => {
+      updateInlineDecorations();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ddb.internal.syncBreakpointSelections",
+      (breakpoints: ddb_api.DDBBreakpoint[]) => {
+        // Rebuild breakpointSelectionsMap from DDBBreakpoint data
+        for (const bp of breakpoints) {
+          const bpId = `${path.normalize(bp.location.src)}:${bp.location.line}`;
+          const subbkpts: SubBkpt[] = bp.subbkpts.map((sub) => ({
+            type: sub.type as SubBkptType,
+            target:
+              sub.type === "group" ? sub.target_group! : sub.target_session!,
+          }));
+          breakpointSelectionsMap.set(bpId, { subbkpts });
+        }
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ddb.internal.removeBreakpointSelection",
+      (bpId: string) => {
+        const allBreakpoints = vscode.debug.breakpoints;
+        const bpToRemove = allBreakpoints.find((vsbp) => {
+          if (vsbp instanceof vscode.SourceBreakpoint) {
+            return getBreakpointId(vsbp) === bpId;
+          }
+          return false;
+        });
+
+        breakpointSelectionsMap.delete(bpId);
+        if (bpToRemove) {
+          vscode.debug.removeBreakpoints([bpToRemove]);
+        }
+      }
+    )
+  );
+
   vscode.debug.registerDebugAdapterTrackerFactory(
     "ddb",
     new MyDebugAdapterTrackerFactory()

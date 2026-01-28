@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import { getWebSocketUrl } from "./ddb_api";
+import { DDBBreakpoint, getWebSocketUrl } from "./ddb_api";
 
 // Conditionally import vscode - only available in extension host
 let vscode: any;
@@ -8,6 +8,13 @@ try {
 } catch (e) {
   // vscode module not available (running in debug adapter process)
   vscode = null;
+}
+
+export interface BreakpointChangedPayload {
+  type: "TargetChanged" | "Removed" | "Added" | "Updated";
+  // When type is TargetChanged or Removed, data is the session or group ID (number)
+  // When type is Added or Updated, data is the breakpoint object (DDBBreakpoint)
+  data: number | DDBBreakpoint;
 }
 
 /**
