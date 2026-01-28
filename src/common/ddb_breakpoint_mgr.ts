@@ -101,6 +101,7 @@ export class BreakpointManager {
   private pendingUpdates: Set<string>;
   private readonly DEBOUNCE_MS = 50; // Debounce interval in milliseconds
   private readonly AUTO_REFRESH_MS = 15000; // Default 15 seconds
+  private wsActive: boolean = false; // Flag to control polling when WebSocket is active
 
   // ============================================================================
   // Constructor (Private - Singleton Pattern)
@@ -459,6 +460,14 @@ export class BreakpointManager {
    * @param intervalMs Optional custom interval in milliseconds (default: 15000)
    */
   public startAutoRefresh(intervalMs?: number): void {
+    // Don't start polling if WebSocket is handling updates
+    if (this.wsActive) {
+      console.debug(
+        "[BreakpointManager] WebSocket active, skipping auto-refresh polling"
+      );
+      return;
+    }
+
     this.stopAutoRefresh();
 
     // Read from VSCode config if not provided
@@ -492,6 +501,18 @@ export class BreakpointManager {
       clearInterval(this.refreshInterval);
       this.refreshInterval = null;
     }
+  }
+
+  /**
+   * Set WebSocket active state.
+   * When WebSocket is active, auto-refresh polling is disabled.
+   * When WebSocket is inactive, auto-refresh polling can resume.
+   *
+   * @param active - true if WebSocket is connected and handling updates
+   */
+  public setWebSocketActive(active: boolean): void {
+    this.wsActive = active;
+    console.log(`[BreakpointManager] WebSocket active: ${active}`);
   }
 
   /**

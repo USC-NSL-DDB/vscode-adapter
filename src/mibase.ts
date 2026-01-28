@@ -48,7 +48,7 @@ interface DeferredBreakpointRequest {
 }
 
 class ExtendedVariable {
-  constructor(public name: string, public options: { arg: any }) {}
+  constructor(public name: string, public options: { arg: any }) { }
 }
 
 class VariableScope {
@@ -57,7 +57,7 @@ class VariableScope {
     public readonly threadId: number,
     public readonly level: number,
     public readonly session: number
-  ) {}
+  ) { }
 
   public static variableName(handle: number, name: string): string {
     return `var_${handle}_${name}`;
@@ -158,8 +158,8 @@ export class MI2DebugSession extends DebugSession {
           this.handleMsg(
             "stderr",
             "Code-Debug WARNING: Utility Command Server: Error in command socket " +
-              err.toString() +
-              "\nCode-Debug WARNING: The examine memory location command won't work"
+            err.toString() +
+            "\nCode-Debug WARNING: The examine memory location command won't work"
           );
       });
       if (!fs.existsSync(systemPath.join(os.tmpdir(), "code-debug-sockets")))
@@ -180,8 +180,8 @@ export class MI2DebugSession extends DebugSession {
         this.handleMsg(
           "stderr",
           "Code-Debug WARNING: Utility Command Server: Failed to start " +
-            errorMessage +
-            "\nCode-Debug WARNING: The examine memory location command won't work"
+          errorMessage +
+          "\nCode-Debug WARNING: The examine memory location command won't work"
         );
       }
     }
@@ -223,21 +223,15 @@ export class MI2DebugSession extends DebugSession {
   private markSessionStopped(sessionId: number): void {
     this.sessionStates.set(sessionId, SessionState.STOPPED);
     if (trace)
-      this.miDebugger.log(
-        "stderr",
+      console.error(
         `Session ${sessionId} marked as STOPPED. Session states: ${this.formatSessionStates()}`
       );
   }
 
   private markSessionRunning(sessionId: number, thread_id: number): void {
     this.sessionStates.set(sessionId, SessionState.RUNNING);
-    this.miDebugger.log(
-      "stderr",
-      `Session ${sessionId} marked as RUNNING by thread ${thread_id}. Session states: ${this.formatSessionStates()}`
-    );
     if (trace)
-      this.miDebugger.log(
-        "stderr",
+      console.error(
         `Session ${sessionId} marked as RUNNING. Session states: ${this.formatSessionStates()}`
       );
   }
@@ -247,8 +241,7 @@ export class MI2DebugSession extends DebugSession {
     if (!this.sessionStates.has(sessionId)) {
       this.sessionStates.set(sessionId, SessionState.UNKNOWN);
       if (trace)
-        this.miDebugger.log(
-          "stderr",
+        console.error(
           `Session ${sessionId} marked as UNKNOWN. Session states: ${this.formatSessionStates()}`
         );
     }

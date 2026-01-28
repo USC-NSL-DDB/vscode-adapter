@@ -823,12 +823,16 @@ export function activate(context: vscode.ExtensionContext) {
           );
           sessionManager.setWebSocketActive(true);
           sessionManager.stopAutoRefresh(); // Stop polling
+          breakpointManager.setWebSocketActive(true);
+          breakpointManager.stopAutoRefresh(); // Stop polling
         } else {
           logger.debug(
             "[DDBViewProvider] WebSocket disconnected, enabling polling fallback"
           );
           sessionManager.setWebSocketActive(false);
           sessionManager.startAutoRefresh(); // Resume polling as fallback
+          breakpointManager.setWebSocketActive(false);
+          breakpointManager.startAutoRefresh(); // Resume polling as fallback
         }
       }
     }
@@ -863,6 +867,7 @@ export function activate(context: vscode.ExtensionContext) {
               "[DDBViewProvider] WebSocket connected, disabling polling"
             );
             sessionManager.setWebSocketActive(true);
+            breakpointManager.setWebSocketActive(true);
             // Don't start polling - WebSocket will handle updates
           } else {
             logger.debug(
@@ -870,6 +875,8 @@ export function activate(context: vscode.ExtensionContext) {
             );
             sessionManager.setWebSocketActive(false);
             sessionManager.startAutoRefresh(); // Start polling as fallback
+            breakpointManager.setWebSocketActive(false);
+            breakpointManager.startAutoRefresh(); // Start polling as fallback
           }
         }, 5000); // Wait 5 second for WebSocket connection
 
@@ -877,8 +884,7 @@ export function activate(context: vscode.ExtensionContext) {
         // Tree will auto-refresh via onDataUpdated event when data is ready
         await sessionManager.updateAll();
 
-        // Start BreakpointManager auto-refresh and fetch initial data
-        breakpointManager.startAutoRefresh();
+        // Fetch initial breakpoint data (auto-refresh controlled by WebSocket state above)
         await breakpointManager.updateAll();
       } catch (error) {
         logger.error(
