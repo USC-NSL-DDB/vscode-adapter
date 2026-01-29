@@ -456,24 +456,27 @@ class BreakpointsProvider
       if (sub.type === "group") {
         targetId = sub.target_group!;
         const group = this.sessionManager.getGroup(targetId);
-        displayName = `[Group] ${group?.alias || `Group ${targetId}`}`;
+        displayName = `[Group, grp_id: ${targetId}] ${group?.alias || `Group ${targetId}`}`;
       } else {
         targetId = sub.target_session!;
         const session = this.sessionManager.getSession(targetId);
-        displayName = `[Session] ${session?.alias || `Session ${targetId}`}`;
+        displayName = `[Session, sid: ${targetId}] ${session?.alias || `Session ${targetId}`}`;
       }
 
       return new SubBreakpointItem(sub, displayName);
     });
   }
 
-  private getSessionsInGroup(groupId: number): GroupSessionItem[] {
+  private getSessionsInGroup(groupId: number): BreakpointTreeItem[] {
     const group = this.sessionManager.getGroup(groupId);
     if (!group) {
-      return [];
+      return [new PlaceholderItem("Currently no active session in this group")];
     }
 
     const sessions = this.sessionManager.getSessionsByGroup(groupId);
+    if (sessions.length === 0) {
+      return [new PlaceholderItem("Currently no active session in this group")];
+    }
     return sessions.map((session) => new GroupSessionItem(session, group));
   }
 }
@@ -612,11 +615,11 @@ class GroupSessionItem extends vscode.TreeItem {
     public readonly group: LogicalGroup
   ) {
     super(
-      session.alias || `Session ${session.sid}`,
+      `↳ [sid: ${session.sid}] ${session.alias || "unnamed"}`,
       vscode.TreeItemCollapsibleState.None
     );
     this.contextValue = "groupSessionItem";
-    this.iconPath = new vscode.ThemeIcon("debug");
+    // this.iconPath = new vscode.ThemeIcon("debug");
     this.description = session.status;
     this.tooltip = new vscode.MarkdownString(
       `**Session ${session.sid}**\n\n` +
@@ -934,6 +937,16 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(sessionsVisibilityListener);
+
+  const breakpointsVisibilityListener =
+    breakpointsTreeView.onDidChangeVisibility((e) => {
+      if (e.visible && breakpointsProvider.isDebugSessionActive) {
+        // Refresh tree when becoming visible during active debug session
+        breakpointsProvider.refresh();
+      }
+    });
+
+  context.subscriptions.push(breakpointsVisibilityListener);
 
   // Initial refresh
   sessionsProvider.refresh();
