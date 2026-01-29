@@ -47,6 +47,7 @@ enum Endpoint {
   ResolveSrcToGroups = "/src_to_grps",
   GetGroups = "/groups",
   GetGroup = "/group",
+  GetBreakpoints = "/bkpts",
   PendingCommands = "/pcommands",
   FinishedCommands = "/fcommands",
   Status = "/status",
@@ -94,6 +95,31 @@ export interface LogicalGroup {
   hash: string;
   alias: string;
   sids: Set<number>;
+}
+
+// Breakpoint-related interfaces
+export interface BreakpointLocation {
+  src: string;
+  line: number;
+}
+
+export interface SubBreakpoint {
+  type: "session" | "group";
+  id: number;                 // Sub-breakpoint's own ID
+  target_session?: number;    // Present when type === "session"
+  target_group?: number;      // Present when type === "group"
+}
+
+export interface DDBBreakpoint {
+  id: number;
+  location: BreakpointLocation;
+  enabled: boolean;
+  times: number;
+  subbkpts: SubBreakpoint[];
+}
+
+export interface GetBreakpointsResponse {
+  bkpts: DDBBreakpoint[];
 }
 
 export async function getSessions(): Promise<Session[]> {
@@ -175,4 +201,15 @@ export async function resolveSrcToGroups(src: string): Promise<LogicalGroup[]> {
     params: { src } satisfies SourceResolver
   });
   return response.data.grps;
+}
+
+/**
+ * GET /bkpts
+ * Retrieves all breakpoints from the DDB backend
+ */
+export async function getBreakpoints(): Promise<DDBBreakpoint[]> {
+  const response = await axios.get<GetBreakpointsResponse>(
+    get_url(Endpoint.GetBreakpoints)
+  );
+  return response.data.bkpts;
 }

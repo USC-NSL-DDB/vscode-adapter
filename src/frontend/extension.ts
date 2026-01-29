@@ -9,28 +9,33 @@ import { DebugProtocol } from "vscode-debugprotocol";
 import { get } from "http";
 import { logger } from "../logger";
 import { SessionManager } from "../common/ddb_session_mgr";
+import { BreakpointManager } from "../common/ddb_breakpoint_mgr";
 import * as ddb_api from "../common/ddb_api";
-import { Session } from "../common/ddb_api";
-
-// SubBkpt types (matching backend/backend.ts)
-enum SubBkptType {
-  Group = "group",
-  Session = "session",
-}
-
-interface SubBkpt {
-  id?: number;
-  type: SubBkptType;
-  target: number;
-}
+import { Session, SubBreakpoint } from "../common/ddb_api";
+import { SubBkpt, SubBkptType } from "../backend/backend";
 
 // Helper functions to extract groupIds/sessionIds from subbkpts for display
-function extractGroupIds(subbkpts: SubBkpt[] | undefined): number[] {
-  return subbkpts?.filter(s => s.type === SubBkptType.Group).map(s => s.target) || [];
+// These work with both SubBkpt (DAP format) and SubBreakpoint (API format)
+function extractGroupIds(subbkpts: SubBkpt[] | SubBreakpoint[] | undefined): number[] {
+  if (!subbkpts) return [];
+  return subbkpts
+    .filter(s => s.type === "group")
+    .map(s => {
+      // Handle both formats: SubBkpt uses 'target', SubBreakpoint uses 'target_group'
+      if ('target' in s) return (s as SubBkpt).target;
+      return (s as SubBreakpoint).target_group!;
+    });
 }
 
-function extractSessionIds(subbkpts: SubBkpt[] | undefined): number[] {
-  return subbkpts?.filter(s => s.type === SubBkptType.Session).map(s => s.target) || [];
+function extractSessionIds(subbkpts: SubBkpt[] | SubBreakpoint[] | undefined): number[] {
+  if (!subbkpts) return [];
+  return subbkpts
+    .filter(s => s.type === "session")
+    .map(s => {
+      // Handle both formats: SubBkpt uses 'target', SubBreakpoint uses 'target_session'
+      if ('target' in s) return (s as SubBkpt).target;
+      return (s as SubBreakpoint).target_session!;
+    });
 }
 // class GDBDebugAdapterTracker implements vscode.DebugAdapterTracker {
 // 	private stateEmitter: vscode.EventEmitter<any>;
@@ -101,7 +106,7 @@ interface BreakpointTarget {
 }
 
 const breakpointSelectionsMap = new Map<string, BreakpointTarget>();
-const breakpointSessionsMapExp = new Map<string, string[]>(); // Map breakpoint ID to session IDs (for display)
+// Note: breakpointSessionsMapExp removed - now using BreakpointManager for breakpoint panel display
 
 function getBreakpointId(bp: vscode.Breakpoint): string {
   // VSCode doesn't expose an ID directly, but you can generate one based on its properties
@@ -142,9 +147,9 @@ interface SessionQuickPickItem extends vscode.QuickPickItem {
   isGroupHeader?: boolean; // Distinguish group headers from session items
 }
 
-// Return type for session selection - unified SubBkpt array
+// Return type for session selection - unified SubBkpt array (DAP format)
 interface SessionSelection {
-  subbkpts: SubBkpt[]; // Combined groups and sessions as SubBkpt array
+  subbkpts: SubBkpt[];
 }
 
 async function promptForSessions(
@@ -476,7 +481,7 @@ async function promptForSessions(
     quickPick.onDidAccept(() => {
       accepted = true;
 
-      // Build final selection as SubBkpt array
+      // Build final selection as SubBkpt array (DAP format)
       const subbkpts: SubBkpt[] = [];
 
       // Add selected groups
@@ -547,7 +552,7 @@ async function handleSetBreakpoints(message: any) {
       !existingSelection ||
       existingSelection.subbkpts.length === 0
     ) {
-      const selection = await promptForSessions(source);
+      const selection: SessionSelection | undefined = await promptForSessions(source);
       console.log("debug2", selection);
 
       const noSelection = (!selection) || selection.subbkpts.length === 0;
@@ -602,7 +607,7 @@ async function handleSetBreakpoints(message: any) {
   }
   const response: DebugProtocol.SetBreakpointsResponse =
     await session.customRequest("setSessionBreakpoints", message);
-  console.log("debug5", JSON.stringify(response, null, 2));
+  console.log("debug5", response);
   // add sessionids to vscode breakpoints
   for (const vscodebp of vscode.debug.breakpoints) {
     if (vscodebp instanceof vscode.SourceBreakpoint) {
@@ -623,15 +628,8 @@ async function handleSetBreakpoints(message: any) {
       }
     }
   }
-  breakpointSessionsMapExp.clear();
-  //@ts-ignore
-  for (const bp of response.breakpoints) {
-    // Extract sessionIds for backward compatibility with display map
-    breakpointSessionsMapExp.set(
-      getBreakpointIdFromDAP(bp, bp.source.path),
-      extractSessionIds(bp.subbkpts).map(String)
-    );
-  }
+  // Refresh BreakpointManager to update the breakpoints panel
+  await BreakpointManager.getInstance().immediateUpdateAll();
   updateInlineDecorations();
 }
 
@@ -774,7 +772,6 @@ export function activate(context: vscode.ExtensionContext) {
   vscode.debug.onDidStartDebugSession((session) => {
     console.log("Debug session started: ", session);
     breakpointSelectionsMap.clear();
-    breakpointSessionsMapExp.clear();
   });
   // vscode.debug.onDidChangeBreakpoints(async (event) => {
   // });
@@ -820,7 +817,6 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Clear the maps
         breakpointSelectionsMap.clear();
-        breakpointSessionsMapExp.clear();
       }
       updateInlineDecorations();
     })
@@ -832,11 +828,57 @@ export function activate(context: vscode.ExtensionContext) {
       updateInlineDecorations();
     })
   );
+
+  // Internal commands for DDBViewProvider to trigger decoration updates
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ddb.internal.updateDecorations", () => {
+      updateInlineDecorations();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ddb.internal.syncBreakpointSelections",
+      (breakpoints: ddb_api.DDBBreakpoint[]) => {
+        // Rebuild breakpointSelectionsMap from DDBBreakpoint data
+        for (const bp of breakpoints) {
+          const bpId = `${path.normalize(bp.location.src)}:${bp.location.line}`;
+          const subbkpts: SubBkpt[] = bp.subbkpts.map((sub) => ({
+            type: sub.type as SubBkptType,
+            target:
+              sub.type === "group" ? sub.target_group! : sub.target_session!,
+          }));
+          breakpointSelectionsMap.set(bpId, { subbkpts });
+        }
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ddb.internal.removeBreakpointSelection",
+      (bpId: string) => {
+        const allBreakpoints = vscode.debug.breakpoints;
+        const bpToRemove = allBreakpoints.find((vsbp) => {
+          if (vsbp instanceof vscode.SourceBreakpoint) {
+            return getBreakpointId(vsbp) === bpId;
+          }
+          return false;
+        });
+
+        breakpointSelectionsMap.delete(bpId);
+        if (bpToRemove) {
+          vscode.debug.removeBreakpoints([bpToRemove]);
+        }
+      }
+    )
+  );
+
   vscode.debug.registerDebugAdapterTrackerFactory(
     "ddb",
     new MyDebugAdapterTrackerFactory()
   );
-  ddbviewactivate(context, breakpointSessionsMapExp);
+  ddbviewactivate(context);
   // const rootPath =
   // 	vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
   // 		? vscode.workspace.workspaceFolders[0].uri.fsPath

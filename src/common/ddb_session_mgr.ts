@@ -117,7 +117,7 @@ export class SessionManager {
   private refreshInterval: NodeJS.Timeout | null;
   private debounceTimeout: NodeJS.Timeout | null;
   private pendingUpdates: Set<string>;
-  private readonly DEBOUNCE_MS = 50; // Debounce interval in milliseconds
+  private readonly DEBOUNCE_MS = 100; // Debounce interval in milliseconds
   private readonly AUTO_REFRESH_MS = 15000; // Default 15 seconds
   private wsActive: boolean = false; // Flag to control polling when WebSocket is active
 
