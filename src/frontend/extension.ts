@@ -106,7 +106,7 @@ interface BreakpointTarget {
 }
 
 const breakpointSelectionsMap = new Map<string, BreakpointTarget>();
-// Note: breakpointSessionsMapExp removed - now using BreakpointManager for breakpoint panel display
+const breakpointHitSessionMap = new Map<string, number[]>(); // Map breakpoint ID to the session ID that hit it
 
 function getBreakpointId(bp: vscode.Breakpoint): string {
   // VSCode doesn't expose an ID directly, but you can generate one based on its properties
@@ -654,10 +654,25 @@ class MyDebugAdapterTracker implements vscode.DebugAdapterTracker {
       // updateBreakpointDecorations();
       // updateInlineDecorations();
     }
-    if(message.type==="event" && message.event==="stopped" && message.body?.reason==="breakpoint"){
-      console.log("DAP Message Sent: ", message);
+    if(message.type==="event"){
+      console.log("Received event ", message,message.body.threadId);
+      if (message.event==="stopped" && message.body?.reason==="breakpoint"){
+        const breakpointInfo = (message as DebugProtocol.StoppedEvent).breakpointInfo;
+        if (breakpointInfo) {
+          const bpId = `${path.normalize(breakpointInfo.file)}:${breakpointInfo.line}`;
+          if (!breakpointHitSessionMap.has(bpId)) {
+            breakpointHitSessionMap.set(bpId, []);
+          }
+          breakpointHitSessionMap.get(bpId)?.push(breakpointInfo.session_id);
+          updateInlineDecorations();
+        }
+      }
+      if (message.event==="continued"){
+        breakpointHitSessionMap.clear();
+        updateInlineDecorations();
+      }
     }
-   
+
   }
 }
 
@@ -694,7 +709,7 @@ function updateInlineDecorations() {
     updateEditorDecorations(editor);
   });
 }
-
+vscode.debug.onDidChangeActiveStackItem
 function updateEditorDecorations(editor: vscode.TextEditor) {
   const decorations: vscode.DecorationOptions[] = [];
   const activeSession = vscode.debug.activeDebugSession;
@@ -733,9 +748,17 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
         const groupPart = groupIds.length ? `Groups: ${groupIds.join(", ")}` : "";
         const sessionPart = sessionIds.length ? `Sessions: ${sessionIds.join(", ")}` : "";
         const separator = groupPart && sessionPart ? " | " : "";
-        statusText = `✓ ${groupPart}${separator}${sessionPart}`;
-        backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
-        foregroundColor = "#008000"; // Darker green text
+        const hitSessionId = breakpointHitSessionMap.get(bpId);
+        hitSessionId?.sort((a, b) => a - b);
+        const hitPart = hitSessionId != null ? ` | Hit by Session: ${hitSessionId}` : "";
+        statusText = `✓ ${groupPart}${separator}${sessionPart}${hitPart}`;
+        if (hitSessionId != null) {
+          backgroundColor = "rgba(255, 100, 100, 0.2)"; // Light red for hit breakpoint
+          foregroundColor = "#CC0000"; // Red text
+        } else {
+          backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
+          foregroundColor = "#008000"; // Darker green text
+        }
       }
 
       const groupIdsDisplay = extractGroupIds(selection?.subbkpts);
@@ -776,6 +799,7 @@ export function activate(context: vscode.ExtensionContext) {
   vscode.debug.onDidStartDebugSession((session) => {
     console.log("Debug session started: ", session);
     breakpointSelectionsMap.clear();
+    breakpointHitSessionMap.clear();
   });
   // vscode.debug.onDidChangeBreakpoints(async (event) => {
   // });
@@ -821,6 +845,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Clear the maps
         breakpointSelectionsMap.clear();
+        breakpointHitSessionMap.clear();
       }
       updateInlineDecorations();
     })

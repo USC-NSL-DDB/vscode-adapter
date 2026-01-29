@@ -41,9 +41,11 @@ const trace = process.env.TRACE?.toLowerCase() === "true";
 declare module "vscode-debugprotocol" {
   namespace DebugProtocol {
     interface StoppedEvent {
-      breakpointInfo?:{
+      breakpointInfo?: {
         session_id: number;
-      }
+        file: string;
+        line: number;
+      };
     }
   }
 }
@@ -294,7 +296,7 @@ export class MI2DebugSession extends DebugSession {
       }
     }
   }
-  
+
   protected handleBreakpoint(info: MINode) {
     const bp_thread_id = parseInt(info.record("thread-id"));
     const session_id = parseInt(info.record("session-id"));
@@ -306,7 +308,11 @@ export class MI2DebugSession extends DebugSession {
     this.interruptRunningSessions(session_id);
 
     const event = new StoppedEvent("breakpoint", bp_thread_id);
-    (event as DebugProtocol.StoppedEvent).breakpointInfo = {session_id: session_id};
+    (event as DebugProtocol.StoppedEvent).breakpointInfo = {
+      session_id: session_id,
+      file: info.record("frame.file"),
+      line: parseInt(info.record("frame.line")),
+    };
     this.sendEvent(event);
     const stopped_threads: [] = info.record("stopped-threads");
     if (stopped_threads.length > 1) {
