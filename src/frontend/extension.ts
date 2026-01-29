@@ -709,7 +709,6 @@ function updateInlineDecorations() {
     updateEditorDecorations(editor);
   });
 }
-vscode.debug.onDidChangeActiveStackItem
 function updateEditorDecorations(editor: vscode.TextEditor) {
   const decorations: vscode.DecorationOptions[] = [];
   const activeSession = vscode.debug.activeDebugSession;
@@ -788,14 +787,20 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
   editor.setDecorations(inlineDecorationType, decorations);
 }
 const trasactionId = 0;
+// Status bar item for showing current stack frame info
+let stackFrameStatusBar: vscode.StatusBarItem;
+
 export function activate(context: vscode.ExtensionContext) {
   logger.info("Starting gdb adapter extension.......");
-  // let disposable = vscode.commands.registerCommand("extension.showInfo", () => {
-  //   vscode.window.showInformationMessage("Hello from your VSCode extension!");
-  //   const breakpoints = vscode.debug.breakpoints;
-  //   console.log("Breakpoints: ", breakpoints);
-  // });
-  // context.subscriptions.push(disposable);
+
+  // Create status bar item for stack frame display
+  stackFrameStatusBar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left,
+    -1
+  );
+  stackFrameStatusBar.name = "Current Stack Frame";
+  context.subscriptions.push(stackFrameStatusBar);
+
   vscode.debug.onDidStartDebugSession((session) => {
     console.log("Debug session started: ", session);
     breakpointSelectionsMap.clear();
@@ -846,6 +851,7 @@ export function activate(context: vscode.ExtensionContext) {
         // Clear the maps
         breakpointSelectionsMap.clear();
         breakpointHitSessionMap.clear();
+        stackFrameStatusBar.hide();
       }
       updateInlineDecorations();
     })
@@ -855,6 +861,27 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.debug.onDidChangeActiveDebugSession(() => {
       updateInlineDecorations();
+    })
+  );
+
+  // Update status bar when user focuses a different stack frame or thread
+  context.subscriptions.push(
+    vscode.debug.onDidChangeActiveStackItem((stackItem) => {
+      if (stackItem instanceof vscode.DebugStackFrame) {
+        const frameId = stackItem.frameId;
+        const sessionId = frameId >>> 24;
+        const level = (frameId >> 16) & 0xff;
+        const threadId = stackItem.threadId;
+        stackFrameStatusBar.text = `$(debug-stackframe) Session ${sessionId} | Thread ${threadId}, Frame ${level}`;
+        stackFrameStatusBar.tooltip = `Session: ${sessionId}\nThread: ${threadId}\nFrame Level: ${level}`;
+        stackFrameStatusBar.show();
+      } else if (stackItem instanceof vscode.DebugThread) {
+        stackFrameStatusBar.text = `$(debug-stackframe) Thread ${stackItem.threadId}`;
+        stackFrameStatusBar.tooltip = `Thread ${stackItem.threadId}`;
+        stackFrameStatusBar.show();
+      } else {
+        stackFrameStatusBar.hide();
+      }
     })
   );
 
