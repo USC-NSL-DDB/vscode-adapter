@@ -654,6 +654,10 @@ class MyDebugAdapterTracker implements vscode.DebugAdapterTracker {
       // updateBreakpointDecorations();
       // updateInlineDecorations();
     }
+    if(message.type==="event" && message.event==="stopped" && message.body?.reason==="breakpoint"){
+      console.log("DAP Message Sent: ", message);
+    }
+   
   }
 }
 
