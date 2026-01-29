@@ -316,8 +316,9 @@ export class MI2DebugSession extends DebugSession {
         this.sendEvent(event);
       }
     } else {
-      const event = new StoppedEvent("", undefined);
-      (event as DebugProtocol.StoppedEvent).body.allThreadsStopped = true;
+      const event:DebugProtocol.StoppedEvent = new StoppedEvent("", undefined);
+      event.body.allThreadsStopped = true;
+      event.body.preserveFocusHint = true;
       this.sendEvent(event);
     }
     this.sendEvent(
@@ -362,6 +363,7 @@ export class MI2DebugSession extends DebugSession {
           undefined
         );
         event.body.allThreadsStopped = true;
+        event.body.preserveFocusHint = true;
         this.sendEvent(event);
       }
       return;
@@ -379,8 +381,9 @@ export class MI2DebugSession extends DebugSession {
           this.sendEvent(event);
         }
       } else {
-        const event = new StoppedEvent("", undefined);
-        (event as DebugProtocol.StoppedEvent).body.allThreadsStopped = true;
+        const event: DebugProtocol.StoppedEvent = new StoppedEvent("", undefined);
+        event.body.allThreadsStopped = true;
+        event.body.preserveFocusHint = true;
         this.sendEvent(event);
       }
       return;
@@ -408,8 +411,9 @@ export class MI2DebugSession extends DebugSession {
           stepEvent.body.preserveFocusHint = false;
           this.sendEvent(stepEvent);
         } else {
-          const event = new StoppedEvent("step", step_thread_id);
-          (event as DebugProtocol.StoppedEvent).body.allThreadsStopped = true;
+          const event: DebugProtocol.StoppedEvent = new StoppedEvent("step", step_thread_id);
+          event.body.allThreadsStopped = true;
+          event.body.preserveFocusHint = false;
           this.sendEvent(event);
         }
         break;
@@ -425,8 +429,9 @@ export class MI2DebugSession extends DebugSession {
             }
           }
         } else {
-          const event = new StoppedEvent("", undefined);
-          (event as DebugProtocol.StoppedEvent).body.allThreadsStopped = true;
+          const event: DebugProtocol.StoppedEvent = new StoppedEvent("", undefined);
+          event.body.allThreadsStopped = true;
+          event.body.preserveFocusHint = true;
           this.sendEvent(event);
         }
         this.sendEvent(new StoppedEvent("step", step_thread_id));
@@ -475,8 +480,9 @@ export class MI2DebugSession extends DebugSession {
         this.sendEvent(event);
       }
     } else {
-      const event = new StoppedEvent("", undefined);
-      (event as DebugProtocol.StoppedEvent).body.allThreadsStopped = true;
+      const event: DebugProtocol.StoppedEvent = new StoppedEvent("", undefined);
+      event.body.allThreadsStopped = true;
+      event.body.preserveFocusHint = true;
       this.sendEvent(event);
     }
   }
@@ -1253,6 +1259,7 @@ export class MI2DebugSession extends DebugSession {
         const event: DebugProtocol.StoppedEvent = new StoppedEvent("pause", 1);
         event.body.description = "paused on attach";
         event.body.allThreadsStopped = true;
+        event.body.preserveFocusHint = true;
         this.sendEvent(event);
         break;
       }
