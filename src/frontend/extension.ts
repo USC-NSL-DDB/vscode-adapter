@@ -13,6 +13,11 @@ import { BreakpointManager } from "../common/ddb_breakpoint_mgr";
 import * as ddb_api from "../common/ddb_api";
 import { Session, SubBreakpoint } from "../common/ddb_api";
 import { SubBkpt, SubBkptType } from "../backend/backend";
+import { OTelService } from "../common/otel";
+import {
+  getOrCreateUserId,
+  generateSessionId,
+} from "../common/user_session";
 
 // Helper functions to extract groupIds/sessionIds from subbkpts for display
 // These work with both SubBkpt (DAP format) and SubBreakpoint (API format)
@@ -724,7 +729,6 @@ class MyDebugAdapterTracker implements vscode.DebugAdapterTracker {
 
         updateExecutionLineDecorations();
       }
-
       if (message.event === "continued") {
         breakpointHitSessionMap.clear();
         updateInlineDecorations();
@@ -931,7 +935,7 @@ const trasactionId = 0;
 // Status bar item for showing current stack frame info
 let stackFrameStatusBar: vscode.StatusBarItem;
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   logger.info("Starting gdb adapter extension.......");
 
   // Create status bar item for stack frame display
@@ -942,14 +946,32 @@ export function activate(context: vscode.ExtensionContext) {
   stackFrameStatusBar.name = "Current Stack Frame";
   context.subscriptions.push(stackFrameStatusBar);
 
+  // Initialize OpenTelemetry
+  try {
+    const userId = await getOrCreateUserId();
+    const sessionId = generateSessionId();
+    const otel = OTelService.initialize("ddb-ext", userId, sessionId);
+
+    // Register shutdown handler
+    context.subscriptions.push({
+      dispose: async () => {
+        await otel.shutdown();
+      },
+    });
+
+    logger.info(`[OTel] VSCode Extension Host initialized with userId=${userId}, sessionId=${sessionId}`);
+    OTelService.log_info(`[OTel] VSCode Extension Host initialized with userId=${userId}, sessionId=${sessionId}`);
+  } catch (error) {
+    logger.error("[OTel] Failed to initialize OpenTelemetry:", error);
+  }
+
   vscode.debug.onDidStartDebugSession((session) => {
     console.log("Debug session started: ", session);
     breakpointSelectionsMap.clear();
     breakpointHitSessionMap.clear();
     stoppedFramesMap.clear();
   });
-  // vscode.debug.onDidChangeBreakpoints(async (event) => {
-  // });
+
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => {
       updateInlineDecorations();
