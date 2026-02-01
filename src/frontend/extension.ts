@@ -889,6 +889,81 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Command to jump to the currently focused stack frame
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ddb.jumpToFocusedFrame", async () => {
+      const activeSession = vscode.debug.activeDebugSession;
+      if (!activeSession || activeSession.type !== "ddb") {
+        vscode.window.showWarningMessage("No active DDB debug session");
+        return;
+      }
+
+      const activeStackItem = vscode.debug.activeStackItem;
+      if (!activeStackItem) {
+        vscode.window.showWarningMessage("No stack frame is currently focused");
+        return;
+      }
+
+      if (activeStackItem instanceof vscode.DebugStackFrame) {
+        const frameId = activeStackItem.frameId;
+        const threadId = activeStackItem.threadId;
+
+        try {
+          // Request stack trace from debug adapter
+          const stackResponse = await activeSession.customRequest("stackTrace", {
+            threadId: threadId,
+            startFrame: 0,
+            levels: 100,
+          });
+
+          // Find the frame matching our frameId
+          const frame = stackResponse.stackFrames?.find(
+            (f: { id: number }) => f.id === frameId
+          );
+
+          if (frame && frame.source?.path) {
+            // Handle both local file paths and remote URIs (e.g., vscode-remote://)
+            const sourcePath = frame.source.path;
+            const uri = sourcePath.includes("://")
+              ? vscode.Uri.parse(sourcePath)
+              : vscode.Uri.file(sourcePath);
+            const line = Math.max(0, (frame.line ?? 1) - 1); // VSCode uses 0-based lines
+            const column = Math.max(0, (frame.column ?? 1) - 1);
+
+            const document = await vscode.workspace.openTextDocument(uri);
+            const editor = await vscode.window.showTextDocument(document, {
+              preserveFocus: false,
+              preview: false,
+            });
+
+            // Move cursor to the frame location and reveal it
+            const position = new vscode.Position(line, column);
+            editor.selection = new vscode.Selection(position, position);
+            editor.revealRange(
+              new vscode.Range(position, position),
+              vscode.TextEditorRevealType.InCenter
+            );
+
+            // Also focus the Call Stack view to highlight the frame
+            await vscode.commands.executeCommand(
+              "workbench.debug.action.focusCallStackView"
+            );
+          } else {
+            vscode.window.showWarningMessage(
+              "Unable to find source location for the focused frame"
+            );
+          }
+        } catch (error) {
+          vscode.window.showErrorMessage(`Failed to jump to frame: ${error}`);
+        }
+      } else if (activeStackItem instanceof vscode.DebugThread) {
+        vscode.window.showInformationMessage(
+          "Please select a specific stack frame, not just a thread"
+        );
+      }
+    })
+  );
+
   // Internal commands for DDBViewProvider to trigger decoration updates
   context.subscriptions.push(
     vscode.commands.registerCommand("ddb.internal.updateDecorations", () => {
