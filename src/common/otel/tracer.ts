@@ -2,10 +2,11 @@ import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-grpc";
 import { Resource } from "@opentelemetry/resources";
-import { trace, Tracer } from "@opentelemetry/api";
+import { Tracer } from "@opentelemetry/api";
 
 /**
  * Sets up the tracer provider with OTLP gRPC exporter.
+ * Note: Does NOT register globally to prevent other extensions from using it.
  */
 export function setupTracer(
   resource: Resource,
@@ -20,14 +21,15 @@ export function setupTracer(
     spanProcessors: [new BatchSpanProcessor(exporter)],
   });
 
-  provider.register();
+  // Don't call provider.register() - keep provider private
+  // This prevents other extensions from sending traces through our exporter
 
   return provider;
 }
 
 /**
- * Gets a tracer instance by name.
+ * Gets a tracer instance directly from the provider.
  */
-export function getTracer(name: string): Tracer {
-  return trace.getTracer(name);
+export function getTracer(provider: NodeTracerProvider, name: string): Tracer {
+  return provider.getTracer(name);
 }

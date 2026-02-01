@@ -7,9 +7,9 @@ import { Logger, SeverityNumber } from "@opentelemetry/api-logs";
 import type { OTelConfig } from "./types";
 import { getOTelConfig } from "./config";
 import { createResource } from "./resource";
-import { setupTracer, getTracer } from "./tracer";
-import { setupMeter, getMeter } from "./meter";
-import { setupLogger, getLogger } from "./logger";
+import { setupTracer } from "./tracer";
+import { setupMeter } from "./meter";
+import { setupLogger } from "./logger";
 
 // Version from package.json - update when version changes
 const VERSION = "0.0.8";
@@ -17,6 +17,9 @@ const VERSION = "0.0.8";
 /**
  * Singleton service for OpenTelemetry tracing, metrics, and logging.
  * Supports both VSCode extension and debug adapter processes.
+ *
+ * Note: Providers are NOT registered globally to prevent other extensions
+ * from sending telemetry through our exporters.
  */
 export class OTelService {
   private static instance: OTelService | null = null;
@@ -103,27 +106,36 @@ export class OTelService {
   }
 
   /**
-   * Gets a tracer instance.
+   * Gets a tracer instance directly from the provider.
    * @param name Optional tracer name, defaults to app name
    */
   public tracer(name?: string): Tracer {
-    return getTracer(name ?? this.config.appName);
+    if (!this.tracerProvider) {
+      throw new Error("Tracer provider not initialized");
+    }
+    return this.tracerProvider.getTracer(name ?? this.config.appName);
   }
 
   /**
-   * Gets a meter instance.
+   * Gets a meter instance directly from the provider.
    * @param name Optional meter name, defaults to app name
    */
   public meter(name?: string): Meter {
-    return getMeter(name ?? this.config.appName);
+    if (!this.meterProvider) {
+      throw new Error("Meter provider not initialized");
+    }
+    return this.meterProvider.getMeter(name ?? this.config.appName);
   }
 
   /**
-   * Gets a logger instance.
+   * Gets a logger instance directly from the provider.
    * @param name Optional logger name, defaults to app name
    */
   public logger(name?: string): Logger {
-    return getLogger(name ?? this.config.appName);
+    if (!this.loggerProvider) {
+      throw new Error("Logger provider not initialized");
+    }
+    return this.loggerProvider.getLogger(name ?? this.config.appName);
   }
 
   public static log_trace(message: string): void {
@@ -190,6 +202,4 @@ export class OTelService {
   }
 }
 
-// Re-export helpers for direct access
-export { getTracer, getMeter, getLogger };
 export type { OTelConfig };
