@@ -867,6 +867,10 @@ export function activate(context: vscode.ExtensionContext) {
   // Update status bar when user focuses a different stack frame or thread
   context.subscriptions.push(
     vscode.debug.onDidChangeActiveStackItem((stackItem) => {
+      if (vscode.debug.activeDebugSession?.type !== "ddb") {
+        stackFrameStatusBar.hide();
+        return;
+      }
       if (stackItem instanceof vscode.DebugStackFrame) {
         const frameId = stackItem.frameId;
         const sessionId = frameId >>> 24;
