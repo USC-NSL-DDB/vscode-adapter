@@ -72,6 +72,16 @@
           "description": "Auto-refresh interval for breakpoint manager data during active debug session (milliseconds)",
           "minimum": 1000,
           "maximum": 300000
+        },
+        "ddb.otel.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable OpenTelemetry telemetry (tracing, metrics, logging)"
+        },
+        "ddb.otel.endpoint": {
+          "type": "string",
+          "default": "http://ruby1.nsl.usc.edu:54317",
+          "description": "OpenTelemetry OTLP gRPC endpoint for sending telemetry data"
         }
       }
     },
@@ -736,6 +746,16 @@
     "prettier-check-docs": "prettier --check **/*.md"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/api-logs": "^0.57.0",
+    "@opentelemetry/exporter-logs-otlp-grpc": "^0.57.0",
+    "@opentelemetry/exporter-metrics-otlp-grpc": "^0.57.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.57.0",
+    "@opentelemetry/resources": "^1.30.0",
+    "@opentelemetry/sdk-logs": "^0.57.0",
+    "@opentelemetry/sdk-metrics": "^1.30.0",
+    "@opentelemetry/sdk-trace-node": "^1.30.0",
+    "@opentelemetry/semantic-conventions": "^1.28.0",
     "axios": "^1.7.4",
     "lodash": "^4.17.21",
     "ssh2": "^1.6.0",

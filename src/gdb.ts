@@ -15,11 +15,10 @@ import { DebugProtocol } from "vscode-debugprotocol";
 import { MI2, escape } from "./backend/mi2/mi2";
 import { SSHArguments, ValuesFormattingMode } from "./backend/backend";
 import * as fs from "fs";
-import * as path from "path";
-import * as os from "os";
-import * as crypto from "crypto";
 import { promisify } from "util";
 import { spawn } from "child_process";
+import { OTelService } from "./common/otel";
+import { getOrCreateUserId, generateSessionId } from "./common/user_session";
 
 const accessAsync = promisify(fs.access);
 
@@ -95,32 +94,10 @@ async function checkDDBExists(ddbpath: string): Promise<void> {
   });
 }
 
-async function getOrCreateUserId(): Promise<string> {
-  const userIdPath = path.join(os.homedir(), ".config", "ddb", "user_id");
-
-  try {
-    // Try to read existing user ID
-    const userId = await fs.promises.readFile(userIdPath, "utf-8");
-    return userId.trim();
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
-      // File doesn't exist - generate new UUID and write it
-      const newUserId = crypto.randomUUID();
-
-      // Create parent directories
-      const dir = path.dirname(userIdPath);
-      await fs.promises.mkdir(dir, { recursive: true });
-
-      // Write the new user ID
-      await fs.promises.writeFile(userIdPath, newUserId, "utf-8");
-
-      return newUserId;
-    }
-    throw err;
-  }
-}
 
 class GDBDebugSession extends MI2DebugSession {
+  private otelService: OTelService | null = null;
+
   protected override initializeRequest(
     response: DebugProtocol.InitializeResponse,
     args: DebugProtocol.InitializeRequestArguments
@@ -152,15 +129,33 @@ class GDBDebugSession extends MI2DebugSession {
 
       // 3. Get or create user ID and generate session ID
       const userId = await getOrCreateUserId();
-      const sessionId = crypto.randomUUID();
+      const sessionId = generateSessionId();
 
-      // 4. Initialize the MI Debugger
+      // 4. Initialize OpenTelemetry
+      try {
+        this.otelService = OTelService.initialize("ddb-da", userId, sessionId);
+      } catch (otelError) {
+        console.error("[OTel] Failed to initialize:", otelError);
+      }
+      
+      const debugger_args_with_otel = [
+        ...args.debugger_args,
+        "--enable-otel",
+        "--user-id",
+        `${userId}`,
+        "--session-id",
+        `${sessionId}`,
+      ];
+
+      // 5. Initialize the MI Debugger
       this.miDebugger = new MI2(
         args.ddbpath,
         [args.configFilePath],
-        args.debugger_args,
+        debugger_args_with_otel,
         args.env
       );
+      
+      OTelService.log_info(`[OTel] Debugger Adapter initialized with userId=${userId}, sessionId=${sessionId}`);
 
       // Set various properties
       this.setPathSubstitutions(args.pathSubstitutions);
@@ -225,6 +220,19 @@ class GDBDebugSession extends MI2DebugSession {
         );
       });
     }
+  }
+
+  protected override disconnectRequest(
+    response: DebugProtocol.DisconnectResponse,
+    args: DebugProtocol.DisconnectArguments
+  ): void {
+    // Shutdown OTEL before disconnecting
+    if (this.otelService) {
+      this.otelService
+        .shutdown()
+        .catch((err) => console.error("[OTel] Shutdown error:", err));
+    }
+    super.disconnectRequest(response, args);
   }
 }
 console.log("Starting gdb adapter.......");

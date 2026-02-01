@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__duckduckgo-mcp-server__fetch_content",
+      "Bash(npx tsc:*)",
+      "mcp__github-docs__search_generic_documentation",
+      "Bash(npm run compile:*)"
+    ]
+  }
+}
