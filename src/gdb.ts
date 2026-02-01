@@ -15,6 +15,9 @@ import { DebugProtocol } from "vscode-debugprotocol";
 import { MI2, escape } from "./backend/mi2/mi2";
 import { SSHArguments, ValuesFormattingMode } from "./backend/backend";
 import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+import * as crypto from "crypto";
 import { promisify } from "util";
 import { spawn } from "child_process";
 
@@ -92,6 +95,31 @@ async function checkDDBExists(ddbpath: string): Promise<void> {
   });
 }
 
+async function getOrCreateUserId(): Promise<string> {
+  const userIdPath = path.join(os.homedir(), ".config", "ddb", "user_id");
+
+  try {
+    // Try to read existing user ID
+    const userId = await fs.promises.readFile(userIdPath, "utf-8");
+    return userId.trim();
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      // File doesn't exist - generate new UUID and write it
+      const newUserId = crypto.randomUUID();
+
+      // Create parent directories
+      const dir = path.dirname(userIdPath);
+      await fs.promises.mkdir(dir, { recursive: true });
+
+      // Write the new user ID
+      await fs.promises.writeFile(userIdPath, newUserId, "utf-8");
+
+      return newUserId;
+    }
+    throw err;
+  }
+}
+
 class GDBDebugSession extends MI2DebugSession {
   protected override initializeRequest(
     response: DebugProtocol.InitializeResponse,
@@ -122,7 +150,11 @@ class GDBDebugSession extends MI2DebugSession {
       // 2. Check if DDB exists
       await checkDDBExists(args.ddbpath);
 
-      // 3. Initialize the MI Debugger
+      // 3. Get or create user ID and generate session ID
+      const userId = await getOrCreateUserId();
+      const sessionId = crypto.randomUUID();
+
+      // 4. Initialize the MI Debugger
       this.miDebugger = new MI2(
         args.ddbpath,
         [args.configFilePath],
