@@ -4,10 +4,11 @@ import {
 } from "@opentelemetry/sdk-metrics";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-grpc";
 import { Resource } from "@opentelemetry/resources";
-import { metrics, Meter } from "@opentelemetry/api";
+import { Meter } from "@opentelemetry/api";
 
 /**
  * Sets up the meter provider with OTLP gRPC exporter.
+ * Note: Does NOT register globally to prevent other extensions from using it.
  */
 export function setupMeter(
   resource: Resource,
@@ -27,14 +28,15 @@ export function setupMeter(
     ],
   });
 
-  metrics.setGlobalMeterProvider(meterProvider);
+  // Don't call metrics.setGlobalMeterProvider() - keep provider private
+  // This prevents other extensions from sending metrics through our exporter
 
   return meterProvider;
 }
 
 /**
- * Gets a meter instance by name.
+ * Gets a meter instance directly from the provider.
  */
-export function getMeter(name: string): Meter {
-  return metrics.getMeter(name);
+export function getMeter(provider: MeterProvider, name: string): Meter {
+  return provider.getMeter(name);
 }
