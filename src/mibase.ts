@@ -58,6 +58,10 @@ interface StoppedFrameInfo {
   line: number;
   level: number;
 }
+
+type StoppedEventBodyWithFrameInfo = DebugProtocol.StoppedEvent['body'] & {
+  stoppedFrameInfo?: StoppedFrameInfo;
+};
 // Deferred promise for synchronizing breakpoint requests
 interface DeferredBreakpointRequest {
   promise: Promise<DebugProtocol.SetBreakpointsResponse>;
@@ -438,7 +442,7 @@ export class MI2DebugSession extends DebugSession {
           );
           stepEvent.body.preserveFocusHint = false;
           if (stoppedFrameInfo) {
-            (stepEvent.body as any).stoppedFrameInfo = stoppedFrameInfo;
+            (stepEvent.body as StoppedEventBodyWithFrameInfo).stoppedFrameInfo = stoppedFrameInfo;
           }
           this.sendEvent(stepEvent);
         } else {
@@ -446,7 +450,7 @@ export class MI2DebugSession extends DebugSession {
           event.body.allThreadsStopped = true;
           event.body.preserveFocusHint = false;
           if (stoppedFrameInfo) {
-            (event.body as any).stoppedFrameInfo = stoppedFrameInfo;
+            (event.body as StoppedEventBodyWithFrameInfo).stoppedFrameInfo = stoppedFrameInfo;
           }
           this.sendEvent(event);
         }
@@ -470,7 +474,7 @@ export class MI2DebugSession extends DebugSession {
         }
         const defaultStepEvent: DebugProtocol.StoppedEvent = new StoppedEvent("step", step_thread_id);
         if (stoppedFrameInfo) {
-          (defaultStepEvent.body as any).stoppedFrameInfo = stoppedFrameInfo;
+          (defaultStepEvent.body as StoppedEventBodyWithFrameInfo).stoppedFrameInfo = stoppedFrameInfo;
         }
         this.sendEvent(defaultStepEvent);
     }
