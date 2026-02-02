@@ -120,6 +120,11 @@
         "command": "ddbSessionsExplorer.sendSignal",
         "title": "Send Signal",
         "icon": "$(broadcast)"
+      },
+      {
+        "command": "ddb.jumpToFocusedFrame",
+        "title": "Jump to Focused Frame",
+        "icon": "$(target)"
       }
     ],
     "breakpoints": [
@@ -671,6 +676,13 @@
       ]
     },
     "menus": {
+      "debug/toolBar": [
+        {
+          "command": "ddb.jumpToFocusedFrame",
+          "when": "debugState == stopped && debugType == ddb",
+          "group": "navigation"
+        }
+      ],
       "view/title": [
         {
           "command": "ddbSessionsExplorer.toggleGrouping",

@@ -105,8 +105,16 @@ interface BreakpointTarget {
   subbkpts: SubBkpt[];
 }
 
+interface StoppedFrameInfo {
+  sessionId: number;
+  threadId: number;
+  frameLevel: number;
+}
+
 const breakpointSelectionsMap = new Map<string, BreakpointTarget>();
 const breakpointHitSessionMap = new Map<string, number[]>(); // Map breakpoint ID to the session ID that hit it
+// Map from "normalized_file_path:line" -> StoppedFrameInfo[] for tracking all stopped frames
+const stoppedFramesMap = new Map<string, StoppedFrameInfo[]>();
 
 function getBreakpointId(bp: vscode.Breakpoint): string {
   // VSCode doesn't expose an ID directly, but you can generate one based on its properties
@@ -138,6 +146,32 @@ function associateBreakpointWithSelection(
 ) {
   const bpId = getBreakpointId(bp);
   breakpointSelectionsMap.set(bpId, selection);
+}
+
+function addStoppedFrame(file: string, line: number, info: StoppedFrameInfo) {
+  const key = `${path.normalize(file)}:${line}`;
+  if (!stoppedFramesMap.has(key)) {
+    stoppedFramesMap.set(key, []);
+  }
+  // Avoid duplicates
+  const frames = stoppedFramesMap.get(key)!;
+  const exists = frames.some(f =>
+    f.sessionId === info.sessionId && f.threadId === info.threadId
+  );
+  if (!exists) {
+    frames.push(info);
+  }
+}
+
+function removeStoppedFramesByThread(threadId: number) {
+  for (const [key, frames] of stoppedFramesMap) {
+    const filtered = frames.filter(f => f.threadId !== threadId);
+    if (filtered.length === 0) {
+      stoppedFramesMap.delete(key);
+    } else {
+      stoppedFramesMap.set(key, filtered);
+    }
+  }
 }
 
 // Define a custom QuickPickItem type that can hold our session data
@@ -654,22 +688,55 @@ class MyDebugAdapterTracker implements vscode.DebugAdapterTracker {
       // updateBreakpointDecorations();
       // updateInlineDecorations();
     }
-    if(message.type==="event"){
-      console.log("Received event ", message,message.body.threadId);
-      if (message.event==="stopped" && message.body?.reason==="breakpoint"){
-        const breakpointInfo = (message as DebugProtocol.StoppedEvent).breakpointInfo;
-        if (breakpointInfo) {
-          const bpId = `${path.normalize(breakpointInfo.file)}:${breakpointInfo.line}`;
-          if (!breakpointHitSessionMap.has(bpId)) {
-            breakpointHitSessionMap.set(bpId, []);
+    if (message.type === "event") {
+      console.log("Received event ", message, message.body?.threadId);
+
+      if (message.event === "stopped") {
+        // Handle breakpoint stops
+        if (message.body?.reason === "breakpoint") {
+          const breakpointInfo = (message as DebugProtocol.StoppedEvent).breakpointInfo;
+          if (breakpointInfo) {
+            const bpId = `${path.normalize(breakpointInfo.file)}:${breakpointInfo.line}`;
+            if (!breakpointHitSessionMap.has(bpId)) {
+              breakpointHitSessionMap.set(bpId, []);
+            }
+            breakpointHitSessionMap.get(bpId)?.push(breakpointInfo.session_id);
+            updateInlineDecorations();
+
+            // Track stopped frame for execution line decoration
+            addStoppedFrame(breakpointInfo.file, breakpointInfo.line, {
+              sessionId: breakpointInfo.session_id,
+              threadId: (breakpointInfo as any).thread_id ?? message.body?.threadId ?? 0,
+              frameLevel: 0,
+            });
           }
-          breakpointHitSessionMap.get(bpId)?.push(breakpointInfo.session_id);
-          updateInlineDecorations();
         }
+
+        // Handle step/other stops with stoppedFrameInfo
+        const stoppedFrameInfo = (message as any).body?.stoppedFrameInfo;
+        if (stoppedFrameInfo && stoppedFrameInfo.file) {
+          addStoppedFrame(stoppedFrameInfo.file, stoppedFrameInfo.line, {
+            sessionId: stoppedFrameInfo.session_id,
+            threadId: stoppedFrameInfo.thread_id,
+            frameLevel: stoppedFrameInfo.level ?? 0,
+          });
+        }
+
+        updateExecutionLineDecorations();
       }
-      if (message.event==="continued"){
+
+      if (message.event === "continued") {
         breakpointHitSessionMap.clear();
         updateInlineDecorations();
+
+        // Clear frames for the continued thread
+        const threadId = message.body?.threadId;
+        if (threadId !== undefined) {
+          removeStoppedFramesByThread(threadId);
+        } else if (message.body?.allThreadsContinued) {
+          stoppedFramesMap.clear();
+        }
+        updateExecutionLineDecorations();
       }
     }
 
@@ -701,6 +768,11 @@ const inlineDecorationType = vscode.window.createTextEditorDecorationType({
     margin: "0 0 0 8px",
   },
   rangeBehavior: vscode.DecorationRangeBehavior.ClosedOpen,
+});
+
+// Decoration type for showing stopped frame info at execution lines
+const executionLineDecorationType = vscode.window.createTextEditorDecorationType({
+  rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
 });
 
 function updateInlineDecorations() {
@@ -747,17 +819,19 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
         const groupPart = groupIds.length ? `Groups: ${groupIds.join(", ")}` : "";
         const sessionPart = sessionIds.length ? `Sessions: ${sessionIds.join(", ")}` : "";
         const separator = groupPart && sessionPart ? " | " : "";
-        const hitSessionId = breakpointHitSessionMap.get(bpId);
-        hitSessionId?.sort((a, b) => a - b);
-        const hitPart = hitSessionId != null ? ` | Hit by Session: ${hitSessionId}` : "";
-        statusText = `✓ ${groupPart}${separator}${sessionPart}${hitPart}`;
-        if (hitSessionId != null) {
-          backgroundColor = "rgba(255, 100, 100, 0.2)"; // Light red for hit breakpoint
-          foregroundColor = "#CC0000"; // Red text
-        } else {
-          backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
-          foregroundColor = "#008000"; // Darker green text
-        }
+        // const hitSessionId = breakpointHitSessionMap.get(bpId);
+        // hitSessionId?.sort((a, b) => a - b);
+        // const hitPart = hitSessionId != null ? ` | Hit by Session: ${hitSessionId}` : "";
+        statusText = `✓ ${groupPart}${separator}${sessionPart}`;
+        backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
+        foregroundColor = "#008000"; // Darker green text
+        // if (hitSessionId != null) {
+        //   backgroundColor = "rgba(255, 100, 100, 0.2)"; // Light red for hit breakpoint
+        //   foregroundColor = "#CC0000"; // Red text
+        // } else {
+        //   backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
+        //   foregroundColor = "#008000"; // Darker green text
+        // }
       }
 
       const groupIdsDisplay = extractGroupIds(selection?.subbkpts);
@@ -786,6 +860,73 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
   }
   editor.setDecorations(inlineDecorationType, decorations);
 }
+
+function updateExecutionLineDecorations() {
+  vscode.window.visibleTextEditors.forEach((editor) => {
+    updateEditorExecutionDecorations(editor);
+  });
+}
+
+function updateEditorExecutionDecorations(editor: vscode.TextEditor) {
+  const decorations: vscode.DecorationOptions[] = [];
+  const activeSession = vscode.debug.activeDebugSession;
+
+  if (!activeSession || activeSession.type !== "ddb") {
+    editor.setDecorations(executionLineDecorationType, []);
+    return;
+  }
+
+  const editorPath = path.normalize(editor.document.uri.fsPath);
+
+  for (const [key, frames] of stoppedFramesMap) {
+    // Split on last colon to handle paths with colons (e.g., C:\path\file.ts:10)
+    const lastColonIndex = key.lastIndexOf(":");
+    if (lastColonIndex === -1) continue;
+
+    const filePath = key.substring(0, lastColonIndex);
+    const lineStr = key.substring(lastColonIndex + 1);
+
+    if (path.normalize(filePath) !== editorPath) continue;
+
+    const lineNum = parseInt(lineStr);
+    const line = lineNum - 1; // VSCode is 0-indexed
+    if (line < 0 || line >= editor.document.lineCount) continue;
+
+    const lineText = editor.document.lineAt(line);
+    const range = new vscode.Range(line, lineText.text.length, line, lineText.text.length);
+
+    const sortedFrames = [...frames].sort((a, b) =>
+      a.sessionId - b.sessionId || a.threadId - b.threadId
+    );
+
+    let label: string;
+    if (sortedFrames.length === 1) {
+      const f = sortedFrames[0];
+      label = `Session ${f.sessionId}, Thread ${f.threadId}`;
+    } else {
+      const labelParts = sortedFrames.map(f =>
+        `S${f.sessionId},T${f.threadId}`
+      );
+      label = `[${sortedFrames.length} threads] ${labelParts.join(" ⋅ ")}`;
+    }
+
+    decorations.push({
+      range,
+      renderOptions: {
+        after: {
+          contentText: `Executing by: ${label} `,
+          color: "#D4A017",
+          fontStyle: "italic",
+          fontWeight: "500",
+          margin: "0 2em 0 2em",
+        }
+      }
+    });
+  }
+
+  editor.setDecorations(executionLineDecorationType, decorations);
+}
+
 const trasactionId = 0;
 // Status bar item for showing current stack frame info
 let stackFrameStatusBar: vscode.StatusBarItem;
@@ -805,12 +946,14 @@ export function activate(context: vscode.ExtensionContext) {
     console.log("Debug session started: ", session);
     breakpointSelectionsMap.clear();
     breakpointHitSessionMap.clear();
+    stoppedFramesMap.clear();
   });
   // vscode.debug.onDidChangeBreakpoints(async (event) => {
   // });
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => {
       updateInlineDecorations();
+      updateExecutionLineDecorations();
     })
   );
 
@@ -818,6 +961,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.onDidChangeVisibleTextEditors(() => {
       updateInlineDecorations();
+      updateExecutionLineDecorations();
     })
   );
 
@@ -851,9 +995,11 @@ export function activate(context: vscode.ExtensionContext) {
         // Clear the maps
         breakpointSelectionsMap.clear();
         breakpointHitSessionMap.clear();
+        stoppedFramesMap.clear();
         stackFrameStatusBar.hide();
       }
       updateInlineDecorations();
+      updateExecutionLineDecorations();
     })
   );
 
@@ -861,6 +1007,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.debug.onDidChangeActiveDebugSession(() => {
       updateInlineDecorations();
+      updateExecutionLineDecorations();
     })
   );
 
@@ -885,6 +1032,69 @@ export function activate(context: vscode.ExtensionContext) {
         stackFrameStatusBar.show();
       } else {
         stackFrameStatusBar.hide();
+      }
+    })
+  );
+
+  // Command to jump to the currently focused stack frame
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ddb.jumpToFocusedFrame", async () => {
+      const activeSession = vscode.debug.activeDebugSession;
+      if (!activeSession || activeSession.type !== "ddb") {
+        vscode.window.showWarningMessage("No active DDB debug session");
+        return;
+      }
+
+      const activeStackItem = vscode.debug.activeStackItem;
+      if (!activeStackItem) {
+        vscode.window.showWarningMessage("No stack frame is currently focused");
+        return;
+      }
+
+      if (activeStackItem instanceof vscode.DebugStackFrame) {
+        const frameId = activeStackItem.frameId;
+        const threadId = activeStackItem.threadId;
+
+        try {
+          // Request stack trace from debug adapter
+          const stackResponse = await activeSession.customRequest("stackTrace", {
+            threadId: threadId,
+            startFrame: 0,
+            levels: 100,
+          });
+
+          // Find the frame matching our frameId
+          const frame = stackResponse.stackFrames?.find(
+            (f: { id: number }) => f.id === frameId
+          );
+
+          if (frame && frame.source?.path) {
+            // await vscode.commands.executeCommand(
+            //   "workbench.action.debug.callStackDown"
+            // ).then(async () => {
+            //   await vscode.commands.executeCommand(
+            //     "workbench.action.debug.callStackUp"
+            //   );
+            // });
+
+            const sourcePath = frame.source.path;
+            const uri = sourcePath.includes("://")
+              ? vscode.Uri.parse(sourcePath)
+              : vscode.Uri.file(sourcePath);
+            const line = Math.max(0, (frame.line ?? 1) - 1); // VSCode uses 0-based lines
+            const column = Math.max(0, (frame.column ?? 1) - 1);
+
+            await vscode.commands.executeCommand("vscode.open", uri, {
+              selection: new vscode.Range(line, column, line, column),
+            });
+          }
+        } catch (error) {
+          vscode.window.showErrorMessage(`Failed to jump to frame: ${error}`);
+        }
+      } else if (activeStackItem instanceof vscode.DebugThread) {
+        vscode.window.showInformationMessage(
+          "Please select a specific stack frame, not just a thread"
+        );
       }
     })
   );
