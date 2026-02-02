@@ -819,17 +819,19 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
         const groupPart = groupIds.length ? `Groups: ${groupIds.join(", ")}` : "";
         const sessionPart = sessionIds.length ? `Sessions: ${sessionIds.join(", ")}` : "";
         const separator = groupPart && sessionPart ? " | " : "";
-        const hitSessionId = breakpointHitSessionMap.get(bpId);
-        hitSessionId?.sort((a, b) => a - b);
-        const hitPart = hitSessionId != null ? ` | Hit by Session: ${hitSessionId}` : "";
-        statusText = `✓ ${groupPart}${separator}${sessionPart}${hitPart}`;
-        if (hitSessionId != null) {
-          backgroundColor = "rgba(255, 100, 100, 0.2)"; // Light red for hit breakpoint
-          foregroundColor = "#CC0000"; // Red text
-        } else {
-          backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
-          foregroundColor = "#008000"; // Darker green text
-        }
+        // const hitSessionId = breakpointHitSessionMap.get(bpId);
+        // hitSessionId?.sort((a, b) => a - b);
+        // const hitPart = hitSessionId != null ? ` | Hit by Session: ${hitSessionId}` : "";
+        statusText = `✓ ${groupPart}${separator}${sessionPart}`;
+        backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
+        foregroundColor = "#008000"; // Darker green text
+        // if (hitSessionId != null) {
+        //   backgroundColor = "rgba(255, 100, 100, 0.2)"; // Light red for hit breakpoint
+        //   foregroundColor = "#CC0000"; // Red text
+        // } else {
+        //   backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
+        //   foregroundColor = "#008000"; // Darker green text
+        // }
       }
 
       const groupIdsDisplay = extractGroupIds(selection?.subbkpts);
@@ -899,7 +901,6 @@ function updateEditorExecutionDecorations(editor: vscode.TextEditor) {
 
     let label: string;
     if (sortedFrames.length === 1) {
-      // Single session: full format with icon
       const f = sortedFrames[0];
       label = `Session ${f.sessionId}, Thread ${f.threadId}`;
     } else {
@@ -913,7 +914,7 @@ function updateEditorExecutionDecorations(editor: vscode.TextEditor) {
       range,
       renderOptions: {
         after: {
-          contentText: `  Executing by: ${label} `,
+          contentText: `Executing by: ${label} `,
           color: "#D4A017",
           fontStyle: "italic",
           fontWeight: "500",
