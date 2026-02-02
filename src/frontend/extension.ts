@@ -819,11 +819,11 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
         const groupPart = groupIds.length ? `Groups: ${groupIds.join(", ")}` : "";
         const sessionPart = sessionIds.length ? `Sessions: ${sessionIds.join(", ")}` : "";
         const separator = groupPart && sessionPart ? " | " : "";
-        let hitSessionId = breakpointHitSessionMap.get(bpId);
-        hitSessionId = [...new Set(hitSessionId)]?.sort((a, b) => a - b);
-        const hitPart = hitSessionId != null ? ` | Hit by Session: ${hitSessionId}` : "";
+        const hitSessionIds = breakpointHitSessionMap.get(bpId) ?? [];
+        const uniqueSorted = [...new Set(hitSessionIds)].sort((a, b) => a - b);
+        const hitPart = uniqueSorted.length > 0 ? ` | Hit by Session: ${uniqueSorted}` : "";
         statusText = `✓ ${groupPart}${separator}${sessionPart}${hitPart}`;
-        if (hitSessionId.length != 0) {
+        if (uniqueSorted.length > 0) {
           backgroundColor = "rgba(255, 100, 100, 0.2)"; // Light red for hit breakpoint
           foregroundColor = "#CC0000"; // Red text
         } else {
