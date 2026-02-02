@@ -1087,6 +1087,10 @@ export function activate(context: vscode.ExtensionContext) {
             await vscode.commands.executeCommand("vscode.open", uri, {
               selection: new vscode.Range(line, column, line, column),
             });
+          } else {
+            vscode.window.showWarningMessage(  
+              "Could not find the focused stack frame or has no source path to open"  
+            ); 
           }
         } catch (error) {
           vscode.window.showErrorMessage(`Failed to jump to frame: ${error}`);
