@@ -43,11 +43,20 @@ declare module "vscode-debugprotocol" {
     interface StoppedEvent {
       breakpointInfo?: {
         session_id: number;
+        thread_id: number;
         file: string;
         line: number;
       };
     }
   }
+}
+
+interface StoppedFrameInfo {
+  session_id: number;
+  thread_id: number;
+  file: string;
+  line: number;
+  level: number;
 }
 // Deferred promise for synchronizing breakpoint requests
 interface DeferredBreakpointRequest {
@@ -310,6 +319,7 @@ export class MI2DebugSession extends DebugSession {
     const event = new StoppedEvent("breakpoint", bp_thread_id);
     (event as DebugProtocol.StoppedEvent).breakpointInfo = {
       session_id: session_id,
+      thread_id: bp_thread_id,
       file: info.record("frame.file"),
       line: parseInt(info.record("frame.line")),
     };
@@ -398,6 +408,15 @@ export class MI2DebugSession extends DebugSession {
       return;
     }
 
+    // Build stoppedFrameInfo for step events
+    const stoppedFrameInfo: StoppedFrameInfo | undefined = info ? {
+      session_id: session_id,
+      thread_id: step_thread_id!,
+      file: info.record("frame.file"),
+      line: parseInt(info.record("frame.line") || "0"),
+      level: 0,
+    } : undefined;
+
     switch (reason) {
       case "end-stepping-range":
         if (stopped_threads.length > 1) {
@@ -418,11 +437,17 @@ export class MI2DebugSession extends DebugSession {
             step_thread_id
           );
           stepEvent.body.preserveFocusHint = false;
+          if (stoppedFrameInfo) {
+            (stepEvent.body as any).stoppedFrameInfo = stoppedFrameInfo;
+          }
           this.sendEvent(stepEvent);
         } else {
           const event: DebugProtocol.StoppedEvent = new StoppedEvent("step", step_thread_id);
           event.body.allThreadsStopped = true;
           event.body.preserveFocusHint = false;
+          if (stoppedFrameInfo) {
+            (event.body as any).stoppedFrameInfo = stoppedFrameInfo;
+          }
           this.sendEvent(event);
         }
         break;
@@ -443,7 +468,11 @@ export class MI2DebugSession extends DebugSession {
           event.body.preserveFocusHint = true;
           this.sendEvent(event);
         }
-        this.sendEvent(new StoppedEvent("step", step_thread_id));
+        const defaultStepEvent: DebugProtocol.StoppedEvent = new StoppedEvent("step", step_thread_id);
+        if (stoppedFrameInfo) {
+          (defaultStepEvent.body as any).stoppedFrameInfo = stoppedFrameInfo;
+        }
+        this.sendEvent(defaultStepEvent);
     }
   }
 
