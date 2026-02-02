@@ -654,9 +654,9 @@ class MyDebugAdapterTracker implements vscode.DebugAdapterTracker {
       // updateBreakpointDecorations();
       // updateInlineDecorations();
     }
-    if(message.type==="event"){
-      console.log("Received event ", message,message.body.threadId);
-      if (message.event==="stopped" && message.body?.reason==="breakpoint"){
+    if (message.type === "event") {
+      console.log("Received event ", message, message.body.threadId);
+      if (message.event === "stopped" && message.body?.reason === "breakpoint") {
         const breakpointInfo = (message as DebugProtocol.StoppedEvent).breakpointInfo;
         if (breakpointInfo) {
           const bpId = `${path.normalize(breakpointInfo.file)}:${breakpointInfo.line}`;
@@ -667,7 +667,7 @@ class MyDebugAdapterTracker implements vscode.DebugAdapterTracker {
           updateInlineDecorations();
         }
       }
-      if (message.event==="continued"){
+      if (message.event === "continued") {
         breakpointHitSessionMap.clear();
         updateInlineDecorations();
       }
@@ -922,7 +922,14 @@ export function activate(context: vscode.ExtensionContext) {
           );
 
           if (frame && frame.source?.path) {
-            // Handle both local file paths and remote URIs (e.g., vscode-remote://)
+            await vscode.commands.executeCommand(
+              "workbench.action.debug.callStackDown"
+            ).then(async () => {
+              await vscode.commands.executeCommand(
+                "workbench.action.debug.callStackUp"
+              );
+            });
+
             const sourcePath = frame.source.path;
             const uri = sourcePath.includes("://")
               ? vscode.Uri.parse(sourcePath)
@@ -930,28 +937,9 @@ export function activate(context: vscode.ExtensionContext) {
             const line = Math.max(0, (frame.line ?? 1) - 1); // VSCode uses 0-based lines
             const column = Math.max(0, (frame.column ?? 1) - 1);
 
-            const document = await vscode.workspace.openTextDocument(uri);
-            const editor = await vscode.window.showTextDocument(document, {
-              preserveFocus: false,
-              preview: false,
+            await vscode.commands.executeCommand("vscode.open", uri, {
+              selection: new vscode.Range(line, column, line, column),
             });
-
-            // Move cursor to the frame location and reveal it
-            const position = new vscode.Position(line, column);
-            editor.selection = new vscode.Selection(position, position);
-            editor.revealRange(
-              new vscode.Range(position, position),
-              vscode.TextEditorRevealType.InCenter
-            );
-
-            // Also focus the Call Stack view to highlight the frame
-            await vscode.commands.executeCommand(
-              "workbench.debug.action.focusCallStackView"
-            );
-          } else {
-            vscode.window.showWarningMessage(
-              "Unable to find source location for the focused frame"
-            );
           }
         } catch (error) {
           vscode.window.showErrorMessage(`Failed to jump to frame: ${error}`);
