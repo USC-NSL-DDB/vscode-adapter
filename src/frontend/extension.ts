@@ -908,7 +908,7 @@ function updateEditorExecutionDecorations(editor: vscode.TextEditor) {
       range,
       renderOptions: {
         after: {
-          contentText: `  ← ${label}`,
+          contentText: ` ← ${label}`,
           color: new vscode.ThemeColor("editorLineNumber.foreground"),
           fontStyle: "italic",
           margin: "0 0 0 1em",
