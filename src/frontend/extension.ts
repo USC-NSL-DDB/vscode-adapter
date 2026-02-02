@@ -819,19 +819,17 @@ function updateEditorDecorations(editor: vscode.TextEditor) {
         const groupPart = groupIds.length ? `Groups: ${groupIds.join(", ")}` : "";
         const sessionPart = sessionIds.length ? `Sessions: ${sessionIds.join(", ")}` : "";
         const separator = groupPart && sessionPart ? " | " : "";
-        // const hitSessionId = breakpointHitSessionMap.get(bpId);
-        // hitSessionId?.sort((a, b) => a - b);
-        // const hitPart = hitSessionId != null ? ` | Hit by Session: ${hitSessionId}` : "";
-        statusText = `✓ ${groupPart}${separator}${sessionPart}`;
-        backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
-        foregroundColor = "#008000"; // Darker green text
-        // if (hitSessionId != null) {
-        //   backgroundColor = "rgba(255, 100, 100, 0.2)"; // Light red for hit breakpoint
-        //   foregroundColor = "#CC0000"; // Red text
-        // } else {
-        //   backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
-        //   foregroundColor = "#008000"; // Darker green text
-        // }
+        let hitSessionId = breakpointHitSessionMap.get(bpId);
+        hitSessionId = [...new Set(hitSessionId)]?.sort((a, b) => a - b);
+        const hitPart = hitSessionId != null ? ` | Hit by Session: ${hitSessionId}` : "";
+        statusText = `✓ ${groupPart}${separator}${sessionPart}${hitPart}`;
+        if (hitSessionId.length != 0) {
+          backgroundColor = "rgba(255, 100, 100, 0.2)"; // Light red for hit breakpoint
+          foregroundColor = "#CC0000"; // Red text
+        } else {
+          backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
+          foregroundColor = "#008000"; // Darker green text
+        }
       }
 
       const groupIdsDisplay = extractGroupIds(selection?.subbkpts);
