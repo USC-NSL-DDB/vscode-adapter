@@ -893,25 +893,31 @@ function updateEditorExecutionDecorations(editor: vscode.TextEditor) {
     const lineText = editor.document.lineAt(line);
     const range = new vscode.Range(line, lineText.text.length, line, lineText.text.length);
 
-    // Sort frames for consistent display
     const sortedFrames = [...frames].sort((a, b) =>
       a.sessionId - b.sessionId || a.threadId - b.threadId
     );
 
-    // Format: "Session 1 | Thread 1, Frame 1 || Session 2 | Thread 2, Frame 2"
-    const labelParts = sortedFrames.map(f =>
-      `Session ${f.sessionId} | Thread ${f.threadId}, Frame ${f.frameLevel}`
-    );
-    const label = labelParts.join(" || ");
+    let label: string;
+    if (sortedFrames.length === 1) {
+      // Single session: full format with icon
+      const f = sortedFrames[0];
+      label = `Session ${f.sessionId}, Thread ${f.threadId}`;
+    } else {
+      const labelParts = sortedFrames.map(f =>
+        `S${f.sessionId},T${f.threadId}`
+      );
+      label = `[${sortedFrames.length} threads] ${labelParts.join(" ⋅ ")}`;
+    }
 
     decorations.push({
       range,
       renderOptions: {
         after: {
-          contentText: ` ← ${label}`,
-          color: new vscode.ThemeColor("editorLineNumber.foreground"),
+          contentText: `  Executing by: ${label} `,
+          color: "#D4A017",
           fontStyle: "italic",
-          margin: "0 0 0 1em",
+          fontWeight: "500",
+          margin: "0 2em 0 2em",
         }
       }
     });
