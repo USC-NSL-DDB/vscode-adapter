@@ -922,13 +922,13 @@ export function activate(context: vscode.ExtensionContext) {
           );
 
           if (frame && frame.source?.path) {
-            await vscode.commands.executeCommand(
-              "workbench.action.debug.callStackDown"
-            ).then(async () => {
-              await vscode.commands.executeCommand(
-                "workbench.action.debug.callStackUp"
-              );
-            });
+            // await vscode.commands.executeCommand(
+            //   "workbench.action.debug.callStackDown"
+            // ).then(async () => {
+            //   await vscode.commands.executeCommand(
+            //     "workbench.action.debug.callStackUp"
+            //   );
+            // });
 
             const sourcePath = frame.source.path;
             const uri = sourcePath.includes("://")
