@@ -309,7 +309,15 @@ export class MI2DebugSession extends DebugSession {
       }
     }
   }
-
+  public override sendEvent(event: DebugProtocol.Event): void {
+    if (event.event === "stopped") {
+      const stoppedEvent = event as DebugProtocol.StoppedEvent;
+      if (stoppedEvent.body.threadId !== undefined) {
+        this.bufferedStopEvents.set(stoppedEvent.body.threadId, stoppedEvent);
+      }
+    }
+    super.sendEvent(event);
+  }
   protected handleBreakpoint(info: MINode) {
     const bp_thread_id = parseInt(info.record("thread-id"));
     const session_id = parseInt(info.record("session-id"));
@@ -327,15 +335,14 @@ export class MI2DebugSession extends DebugSession {
       file: info.record("frame.file"),
       line: parseInt(info.record("frame.line")),
     };
-    this.bufferedStopEvents.set(bp_thread_id, event);
+    // this.bufferedStopEvents.set(bp_thread_id, event);
     this.sendEvent(event);
     const stopped_threads: [] = info.record("stopped-threads");
-    if (stopped_threads.length > 1) {
+    if (stopped_threads.length > 0) {
       for (const thread_id of stopped_threads) {
-        if (parseInt(thread_id) == bp_thread_id) continue;
+        if (parseInt(thread_id) === bp_thread_id) continue;
         // this.miDebugger.log("stderr", `sending stop event${parseInt(thread_id)}`)
-        const event = new StoppedEvent("", parseInt(thread_id));
-        //@ts-ignore
+        const event: DebugProtocol.StoppedEvent = new StoppedEvent("", parseInt(thread_id));
         event.body.preserveFocusHint = true;
         this.sendEvent(event);
       }
@@ -368,11 +375,13 @@ export class MI2DebugSession extends DebugSession {
     this.interruptRunningSessions(session_id);
 
     const reason = info?.record("reason");
-
+    const step_thread_id = info
+      ? parseInt(info.record("thread-id"))
+      : undefined;
     // special case where no reason is specified.
     // if so, we should not focus on any stopped frame.
-    if (reason == undefined) {
-      if (stopped_threads.length > 1) {
+    if (reason == undefined || step_thread_id == undefined) {
+      if (stopped_threads.length > 0) {
         for (const thread_id of stopped_threads) {
           const event: DebugProtocol.StoppedEvent = new StoppedEvent(
             "",
@@ -392,27 +401,6 @@ export class MI2DebugSession extends DebugSession {
       }
       return;
     }
-
-    const step_thread_id = info
-      ? parseInt(info.record("thread-id"))
-      : undefined;
-    if (step_thread_id == undefined) {
-      console.log(`handleBreak: no step thread id in info: ${info}`);
-      if (stopped_threads.length > 1) {
-        for (const thread_id of stopped_threads) {
-          const event = new StoppedEvent("", parseInt(thread_id));
-          (event as DebugProtocol.StoppedEvent).body.preserveFocusHint = true;
-          this.sendEvent(event);
-        }
-      } else {
-        const event: DebugProtocol.StoppedEvent = new StoppedEvent("", undefined);
-        event.body.allThreadsStopped = true;
-        event.body.preserveFocusHint = true;
-        this.sendEvent(event);
-      }
-      return;
-    }
-
     // Build stoppedFrameInfo for step events
     const stoppedFrameInfo: StoppedFrameInfo | undefined = info ? {
       session_id: session_id,
@@ -424,17 +412,18 @@ export class MI2DebugSession extends DebugSession {
 
     switch (reason) {
       case "end-stepping-range":
-        if (stopped_threads.length > 1) {
+        if (stopped_threads.length > 0) {
           // Send non-stepping threads first
           for (const thread_id of stopped_threads) {
-            if (parseInt(thread_id) != step_thread_id) {
-              const event: DebugProtocol.StoppedEvent = new StoppedEvent(
-                "",
-                parseInt(thread_id)
-              );
-              event.body.preserveFocusHint = true;
-              this.sendEvent(event);
+            if (parseInt(thread_id) === step_thread_id) {
+              continue;
             }
+            const event: DebugProtocol.StoppedEvent = new StoppedEvent(
+              "",
+              parseInt(thread_id)
+            );
+            event.body.preserveFocusHint = true;
+            this.sendEvent(event);
           }
           // Send stepping thread event last
           const stepEvent: DebugProtocol.StoppedEvent = new StoppedEvent(
@@ -458,14 +447,15 @@ export class MI2DebugSession extends DebugSession {
         break;
       default:
         console.log(`handleBreak default case: ${info}`);
-        if (stopped_threads.length > 1) {
+        if (stopped_threads.length > 0) {
           for (const thread_id of stopped_threads) {
-            if (parseInt(thread_id) != step_thread_id) {
-              const event = new StoppedEvent("", parseInt(thread_id));
-              (event as DebugProtocol.StoppedEvent).body.preserveFocusHint =
-                true;
-              this.sendEvent(event);
+            if (parseInt(thread_id) === step_thread_id) {
+              continue;
             }
+            const event = new StoppedEvent("", parseInt(thread_id));
+            (event as DebugProtocol.StoppedEvent).body.preserveFocusHint =
+              true;
+            this.sendEvent(event);
           }
         } else {
           const event: DebugProtocol.StoppedEvent = new StoppedEvent("", undefined);
@@ -496,26 +486,24 @@ export class MI2DebugSession extends DebugSession {
 
     // The thread that triggers the pause
     const primary_thread_id = parseInt(info.record("thread-id"));
-
-    if (stopped_threads.length > 1) {
+    const reason = info.record("reason") || "";
+    const stopped_event: DebugProtocol.StoppedEvent = new StoppedEvent(reason, primary_thread_id);
+    if (reason === "signal-received") {
+      stopped_event.body.description = `Paused on signal: ${info.record("signal-name")}`;
+    }
+    stopped_event.body.preserveFocusHint = true;
+    this.sendEvent(stopped_event);
+    if (stopped_threads.length > 0) {
       for (const thread_id of stopped_threads) {
-        const curr_thread_id = parseInt(thread_id);
-        const is_primary = curr_thread_id == primary_thread_id;
-        const reason = is_primary ? info.record("reason") : "";
-        const event: DebugProtocol.StoppedEvent = new StoppedEvent(
-          reason,
-          curr_thread_id
-        );
-        if (!is_primary) {
-          event.body.preserveFocusHint = true;
-        } else {
-          event.body.preserveFocusHint = false;
-          // Optionally provide the signal details only to the primary thread
-          event.body.description = `Paused on signal: ${info.record(
-            "signal-name"
-          )}`;
+        if (parseInt(thread_id) === primary_thread_id) {
+          continue;
         }
-        this.bufferedStopEvents.set(curr_thread_id, event);
+        const event: DebugProtocol.StoppedEvent = new StoppedEvent(
+          "",
+          parseInt(thread_id)
+        );
+        event.body.preserveFocusHint = true;
+        // this.bufferedStopEvents.set(curr_thread_id, event);
         this.sendEvent(event);
       }
     } else {
