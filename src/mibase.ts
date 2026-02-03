@@ -327,6 +327,7 @@ export class MI2DebugSession extends DebugSession {
       file: info.record("frame.file"),
       line: parseInt(info.record("frame.line")),
     };
+    this.bufferedStopEvents.set(bp_thread_id, event);
     this.sendEvent(event);
     const stopped_threads: [] = info.record("stopped-threads");
     if (stopped_threads.length > 1) {
@@ -514,11 +515,7 @@ export class MI2DebugSession extends DebugSession {
             "signal-name"
           )}`;
         }
-        this.bufferedStopEvents.set(curr_thread_id, {
-          reason: reason,
-          description: event.body.description,
-          preserveFocusHint: !is_primary,
-        });
+        this.bufferedStopEvents.set(curr_thread_id, event);
         this.sendEvent(event);
       }
     } else {
@@ -629,7 +626,7 @@ export class MI2DebugSession extends DebugSession {
 
   protected bufferedStopEvents: Map<
     number,
-    { reason: string; description?: string; preserveFocusHint: boolean }
+    DebugProtocol.StoppedEvent
   > = new Map();
 
   protected async threadCreatedEvent(info: MINode) {
@@ -688,14 +685,7 @@ export class MI2DebugSession extends DebugSession {
     let thread_state = MINode.valueOf(thread_info[0], "state");
     this.sendEvent(new ThreadEvent("started", threadId));
     if (thread_state == "stopped" && this.bufferedStopEvents.has(threadId)) {
-      const event: DebugProtocol.StoppedEvent = new StoppedEvent("", threadId);
-      //@ts-ignore
-      event.body.preserveFocusHint =
-        this.bufferedStopEvents.get(threadId)!.preserveFocusHint;
-      event.body.reason = this.bufferedStopEvents.get(threadId)!.reason;
-      event.body.description =
-        this.bufferedStopEvents.get(threadId)!.description;
-      this.sendEvent(event);
+      this.sendEvent(this.bufferedStopEvents.get(threadId)!);
       this.bufferedStopEvents.delete(threadId);
     }
   }
