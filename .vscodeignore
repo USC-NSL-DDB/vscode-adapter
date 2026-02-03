@@ -4,7 +4,8 @@
 .vscode/**
 coverage/**
 typings/**
-node_modules/**/build
+# Don't exclude node_modules build dirs - they contain compiled code needed at runtime
+# node_modules/**/build
 out/src/test/**
 test/**
 src/**
