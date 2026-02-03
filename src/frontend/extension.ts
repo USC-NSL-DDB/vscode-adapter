@@ -1045,6 +1045,7 @@ export async function activate(context: vscode.ExtensionContext) {
         const sessionId = frameId >>> 24;
         const level = (frameId >> 16) & 0xff;
         const threadId = stackItem.threadId;
+        OTelService.log_trace(`[activity] select_frame session=${sessionId} thread=${threadId} level=${level}`);
         stackFrameStatusBar.text = `$(debug-stackframe) Session ${sessionId} | Thread ${threadId}, Frame ${level}`;
         stackFrameStatusBar.tooltip = `Session: ${sessionId}\nThread: ${threadId}\nFrame Level: ${level}`;
         stackFrameStatusBar.show();
