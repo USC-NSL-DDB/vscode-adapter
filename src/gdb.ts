@@ -17,6 +17,8 @@ import { SSHArguments, ValuesFormattingMode } from "./backend/backend";
 import * as fs from "fs";
 import { promisify } from "util";
 import { spawn } from "child_process";
+import { OTelService } from "./common/otel";
+import { getOrCreateUserId, generateSessionId } from "./common/user_session";
 
 const accessAsync = promisify(fs.access);
 
@@ -92,7 +94,10 @@ async function checkDDBExists(ddbpath: string): Promise<void> {
   });
 }
 
+
 class GDBDebugSession extends MI2DebugSession {
+  private otelService: OTelService | null = null;
+
   protected override initializeRequest(
     response: DebugProtocol.InitializeResponse,
     args: DebugProtocol.InitializeRequestArguments
@@ -122,13 +127,35 @@ class GDBDebugSession extends MI2DebugSession {
       // 2. Check if DDB exists
       await checkDDBExists(args.ddbpath);
 
-      // 3. Initialize the MI Debugger
+      // 3. Get or create user ID and generate session ID
+      const userId = await getOrCreateUserId();
+      const sessionId = generateSessionId();
+
+      // 4. Initialize OpenTelemetry
+      try {
+        this.otelService = OTelService.initialize("ddb-da", userId, sessionId);
+      } catch (otelError) {
+        console.error("[OTel] Failed to initialize:", otelError);
+      }
+      
+      const debugger_args_with_otel = [
+        ...args.debugger_args,
+        "--enable-otel",
+        "--user-id",
+        `${userId}`,
+        "--session-id",
+        `${sessionId}`,
+      ];
+
+      // 5. Initialize the MI Debugger
       this.miDebugger = new MI2(
         args.ddbpath,
         [args.configFilePath],
-        args.debugger_args,
+        debugger_args_with_otel,
         args.env
       );
+      
+      OTelService.log_info(`[OTel] Debugger Adapter initialized with userId=${userId}, sessionId=${sessionId}`);
 
       // Set various properties
       this.setPathSubstitutions(args.pathSubstitutions);
@@ -193,6 +220,19 @@ class GDBDebugSession extends MI2DebugSession {
         );
       });
     }
+  }
+
+  protected override disconnectRequest(
+    response: DebugProtocol.DisconnectResponse,
+    args: DebugProtocol.DisconnectArguments
+  ): void {
+    // Shutdown OTEL before disconnecting
+    if (this.otelService) {
+      this.otelService
+        .shutdown()
+        .catch((err) => console.error("[OTel] Shutdown error:", err));
+    }
+    super.disconnectRequest(response, args);
   }
 }
 console.log("Starting gdb adapter.......");

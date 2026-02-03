@@ -37,6 +37,7 @@ import { send } from "process";
 import { cloneDeep } from "lodash";
 import { get } from "http";
 import { buffer } from "stream/consumers";
+import { OTelService } from "./common/otel";
 const trace = process.env.TRACE?.toLowerCase() === "true";
 declare module "vscode-debugprotocol" {
   namespace DebugProtocol {
@@ -321,6 +322,7 @@ export class MI2DebugSession extends DebugSession {
   protected handleBreakpoint(info: MINode) {
     const bp_thread_id = parseInt(info.record("thread-id"));
     const session_id = parseInt(info.record("session-id"));
+    OTelService.log_trace(`[activity] stop reason=breakpoint thread=${bp_thread_id} session=${session_id} file=${info.record("frame.file")} line=${info.record("frame.line")}`);
 
     // Mark this session as stopped
     this.markSessionStopped(session_id);
@@ -378,6 +380,7 @@ export class MI2DebugSession extends DebugSession {
     const step_thread_id = info
       ? parseInt(info.record("thread-id"))
       : undefined;
+    OTelService.log_trace(`[activity] stop reason=${reason ?? "unknown"} thread=${step_thread_id} session=${session_id}`);
     // special case where no reason is specified.
     // if so, we should not focus on any stopped frame.
     if (reason == undefined || step_thread_id == undefined) {
@@ -519,6 +522,8 @@ export class MI2DebugSession extends DebugSession {
       this.miDebugger.log("stderr", `stopEvent${JSON.stringify(info)}`);
 
     const session_id = parseInt(info.record("session-id"));
+    const thread_id = parseInt(info.record("thread-id"));
+    OTelService.log_trace(`[activity] stop reason=exception thread=${thread_id} session=${session_id}`);
 
     // Mark this session as stopped
     if (!isNaN(session_id)) {
@@ -748,6 +753,7 @@ export class MI2DebugSession extends DebugSession {
         "stderr",
         `setVariableRequest${JSON.stringify(args)}`
       );
+    OTelService.log_trace(`[activity] set_variable name=${args.name} value=${args.value}`);
     try {
       const varId = this.variableHandlesReverse[args.name];
       const varObj = this.variableHandles.get(varId) as any;
@@ -826,6 +832,7 @@ export class MI2DebugSession extends DebugSession {
   ): Promise<void> {
     if (command.includes("setSessionBreakpoints")) {
       console.log("setSessionBreakpoints", args);
+      OTelService.log_trace(`setSessionBreakpoints: ${JSON.stringify(args)}`);
       const bkptArgs = args.arguments as DebugProtocol.SetBreakpointsArguments;
       let sessionresponse = response as DebugProtocol.SetBreakpointsResponse;
       let path = bkptArgs.source.path ?? "";
@@ -1020,6 +1027,7 @@ export class MI2DebugSession extends DebugSession {
     if (trace) {
       console.debug("setBreakPointsRequest: args=", args);
     }
+    OTelService.log_trace(`[activity] set_breakpoints file=${args.source.path} lines=${args.breakpoints?.map(b => b.line).join(",")}`);
     const deferred = this.getOrCreateBkptRequest(response.request_seq);
 
     deferred.promise.then(
@@ -1660,6 +1668,8 @@ export class MI2DebugSession extends DebugSession {
     // async handling
     if (trace)
       this.miDebugger.log("stderr", `pauseRequest${JSON.stringify(args)}`);
+    //@ts-ignore
+    OTelService.log_trace(`[activity] pause thread=${args.threadId} session=${args.sessionId}`);
     let command = "exec-interrupt";
     //@ts-ignore
     if (args.sessionId != undefined) {
@@ -1693,6 +1703,7 @@ export class MI2DebugSession extends DebugSession {
         "stderr",
         `reverseContinueRequest${JSON.stringify(args)}`
       );
+    OTelService.log_trace(`[activity] reverse_continue thread=${args.threadId}`);
     this.miDebugger.continue(true).then(
       (done) => {
         this.sendResponse(response);
@@ -1709,6 +1720,8 @@ export class MI2DebugSession extends DebugSession {
   ): void {
     if (trace)
       this.miDebugger.log("stderr", `continueRequest ${JSON.stringify(args)}`);
+    //@ts-ignore
+    OTelService.log_trace(`[activity] continue thread=${args.threadId} session=${args.sessionId}`);
     // let command = "exec-continue"
     let command = "record-time-and-continue";
     //@ts-ignore
@@ -1739,6 +1752,7 @@ export class MI2DebugSession extends DebugSession {
   ): void {
     if (trace)
       this.miDebugger.log("stderr", `stepBackRequest${JSON.stringify(args)}`);
+    OTelService.log_trace(`[activity] step_back thread=${args.threadId}`);
     this.miDebugger.step(args.threadId, true).then(
       (done) => {
         this.sendResponse(response);
@@ -1759,6 +1773,7 @@ export class MI2DebugSession extends DebugSession {
   ): void {
     if (trace)
       this.miDebugger.log("stderr", `stepInRequest${JSON.stringify(args)}`);
+    OTelService.log_trace(`[activity] step_in thread=${args.threadId}`);
     this.miDebugger.step(args.threadId).then(
       (done) => {
         this.sendResponse(response);
@@ -1775,6 +1790,7 @@ export class MI2DebugSession extends DebugSession {
   ): void {
     if (trace)
       this.miDebugger.log("stderr", `stepOutRequest${JSON.stringify(args)}`);
+    OTelService.log_trace(`[activity] step_out thread=${args.threadId}`);
     this.miDebugger.stepOut(args.threadId).then(
       (done) => {
         this.sendResponse(response);
@@ -1791,6 +1807,7 @@ export class MI2DebugSession extends DebugSession {
   ): void {
     if (trace)
       this.miDebugger.log("stderr", `nextRequest${JSON.stringify(args)}`);
+    OTelService.log_trace(`[activity] step_over thread=${args.threadId}`);
     this.miDebugger.next(args.threadId).then(
       (done) => {
         this.sendResponse(response);
@@ -1827,6 +1844,7 @@ export class MI2DebugSession extends DebugSession {
     const [threadId, level, session_id] =
       this.frameIdToThreadAndLevelAndSessionId(args.frameId ?? 0);
     if (args.context == "watch" || args.context == "hover") {
+      OTelService.log_trace(`[activity] evaluate context=${args.context} expr=${args.expression}`);
       try {
         const varObjName = VariableScope.variableName(
           args.frameId ?? 0,
