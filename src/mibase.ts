@@ -415,7 +415,7 @@ export class MI2DebugSession extends DebugSession {
         if (stopped_threads.length > 0) {
           // Send non-stepping threads first
           for (const thread_id of stopped_threads) {
-            if (parseInt(thread_id) == step_thread_id) {
+            if (parseInt(thread_id) === step_thread_id) {
               continue;
             }
             const event: DebugProtocol.StoppedEvent = new StoppedEvent(
@@ -449,7 +449,7 @@ export class MI2DebugSession extends DebugSession {
         console.log(`handleBreak default case: ${info}`);
         if (stopped_threads.length > 0) {
           for (const thread_id of stopped_threads) {
-            if (parseInt(thread_id) == step_thread_id) {
+            if (parseInt(thread_id) === step_thread_id) {
               continue;
             }
             const event = new StoppedEvent("", parseInt(thread_id));
