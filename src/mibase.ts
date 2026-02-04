@@ -1112,21 +1112,30 @@ export class MI2DebugSession extends DebugSession {
     // });
   }
 
-  // Supports 65535 threads.
+  // Supports 65535 threads, 127 levels, 255 sessions, and afterBoundary flag.
+  // Bit layout: [sessionId(8) | afterBoundary(1) | level(7) | threadId(16)]
+  //   bits 24-31: sessionId, bit 23: afterBoundary, bits 16-22: level, bits 0-15: threadId
   protected threadAndLevelToFrameId(
     threadId: number,
     level: number,
-    sessionId: number
+    sessionId: number,
+    afterBoundary: boolean = false
   ) {
-    return (level << 16) | threadId | (sessionId << 24);
+    return (
+      (sessionId << 24) |
+      (afterBoundary ? 1 << 23 : 0) |
+      (level << 16) |
+      threadId
+    );
   }
   protected frameIdToThreadAndLevelAndSessionId(
     frameId: number
-  ): [number, number, number] {
+  ): [number, number, number, boolean] {
     const threadId = frameId & 0xffff;
-    const level = (frameId >> 16) & 0xff;
+    const level = (frameId >> 16) & 0x7f;
+    const afterBoundary = ((frameId >> 23) & 0x1) === 1;
     const sessionId = frameId >>> 24;
-    return [threadId, level, sessionId];
+    return [threadId, level, sessionId, afterBoundary];
   }
 
   protected override stackTraceRequest(
@@ -1149,6 +1158,7 @@ export class MI2DebugSession extends DebugSession {
       .then(
         (stack) => {
           const ret: StackFrame[] = [];
+          let afterBoundary = false;
           stack.forEach((element) => {
             let source = undefined;
             let path = element.file;
@@ -1166,11 +1176,13 @@ export class MI2DebugSession extends DebugSession {
 
             let frame: StackFrame;
             if (element.is_boundary) {
+              afterBoundary = true;
               frame = new StackFrame(
                 this.threadAndLevelToFrameId(
                   element.thread,
                   element.level,
-                  element.session
+                  element.session,
+                  afterBoundary
                 ),
                 `--- Called from [tid: ${element.thread}, sid: ${element.session}] ---`,
                 undefined,
@@ -1183,7 +1195,8 @@ export class MI2DebugSession extends DebugSession {
                 this.threadAndLevelToFrameId(
                   element.thread,
                   element.level,
-                  element.session
+                  element.session,
+                  afterBoundary
                 ),
                 element.function + "@" + element.address,
                 source,
@@ -1314,7 +1327,7 @@ export class MI2DebugSession extends DebugSession {
     args: DebugProtocol.ScopesArguments
   ): void {
     const scopes = new Array<Scope>();
-    const [threadId, level, session_id] =
+    const [threadId, level, session_id, _afterBoundary] =
       this.frameIdToThreadAndLevelAndSessionId(args.frameId);
 
     const createScope = (scopeName: string, expensive: boolean): Scope => {
@@ -1841,7 +1854,7 @@ export class MI2DebugSession extends DebugSession {
     if (trace)
       this.miDebugger.log("stderr", `evaluateRequest${JSON.stringify(args)}`);
 
-    const [threadId, level, session_id] =
+    const [threadId, level, session_id, _afterBoundary] =
       this.frameIdToThreadAndLevelAndSessionId(args.frameId ?? 0);
     if (args.context == "watch" || args.context == "hover") {
       OTelService.log_trace(`[activity] evaluate context=${args.context} expr=${args.expression}`);

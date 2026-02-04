@@ -1043,9 +1043,10 @@ export async function activate(context: vscode.ExtensionContext) {
       if (stackItem instanceof vscode.DebugStackFrame) {
         const frameId = stackItem.frameId;
         const sessionId = frameId >>> 24;
-        const level = (frameId >> 16) & 0xff;
+        const afterBoundary = ((frameId >> 23) & 0x1) === 1;
+        const level = (frameId >> 16) & 0x7f;
         const threadId = stackItem.threadId;
-        OTelService.log_trace(`[activity] select_frame session=${sessionId} thread=${threadId} level=${level}`);
+        OTelService.log_trace(`[activity] select_frame session=${sessionId} thread=${threadId} level=${level} after_boundary=${afterBoundary}`);
         stackFrameStatusBar.text = `$(debug-stackframe) Session ${sessionId} | Thread ${threadId}, Frame ${level}`;
         stackFrameStatusBar.tooltip = `Session: ${sessionId}\nThread: ${threadId}\nFrame Level: ${level}`;
         stackFrameStatusBar.show();
