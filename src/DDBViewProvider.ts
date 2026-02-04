@@ -8,6 +8,7 @@ import { BreakpointManager } from "./common/ddb_breakpoint_mgr";
 import { NotificationService, BreakpointChangedPayload } from "./common/ddb_notification_service";
 import { LogicalGroup, DDBBreakpoint, SubBreakpoint } from "./common/ddb_api";
 import { showDisclaimerIfNeeded } from "./common/disclaimer_service";
+import { OTelService } from "./common/otel";
 
 // ============================================================================
 // Sessions Provider - Shows sessions organized by logical groups
@@ -906,6 +907,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Debug session STOP listener
   const debugStopListener = vscode.debug.onDidTerminateDebugSession(
     (debugSession) => {
+      OTelService.log_info(`[activity] debug_session_stopped`);
+
       // Stop WebSocket notification service
       notificationService.stop();
       sessionManager.setWebSocketActive(false);
