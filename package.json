@@ -82,6 +82,11 @@
           "type": "string",
           "default": "http://ruby1.nsl.usc.edu:54317",
           "description": "OpenTelemetry OTLP gRPC endpoint for sending telemetry data"
+        },
+        "ddb.disclaimer.neverShowAgain": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, the usage collection disclaimer will not be shown on debug session start"
         }
       }
     },

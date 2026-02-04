@@ -7,6 +7,7 @@ import { SessionManager } from "./common/ddb_session_mgr";
 import { BreakpointManager } from "./common/ddb_breakpoint_mgr";
 import { NotificationService, BreakpointChangedPayload } from "./common/ddb_notification_service";
 import { LogicalGroup, DDBBreakpoint, SubBreakpoint } from "./common/ddb_api";
+import { showDisclaimerIfNeeded } from "./common/disclaimer_service";
 
 // ============================================================================
 // Sessions Provider - Shows sessions organized by logical groups
@@ -849,6 +850,9 @@ export function activate(context: vscode.ExtensionContext) {
       // Mark debug sessions as active in both providers
       sessionsProvider.isDebugSessionActive = true;
       breakpointsProvider.isDebugSessionActive = true;
+
+      // Show disclaimer notification if not suppressed (non-blocking)
+      showDisclaimerIfNeeded();
 
       // Reset to grouped mode and show description
       sessionsProvider.resetToGroupedMode();
