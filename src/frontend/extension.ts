@@ -121,6 +121,10 @@ const breakpointHitSessionMap = new Map<string, number[]>(); // Map breakpoint I
 // Map from "normalized_file_path:line" -> StoppedFrameInfo[] for tracking all stopped frames
 const stoppedFramesMap = new Map<string, StoppedFrameInfo[]>();
 
+// Track scope-level variablesReference IDs that VS Code auto-fetches on stop/frame switch.
+// Any `variables` request with a reference NOT in this set is user-initiated (expanding a variable).
+const autoScopeVariablesRefs = new Set<number>();
+
 function getBreakpointId(bp: vscode.Breakpoint): string {
   // VSCode doesn't expose an ID directly, but you can generate one based on its properties
   if (bp instanceof vscode.SourceBreakpoint) {
@@ -686,6 +690,12 @@ class MyDebugAdapterTracker implements vscode.DebugAdapterTracker {
       // Intercept the setBreakpoints request
       await handleSetBreakpoints(message);
     }
+    if (message.command === "variables") {
+      const varRef = message.arguments?.variablesReference;
+      if (varRef !== undefined && !autoScopeVariablesRefs.has(varRef)) {
+        OTelService.log_trace(`[activity] expand_variable variablesReference=${varRef}`);
+      }
+    }
   }
   async onDidSendMessage(message: any) {
     if (message.command === "setSessionBreakpoints") {
@@ -693,10 +703,18 @@ class MyDebugAdapterTracker implements vscode.DebugAdapterTracker {
       // updateBreakpointDecorations();
       // updateInlineDecorations();
     }
+    if (message.command === "scopes" && message.type === "response" && message.body?.scopes) {
+      for (const scope of message.body.scopes) {
+        if (scope.variablesReference !== undefined) {
+          autoScopeVariablesRefs.add(scope.variablesReference);
+        }
+      }
+    }
     if (message.type === "event") {
       console.log("Received event ", message, message.body?.threadId);
 
       if (message.event === "stopped") {
+        autoScopeVariablesRefs.clear();
         // Handle breakpoint stops
         if (message.body?.reason === "breakpoint") {
           const breakpointInfo = (message as DebugProtocol.StoppedEvent).breakpointInfo;
@@ -730,6 +748,7 @@ class MyDebugAdapterTracker implements vscode.DebugAdapterTracker {
         updateExecutionLineDecorations();
       }
       if (message.event === "continued") {
+        autoScopeVariablesRefs.clear();
         breakpointHitSessionMap.clear();
         updateInlineDecorations();
 
