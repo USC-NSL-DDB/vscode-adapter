@@ -1,6 +1,6 @@
 import type { OTelConfig } from "./types";
 
-const DEFAULT_ENDPOINT = "http://ruby1.nsl.usc.edu:54317";
+const DEFAULT_ENDPOINT = "http://68.181.216.50:54317";
 
 // Conditional vscode import - works in both extension and adapter processes
 let vscode: any;
