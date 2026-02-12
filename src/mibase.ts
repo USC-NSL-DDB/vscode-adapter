@@ -495,7 +495,7 @@ export class MI2DebugSession extends DebugSession {
     if (reason === "signal-received") {
       const signal_name = info.record("signal-name") || "unknown";
       stopped_event.body.description = `Paused on signal: ${signal_name}`;
-      if (signal_name === "SIGABRT"){
+      if (signal_name === "SIGABRT" || signal_name === "SIGSEGV"){
         stopped_event.body.preserveFocusHint = false;
       }
     }
