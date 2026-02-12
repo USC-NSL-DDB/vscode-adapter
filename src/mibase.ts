@@ -491,10 +491,15 @@ export class MI2DebugSession extends DebugSession {
     const primary_thread_id = parseInt(info.record("thread-id"));
     const reason = info.record("reason") || "";
     const stopped_event: DebugProtocol.StoppedEvent = new StoppedEvent(reason, primary_thread_id);
-    if (reason === "signal-received") {
-      stopped_event.body.description = `Paused on signal: ${info.record("signal-name")}`;
-    }
     stopped_event.body.preserveFocusHint = true;
+    if (reason === "signal-received") {
+      const signal_name = info.record("signal-name") || "unknown";
+      stopped_event.body.description = `Paused on signal: ${signal_name}`;
+      if (signal_name === "SIGABRT"){
+        stopped_event.body.preserveFocusHint = false;
+      }
+    }
+    
     this.sendEvent(stopped_event);
     if (stopped_threads.length > 0) {
       for (const thread_id of stopped_threads) {
