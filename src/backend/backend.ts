@@ -214,7 +214,7 @@ export class VariableObject {
 
   public applyChanges(node: MINode) {
     this.value = MINode.valueOf(node, "value");
-    if (MINode.valueOf(node, "type_changed")) {
+    if (MINode.valueOf(node, "type_changed") === "true") {
       this.type = MINode.valueOf(node, "new_type");
     }
     this.dynamic = !!MINode.valueOf(node, "dynamic");
