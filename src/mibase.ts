@@ -1441,6 +1441,14 @@ export class MI2DebugSession extends DebugSession {
                   });
                   const varId = this.variableHandlesReverse[varObjName];
                   varObj = this.variableHandles.get(varId) as any;
+                  if (varObj && !varObj.inScope) {
+                    return {
+                      name: variable.name,
+                      value: "<not available>",
+                      type: varObj.type,
+                      variablesReference: 0,
+                    };
+                  }
                 } catch (err) {
                   if (
                     (err instanceof MIError &&
@@ -1888,6 +1896,15 @@ export class MI2DebugSession extends DebugSession {
           });
           const varId = this.variableHandlesReverse[varObjName];
           varObj = this.variableHandles.get(varId) as any;
+          if (varObj && !varObj.inScope) {
+            response.body = {
+              result: "<not available>",
+              type: varObj.type,
+              variablesReference: 0,
+            };
+            this.sendResponse(response);
+            return;
+          }
         } catch (err) {
           if (
             (err instanceof MIError &&

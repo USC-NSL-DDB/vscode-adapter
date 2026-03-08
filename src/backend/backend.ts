@@ -158,6 +158,7 @@ export class VariableObject {
   displayhint: string;
   hasMore: boolean;
   id: number = 0;
+  inScope: boolean = true;
 
   constructor(node: any, threadId?: number, parent?: VariableObject) {
     this.name = MINode.valueOf(node, "name");
@@ -213,6 +214,12 @@ export class VariableObject {
   }
 
   public applyChanges(node: MINode) {
+    const inScopeVal = MINode.valueOf(node, "in_scope");
+    if (inScopeVal === "false" || inScopeVal === "invalid") {
+      this.inScope = false;
+      return;
+    }
+    this.inScope = true;
     this.value = MINode.valueOf(node, "value");
     if (MINode.valueOf(node, "type_changed") === "true") {
       this.type = MINode.valueOf(node, "new_type");
