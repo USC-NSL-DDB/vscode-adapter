@@ -26,6 +26,7 @@ suite("Canonical DDB binary", function () {
 			const dap = new CanonicalHarness();
 			let streamError: unknown;
 			const output: string[] = [];
+			const executionTrace: unknown[] = [];
 			try {
 				const source = join(dir, "main.c");
 				const executable = join(dir, "main");
@@ -39,6 +40,14 @@ suite("Canonical DDB binary", function () {
 				await writeFile(config, `Framework: unspecified\nConf:\n  auto_shutdown: false\n  on_exit: kill\n  base_dir: ${JSON.stringify(join(dir, "base"))}\n  log_dir: ${JSON.stringify(join(dir, "logs"))}\n  Debugger:\n    backend: ${backend}\nStaticSessions:\n${sessions}`);
 				connection = await DdbConnection.launch({ binary: process.env.DDB_TEST_BINARY!, configFilePath: config, cwd: dir, onOutput: (_category, text) => output.push(text) });
 				const c = connection;
+				const originalCall = c.client.call.bind(c.client);
+				c.client.call = ((method: any, args: any, options: any) => {
+					if (method === "DebuggerControlService.Execute") {
+						executionTrace.push({ action: args.action, target: args.target });
+						if (executionTrace.length > 64) executionTrace.shift();
+					}
+					return originalCall(method, args, options);
+				}) as typeof c.client.call;
 				assert.equal(c.handshake.capabilities.apiVersion, "v2");
 				await dap.begin(c);
 				await until(() => c.state.all("thread").filter(thread => thread.state === "THREAD_STATE_STOPPED").length === 2 || streamError !== undefined, "both stopped threads from canonical state");
@@ -415,6 +424,7 @@ suite("Canonical DDB binary", function () {
 
 			} catch (error) {
 				console.error(output.join(""));
+				console.error("Execution failure context:", JSON.stringify({ calls: executionTrace, threads: connection?.state.all("thread"), events: dap.events.filter(event => ["stopped", "continued"].includes(event.event)).slice(-20) }));
 				if (error && typeof error === "object" && "operation" in error) console.error(JSON.stringify(error.operation, null, 2));
 				throw error;
 			} finally {

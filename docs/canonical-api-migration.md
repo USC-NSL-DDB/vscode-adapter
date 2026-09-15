@@ -698,3 +698,17 @@ mock session continue, then GDB peer-running setup. The isolated mock rerun
 passed. These intermittent failures remain unresolved; the full suite must not
 be described as reliably green at this checkpoint. Logs are in
 /tmp/ddb-distributed-final.log and /tmp/ddb-distributed-suite-recheck.log.
+
+
+## Execution-timeout investigation checkpoint
+
+The broad execution tests now capture the last 64 Execute action/target pairs,
+final thread resources, and recent DAP stop/continue events on failure. This
+adds evidence for distinguishing target-selection errors, delayed all-stop
+coordination, and backend execution failures without weakening assertions.
+
+An instrumented two-backend run passed, followed by eight isolated mock runs
+and four isolated GDB runs. Neither earlier timeout reproduced. This is not a
+causal fix and does not close the intermittent-failure item. Failure traces are
+retained in the integration test for subsequent runs. Stress logs are under
+/tmp/ddb-execution-stress-*.log and /tmp/ddb-execution-gdb-stress-*.log.
