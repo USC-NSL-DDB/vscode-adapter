@@ -222,13 +222,21 @@ suite("Canonical DDB binary", function () {
 					assert.equal(hit.breakpoint?.verified, true, "installed group breakpoint must be verified");
 					assert.equal(hit.breakpoint?.subBreakpoints?.length, 1);
 					assert.equal(hit.breakpoint?.subBreakpoints?.[0].inheritedFromGroupId, thread.groupId);
+					const otherThread = c.state.all("thread").find(item => item.threadId !== thread.threadId)!;
+					await c.complete(await c.client.call("DebuggerControlService.Execute", { target: { session: { sessionId: otherThread.sessionId } }, action: "EXECUTION_ACTION_CONTINUE" }));
+					await until(() => c.state.get("thread", otherThread.threadId!)?.state === "THREAD_STATE_RUNNING", "other session running before breakpoint");
 					const beforeHit = dap.events.length;
 					await c.complete(await c.client.call("DebuggerControlService.Execute", { target, action: "EXECUTION_ACTION_CONTINUE" }));
 					await until(() => dap.events.slice(beforeHit).some(event => event.event === "stopped" && event.body.threadId === dapThreadId && event.body.reason === "breakpoint"), "real DAP breakpoint hit");
+					await until(() => c.state.get("thread", otherThread.threadId!)?.state === "THREAD_STATE_STOPPED", "all-stop interrupts other running session");
 					const hitState = (await c.client.call("DebuggerService.GetExecutionState", { target })).executionState;
 					assert.equal(hitState?.stopReason?.breakpointId, hit.breakpoint?.breakpointId);
 					assert.equal(hitState?.stopReason?.threadId, thread.threadId);
 					const hitEvent = dap.events.slice(beforeHit).find(event => event.event === "stopped" && event.body.reason === "breakpoint")!;
+					assert.equal(hitEvent.body.stoppedFrameInfo.file, source);
+					assert.equal(hitEvent.body.stoppedFrameInfo.line, 6);
+					assert.equal(hitEvent.body.preserveFocusHint, false);
+					await until(() => dap.events.slice(beforeHit).some(event => event.event === "stopped" && event.body.threadId !== dapThreadId && event.body.reason === "pause" && event.body.preserveFocusHint === true), "coordinated pause preserves focus");
 					assert.equal(hitEvent.body.hitBreakpointIds.length, 1);
 					assert.ok(hitEvent.body.hitBreakpointIds[0] > 0);
 					await c.complete(await c.client.call("DebuggerControlService.DeleteBreakpoint", { target: { broadcast: {} }, breakpointId: hit.breakpoint?.breakpointId }));
@@ -286,13 +294,19 @@ suite("Canonical DDB binary", function () {
 				if (backend === "gdb") {
 					dap.enablePairedBreakpoints(false);
 					const logpoints = await dap.request("setBreakpoints", { source: { path: source }, breakpoints: [
-						{ line: 5, logMessage: "counter={counter} literal={{ok}}" }, { line: 6 },
+						{ line: 5, logMessage: "counter={counter} literal={{ok}}", subbkpts: [{ type: "session", target: metadata.body.session_id }] }, { line: 6, subbkpts: [{ type: "session", target: metadata.body.session_id }] },
 					] });
 					assert.equal(logpoints.success, true, logpoints.message);
 					assert.equal(logpoints.body.breakpoints[0].verified, true, logpoints.body.breakpoints[0].message);
+					const logPeer = c.state.all("thread").find(item => item.threadId !== thread.threadId)!;
+					await c.complete(await c.client.call("DebuggerControlService.Execute", { target: { session: { sessionId: logPeer.sessionId } }, action: "EXECUTION_ACTION_CONTINUE" }));
+					await until(() => c.state.get("thread", logPeer.threadId!)?.state === "THREAD_STATE_RUNNING", "peer running during logpoint");
 					const beforeLog = dap.events.length;
 					await dap.request("continue", { sessionId: metadata.body.session_id });
+					await until(() => dap.events.slice(beforeLog).some(event => event.event === "output" && event.body.output.startsWith("counter=")), "logpoint output while peer runs");
+					assert.equal(c.state.get("thread", logPeer.threadId!)?.state, "THREAD_STATE_RUNNING");
 					await until(() => dap.events.slice(beforeLog).some(event => event.event === "stopped" && event.body.hitBreakpointIds?.includes(logpoints.body.breakpoints[1].id)), "ordinary breakpoint after logpoint");
+					await until(() => c.state.get("thread", logPeer.threadId!)?.state === "THREAD_STATE_STOPPED", "ordinary stop pauses logpoint peer");
 					const logEvents = dap.events.slice(beforeLog);
 					assert.ok(logEvents.some(event => event.event === "output" && /^counter=\d+ literal=\{ok\}\n$/.test(event.body.output)));
 					assert.ok(!logEvents.some(event => event.event === "stopped" && event.body.hitBreakpointIds?.includes(logpoints.body.breakpoints[0].id)));

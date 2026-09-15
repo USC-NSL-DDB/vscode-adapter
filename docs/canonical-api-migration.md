@@ -48,7 +48,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Source/function breakpoints | Create/Update/DeleteBreakpoint operations | Source and function creation, conditions, real hits, replacement and deletion tested with patched DDB |
 | Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Group selection, verified member projection and paired requests tested; streamed verification refresh implemented |
 | Conditions, hit counts, enable/disable, logpoints | Typed conditions/counts; adapter evaluates and continues logpoint stops | Conditions, hit conditions and logpoints tested; enable/disable UI audit pending |
-| Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | Next, session-specific continue/pause and typed stop metadata tested with patched DDB; all-stop coordination and other actions pending |
+| Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | Next, session-specific continue/pause, peer all-stop coordination and stopped-frame metadata tested with patched DDB; other actions pending |
 | Signals and session kill | ListSignals and v2 raw signal command | DAP list/validation tested on mock/GDB; SIGKILL tested on GDB |
 | Jump to line | Execute JUMP with source location | Pending |
 | Debug Console, autorun, path substitution | Canonical raw-command escape hatch where typed APIs do not cover the command | Implemented with focused-frame CLI/raw console and per-session setup; entrypoint tests cover autorun and substitution |
@@ -78,7 +78,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 71 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 74 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -94,9 +94,7 @@ These checks validate the new connection layer, not completed DAP/UI migration.
 `src/v2/session.mts` and `src/v2/inspection.mts` now implement canonical DAP
 inspection, basic execution, state/output forwarding, local handle invalidation,
 managed launch/external attach, source reads, memory reads and disconnect.
-They are now the extension entrypoint. Remaining breakpoint features,
-all-stop coordination and the other
-unchecked items above remain required.
+They are now the extension entrypoint. Remaining breakpoint features and the unchecked items above remain required.
 
 The binary test dispatches actual DAP requests through `CanonicalHarness`.
 Threads, stackTrace, scopes, register reads, scalar watch evaluation and invalid
@@ -347,3 +345,23 @@ backend stops, failed evaluation and retention after deletion. All 71 adapter
 unit tests and four canonical integration tests pass. Multi-client control races,
 full recovery behavior and the remaining checklist items still need the final
 completion audit; these checks do not establish full migration completion.
+
+## All-stop coordination checkpoint
+
+Visible principal stops now interrupt each running peer session once through
+canonical Execute operations. Completion does not imply that a stopped-state
+update has arrived, so the coordinator keeps duplicate suppression until that
+update. Automatic pauses preserve focus; explicit pauses are distinguished
+from external SIGINT. Failed pause requests restore their prior classification
+and report the failure. Successful logpoints do not pause peers.
+
+Stopped events include the frame metadata consumed by source decorations, and
+principal breakpoint stops include the existing breakpointInfo payload.
+The real GDB regression first failed because a peer kept running after a
+breakpoint. It now checks the peer stops, focus remains on the breakpoint,
+source metadata is present, and a logpoint leaves its peer running until a
+subsequent ordinary breakpoint.
+
+Validation: 74 unit tests and all four canonical binary/entrypoint integration
+tests pass with the patched debug DDB binary. Real VS Code decoration rendering
+and LLDB execution remain unverified.

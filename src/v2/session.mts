@@ -2,6 +2,7 @@ import dap from "vscode-debugadapter";
 import type { DebugProtocol } from "vscode-debugprotocol";
 import type { ExecuteRequest, ExecutionState, Thread as DdbThread, StateSyncItem, OutputEvent as DdbOutput } from "@ddb-debugger/api-client";
 import { DdbConnection } from "./connection.mjs";
+import { DdbExecution } from "./execution.mjs";
 import { DdbLogpoints } from "./logpoints.mjs";
 import { DdbCommands } from "./commands.mjs";
 import { DdbSidebar } from "./sidebar.mjs";
@@ -33,6 +34,7 @@ export class CanonicalDebugSession extends DebugSession {
 	private breakpoints?: DdbBreakpoints;
 	private sidebar?: DdbSidebar;
 	private commands?: DdbCommands;
+	private execution?: DdbExecution;
 	private startupOptions?: CanonicalLaunchArguments;
 	private readonly sessionSetup = new Map<string, Promise<void>>();
 	protected pairedBreakpoints = false;
@@ -98,6 +100,7 @@ export class CanonicalDebugSession extends DebugSession {
 		this.breakpoints = new DdbBreakpoints(this.inspection);
 		this.sidebar = new DdbSidebar(this.inspection, this.breakpoints);
 		this.commands = new DdbCommands(connection);
+		this.execution = new DdbExecution(connection, message => { if (!this.closing) this.sendEvent(new OutputEvent(`${message}\n`, "stderr")); });
 		let readyResolve!: () => void;
 		let readyReject!: (error: unknown) => void;
 		const ready = new Promise<void>((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
@@ -126,6 +129,7 @@ export class CanonicalDebugSession extends DebugSession {
 
 	private stateChanged(_item: StateSyncItem): void {
 		const inspection = this.model;
+		this.execution!.observe();
 		if (this.startupOptions) {
 			for (const session of this.connection!.state.all("session")) {
 				if (!session.sessionId || this.sessionSetup.has(session.sessionId) || !["SESSION_STATUS_READY", "SESSION_STATUS_STOPPED", "SESSION_STATUS_RUNNING"].includes(session.status ?? "")) continue;
@@ -153,6 +157,7 @@ export class CanonicalDebugSession extends DebugSession {
 			this.knownThreads.set(thread.threadId, thread);
 			if (thread.state === "THREAD_STATE_RUNNING" && previous?.state !== thread.state) {
 				this.pendingStops.delete(thread.threadId);
+				if (thread.sessionId) this.execution!.resumed(thread.sessionId);
 				inspection.invalidate();
 				this.sendEvent(new ContinuedEvent(inspection.threadHandle(thread.threadId), false));
 			}
@@ -214,8 +219,20 @@ export class CanonicalDebugSession extends DebugSession {
 			STOP_REASON_KIND_STEP: "step", STOP_REASON_KIND_SIGNAL: "exception",
 			STOP_REASON_KIND_EXCEPTION: "exception", STOP_REASON_KIND_ENTRY: "entry",
 		};
-		const event = new StoppedEvent(kinds[reason?.kind ?? ""] ?? "pause", this.model.threadHandle(threadId), reason?.description ?? reason?.signalName);
-		(event as DebugProtocol.StoppedEvent).body.allThreadsStopped = this.connection!.state.all("thread").every(item => item.state !== "THREAD_STATE_RUNNING");
+		const thread = this.connection!.state.get("thread", threadId)!;
+		const pause = thread.sessionId ? this.execution!.pauseKind(thread.sessionId, reason) : undefined;
+		const event = new StoppedEvent(pause ? "pause" : kinds[reason?.kind ?? ""] ?? "pause", this.model.threadHandle(threadId), reason?.description ?? reason?.signalName);
+		const body = (event as DebugProtocol.StoppedEvent).body;
+		const secondary = !!reason?.threadId && reason.threadId !== threadId;
+		body.preserveFocusHint = secondary || !!pause || (reason?.kind === "STOP_REASON_KIND_SIGNAL" && !["SIGABRT", "SIGSEGV"].includes(reason.signalName ?? ""));
+		body.allThreadsStopped = this.connection!.state.all("thread").every(item => item.state === "THREAD_STATE_STOPPED");
+		const location = state.location ?? thread.location;
+		if (thread.sessionId && location?.path && location.line) {
+			const metadata = { session_id: this.model.sessionHandle(thread.sessionId), thread_id: this.model.threadHandle(threadId), file: location.path, line: location.line, level: 0 };
+			Object.assign(body, { stoppedFrameInfo: metadata });
+			if (reason?.kind === "STOP_REASON_KIND_BREAKPOINT" && !secondary) Object.assign(event, { breakpointInfo: metadata });
+		}
+		if (thread.sessionId && pause !== "automatic" && !secondary) this.execution!.interruptOthers(thread.sessionId);
 		if (reason?.breakpointId) (event as DebugProtocol.StoppedEvent).body.hitBreakpointIds = [this.breakpoints!.handle(reason.breakpointId)];
 		this.sendEvent(event);
 	}
@@ -392,7 +409,9 @@ export class CanonicalDebugSession extends DebugSession {
 			const connection = this.model.connection;
 			const request = makeRequest();
 			if (!connection.handshake.capabilities.executionActions?.includes(request.action!)) throw new Error(`DDB does not support ${request.action}`);
-			await connection.complete(await connection.client.call("DebuggerControlService.Execute", request));
+			const undo = this.execution!.userControl(request);
+			try { await connection.complete(await connection.client.call("DebuggerControlService.Execute", request)); }
+			catch (error) { undo(); throw error; }
 			return body;
 		});
 	}
