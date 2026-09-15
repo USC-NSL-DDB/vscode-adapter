@@ -47,7 +47,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Variable assignment | Evaluate assignment if supported; backend escape hatch otherwise | Root and array-child DAP assignment tested with real GDB |
 | Source/function breakpoints | Create/Update/DeleteBreakpoint operations | Source and function creation, conditions, real hits, replacement and deletion tested with patched DDB |
 | Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Group selection, verified member projection and paired requests tested; streamed verification refresh implemented |
-| Conditions, hit counts, enable/disable, logpoints | Typed conditions and ignore counts; logpoints need explicit implementation | Conditions and legacy hit conditions tested; logpoints and enable/disable UI audit pending |
+| Conditions, hit counts, enable/disable, logpoints | Typed conditions/counts; adapter evaluates and continues logpoint stops | Conditions, hit conditions and logpoints tested; enable/disable UI audit pending |
 | Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | Next, session-specific continue/pause and typed stop metadata tested with patched DDB; all-stop coordination and other actions pending |
 | Signals and session kill | ListSignals and v2 raw signal command | DAP list/validation tested on mock/GDB; SIGKILL tested on GDB |
 | Jump to line | Execute JUMP with source location | Pending |
@@ -69,15 +69,16 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
   groups/sessions, preserving the adapter's existing selection semantics.
 - DeleteBreakpoint requires an explicit target even though generated fields
   are optional. Broadcast deletion succeeds.
-- BreakpointSpec has no log-message field; UpdateBreakpoint supports only
-  enabled and condition masks. Do not advertise feature parity until logpoints
-  and replacement of other breakpoint properties are verified.
+- BreakpointSpec has no log-message field; the adapter retains logpoint plans
+  and evaluates them through typed requests at canonical breakpoint stops.
+  UpdateBreakpoint supports only enabled and condition masks. Other property
+  changes currently replace the logical breakpoint.
 - ProtoJSON may omit numeric zero fields, including revisions/cursor sequence.
   Omission is zero, not a malformed revision.
 
 ## Checks completed so far
 
-`npm test`: 66 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 71 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -143,8 +144,8 @@ Full breakpoint parity remains unproven:
 - DDB commit `7390297a` implements typed function locations. Function creation,
   real hits, conditions, replacement and deletion are covered. DDB commit
   `33fc7007` adds ignore counts; source and function hit conditions are implemented.
-- Logpoints remain explicitly unimplemented in the canonical
-  adapter. They must be implemented and exercised before declaring migration complete.
+- Logpoints use typed frame inspection/evaluation and targeted continuation.
+  Real-GDB output and failure behavior are covered; the final GUI audit remains.
 - DDB commit `ba512f18` corrects group-only breakpoint verification and projects
   installed session members. Paired DAP, sidebar and real group-hit checks cover
   the fix. The adapter forwards streamed verification changes with stable IDs.
@@ -233,7 +234,7 @@ The original release binary remains available for baseline comparisons.
 
 This checkpoint does not establish full execution or breakpoint parity.
 Explicit-pause versus external-signal presentation, entry-stop classification,
-all-stop coordination and logpoints still need work. No current VSIX has been
+all-stop coordination still needs work. No current VSIX has been
 packaged or GUI-tested.
 
 ## Group breakpoint projection and refresh
@@ -319,5 +320,30 @@ an unrelated cached entry.
 
 Validation: 66 adapter unit tests, four canonical integration tests, 315 backend
 core tests with one ignored, six API v1/v2 tests, and four LLDB bridge option tests
-pass. Real LLDB execution and full GUI behavior remain unverified. Logpoints,
-all-stop coordination and the other incomplete checklist items remain required.
+pass. Real LLDB execution and full GUI behavior remain unverified. All-stop coordination and the other incomplete checklist items remain required.
+
+## Logpoints
+
+The adapter now advertises logpoints and retains parsed log messages alongside
+canonical breakpoint IDs. Expressions in braces are evaluated in frame zero of
+the hitting thread through ListFrames and Evaluate. Literal text never becomes a
+debugger command. Double braces escape literal braces; quoted and nested braces
+inside expressions are preserved. Messages and output are bounded at 64 KiB,
+with at most 128 expressions per message.
+
+A logpoint emits one DAP console message and continues only its hitting thread.
+It suppresses the corresponding visible breakpoint stop. Before continuation,
+the adapter checks both its current stop generation and a fresh canonical
+execution-state revision. Explicit DAP execution commands, signals and console
+commands cancel pending automatic continuation. Evaluation errors produce a
+stderr message and a visible stopped event. Automatic continuation is not
+retried on failure. Recent deleted logpoint plans are retained in a bounded
+history so a one-shot deletion does not discard an already pending log message.
+
+Real-GDB tests verify interpolation, literal braces, targeted continuation to an
+ordinary breakpoint, isolation of the other session, and stopping on expression
+failure. Unit tests cover parsing, frame/target routing, cancellation, newer
+backend stops, failed evaluation and retention after deletion. All 71 adapter
+unit tests and four canonical integration tests pass. Multi-client control races,
+full recovery behavior and the remaining checklist items still need the final
+completion audit; these checks do not establish full migration completion.

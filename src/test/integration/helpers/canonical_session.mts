@@ -7,7 +7,7 @@ export class CanonicalHarness extends CanonicalDebugSession {
 	private sequence = 0;
 	private readonly pending = new Map<number, (response: DebugProtocol.Response) => void>();
 	get nextSequence(): number { return this.sequence + 1; }
-	enablePairedBreakpoints(): void { this.pairedBreakpoints = true; }
+	enablePairedBreakpoints(enabled = true): void { this.pairedBreakpoints = enabled; }
 	async begin(connection: DdbConnection): Promise<void> {
 		await this.useConnection(connection);
 		await this.request("configurationDone");

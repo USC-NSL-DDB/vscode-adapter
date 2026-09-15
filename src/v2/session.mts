@@ -2,6 +2,7 @@ import dap from "vscode-debugadapter";
 import type { DebugProtocol } from "vscode-debugprotocol";
 import type { ExecuteRequest, ExecutionState, Thread as DdbThread, StateSyncItem, OutputEvent as DdbOutput } from "@ddb-debugger/api-client";
 import { DdbConnection } from "./connection.mjs";
+import { DdbLogpoints } from "./logpoints.mjs";
 import { DdbCommands } from "./commands.mjs";
 import { DdbSidebar } from "./sidebar.mjs";
 import { DdbBreakpoints } from "./breakpoints.mjs";
@@ -44,6 +45,7 @@ export class CanonicalDebugSession extends DebugSession {
 	private stateTask?: Promise<void>;
 	private outputTask?: Promise<void>;
 	private closing = false;
+	private controlEpoch = 0;
 	private configured = false;
 	private distributed = false;
 	private readonly pendingStops = new Map<string, ExecutionState>();
@@ -55,6 +57,7 @@ export class CanonicalDebugSession extends DebugSession {
 			supportsConditionalBreakpoints: true,
 			supportsFunctionBreakpoints: true,
 			supportsHitConditionalBreakpoints: true,
+			supportsLogPoints: true,
 			supportsEvaluateForHovers: true,
 			supportsSetVariable: true,
 			supportsReadMemoryRequest: true,
@@ -184,6 +187,27 @@ export class CanonicalDebugSession extends DebugSession {
 	}
 
 	private stopped(threadId: string, state: ExecutionState): void {
+		const epoch = this.controlEpoch;
+		const sameStop = () => !this.closing && this.stopRevisions.get(threadId) === `${state.executionStateId}:${state.revision ?? "0"}` && this.connection?.state.get("thread", threadId)?.state === "THREAD_STATE_STOPPED";
+		void (async () => {
+			await this.breakpoints!.ready();
+			if (!sameStop()) return;
+			const reason = state.stopReason;
+			const parts = reason?.breakpointId ? this.breakpoints!.logMessage(reason.breakpointId) : undefined;
+			if (parts) {
+				if (reason?.threadId && reason.threadId !== threadId) return;
+				const continued = await new DdbLogpoints(this.connection!).run(threadId, state, parts, () => sameStop() && epoch === this.controlEpoch, text => this.sendEvent(new OutputEvent(text, "console")));
+				if (continued || !sameStop()) return;
+			}
+			this.publishStopped(threadId, state);
+		})().catch(error => {
+			if (!sameStop()) return;
+			this.sendEvent(new OutputEvent(`DDB logpoint failed: ${error instanceof Error ? error.message : String(error)}\n`, "stderr"));
+			this.publishStopped(threadId, state);
+		});
+	}
+
+	private publishStopped(threadId: string, state: ExecutionState): void {
 		const reason = state.stopReason;
 		const kinds: Record<string, string> = {
 			STOP_REASON_KIND_BREAKPOINT: "breakpoint", STOP_REASON_KIND_WATCHPOINT: "data breakpoint",
@@ -237,6 +261,7 @@ export class CanonicalDebugSession extends DebugSession {
 	protected override async evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): Promise<void> {
 		await this.reply(response, async () => {
 			if (args.context !== "repl") return this.model.evaluate(args);
+			this.controlEpoch++;
 			const frame = args.frameId === undefined ? undefined : this.model.frames.get(args.frameId);
 			const target = frame ? { thread: { threadId: frame.threadId } } : { currentThread: {} };
 			return { result: await this.commands!.run(args.expression, target, frame), variablesReference: 0 };
@@ -304,6 +329,7 @@ export class CanonicalDebugSession extends DebugSession {
 			return;
 		}
 		if (command === "send-signal") {
+			this.controlEpoch++;
 			await this.reply(response, async () => {
 				if (typeof args.signal !== "string" || !/^(?:SIG[A-Z0-9]+|[0-9]+)$/.test(args.signal)) throw new Error("A valid signal name or number is required");
 				const connection = this.model.connection;
@@ -361,6 +387,7 @@ export class CanonicalDebugSession extends DebugSession {
 		await this.execute(response, () => ({ target: args.sessionId !== undefined || args.session_id !== undefined ? this.model.sessionTarget((args.sessionId ?? args.session_id)!) : { broadcast: {} }, action: "EXECUTION_ACTION_INTERRUPT" }));
 	}
 	private async execute(response: DebugProtocol.Response, makeRequest: () => ExecuteRequest, body?: object): Promise<void> {
+		this.controlEpoch++;
 		await this.reply(response, async () => {
 			const connection = this.model.connection;
 			const request = makeRequest();

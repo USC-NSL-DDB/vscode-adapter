@@ -1,13 +1,14 @@
 import type { DebugProtocol } from "vscode-debugprotocol";
 import type { Breakpoint, BreakpointSpec, Target } from "@ddb-debugger/api-client";
 import type { DdbInspection } from "./inspection.mjs";
+import { parseLogMessage, type LogPart } from "./logpoints.mjs";
 import { Handles } from "./handles.mjs";
 
 import type { SubBkpt } from "../backend/backend.js";
 export type BreakpointTarget = SubBkpt;
 export interface SourceBreakpoint extends DebugProtocol.SourceBreakpoint { subbkpts?: BreakpointTarget[] }
 type Request = SourceBreakpoint | DebugProtocol.FunctionBreakpoint;
-interface Entry { request: Request; fingerprint: string; resource: Breakpoint }
+interface Entry { request: Request; fingerprint: string; resource: Breakpoint; log?: LogPart[] }
 
 /** Legacy forms: N skips N hits then stops once; >N keeps stopping afterward. */
 export function hitCondition(condition?: string): Pick<BreakpointSpec, "ignoreCount" | "temporary"> {
@@ -26,6 +27,7 @@ export class DdbBreakpoints {
 	private readonly bySource = new Map<string | undefined, Entry[]>();
 	private readonly handles = new Handles<string>();
 	private queue: Promise<unknown> = Promise.resolve();
+	private readonly retiredLogs = new Map<string, LogPart[]>();
 	constructor(private readonly model: DdbInspection) {}
 
 	set(source: string, requests: SourceBreakpoint[], modified = false): Promise<DebugProtocol.Breakpoint[]> {
@@ -40,6 +42,22 @@ export class DdbBreakpoints {
 		return task;
 	}
 
+	async ready(): Promise<void> { await this.queue; }
+
+	logMessage(id: string): LogPart[] | undefined {
+		for (const entries of this.bySource.values()) {
+			const entry = entries.find(item => item.resource.breakpointId === id);
+			if (entry) return entry.log;
+		}
+		return this.retiredLogs.get(id);
+	}
+
+	private retire(entry: Entry): void {
+		if (!entry.log) return;
+		this.retiredLogs.set(entry.resource.breakpointId!, entry.log);
+		while (this.retiredLogs.size > 1024) this.retiredLogs.delete(this.retiredLogs.keys().next().value!);
+	}
+
 	handle(id: string): number { return this.handles.put(id, id); }
 
 	all(): DebugProtocol.Breakpoint[] {
@@ -51,6 +69,7 @@ export class DdbBreakpoints {
 		for (const [source, entries] of this.bySource) {
 			for (let index = entries.length - 1; index >= 0; index--) {
 				if (entries[index].resource.breakpointId !== resourceId) continue;
+				this.retire(entries[index]);
 				removed.push(this.present(source, entries[index]));
 				entries.splice(index, 1);
 			}
@@ -104,14 +123,16 @@ export class DdbBreakpoints {
 			if (location.source && (!Number.isInteger(location.source.line) || location.source.line < 1)) throw new Error("Breakpoint line must be a positive integer");
 			const hit = hitCondition(request.hitCondition);
 			const logMessage = "logMessage" in request ? request.logMessage : undefined;
+			const log = logMessage === undefined ? undefined : parseLogMessage(logMessage);
 			const target = this.target(request);
 			const fingerprint = JSON.stringify([location, request.condition ?? "", request.hitCondition ?? "", logMessage ?? "", target]);
-			return { request, target, fingerprint, location, logMessage, hit };
+			return { request, target, fingerprint, location, logMessage, hit, log };
 		});
 		const entries = [...previous];
 		this.bySource.set(source, entries);
 		for (const entry of previous) {
 			if (modified || !requested.some(item => item.fingerprint === entry.fingerprint)) {
+				this.retire(entry);
 				await connection.complete(await connection.client.call("DebuggerControlService.DeleteBreakpoint", { breakpointId: entry.resource.breakpointId, target: { broadcast: {} } }));
 				const index = entries.indexOf(entry);
 				if (index >= 0) entries.splice(index, 1);
@@ -123,12 +144,11 @@ export class DdbBreakpoints {
 			if (existing) { response.push(this.present(source, existing)); continue; }
 			try {
 				if (!item.target) throw new Error("No sessions or groups selected for this breakpoint");
-				if (item.logMessage) throw new Error("Canonical logpoint handling is not yet implemented");
 				const result = await connection.complete(await connection.client.call("DebuggerControlService.CreateBreakpoint", {
 					target: item.target, breakpoint: { ...item.location, ...item.hit, enabled: true, condition: item.request.condition || undefined },
 				}));
 				if (!result.breakpoint?.breakpointId) throw new Error("DDB omitted the breakpoint identity");
-				const entry: Entry = { request: item.request, fingerprint: item.fingerprint, resource: result.breakpoint };
+				const entry: Entry = { request: item.request, fingerprint: item.fingerprint, resource: result.breakpoint, log: item.log };
 				entries.push(entry);
 				response.push(this.present(source, entry));
 			} catch (error) {

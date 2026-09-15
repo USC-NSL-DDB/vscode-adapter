@@ -283,6 +283,31 @@ suite("Canonical DDB binary", function () {
 					}
 
 				}
+				if (backend === "gdb") {
+					dap.enablePairedBreakpoints(false);
+					const logpoints = await dap.request("setBreakpoints", { source: { path: source }, breakpoints: [
+						{ line: 5, logMessage: "counter={counter} literal={{ok}}" }, { line: 6 },
+					] });
+					assert.equal(logpoints.success, true, logpoints.message);
+					assert.equal(logpoints.body.breakpoints[0].verified, true, logpoints.body.breakpoints[0].message);
+					const beforeLog = dap.events.length;
+					await dap.request("continue", { sessionId: metadata.body.session_id });
+					await until(() => dap.events.slice(beforeLog).some(event => event.event === "stopped" && event.body.hitBreakpointIds?.includes(logpoints.body.breakpoints[1].id)), "ordinary breakpoint after logpoint");
+					const logEvents = dap.events.slice(beforeLog);
+					assert.ok(logEvents.some(event => event.event === "output" && /^counter=\d+ literal=\{ok\}\n$/.test(event.body.output)));
+					assert.ok(!logEvents.some(event => event.event === "stopped" && event.body.hitBreakpointIds?.includes(logpoints.body.breakpoints[0].id)));
+					assert.ok(c.state.all("thread").some(item => item.threadId !== thread.threadId && item.state === "THREAD_STATE_STOPPED"));
+					assert.equal((await dap.request("setBreakpoints", { source: { path: source }, breakpoints: [] })).success, true);
+					const invalidLog = await dap.request("setBreakpoints", { source: { path: source }, breakpoints: [{ line: 5, logMessage: "bad={ddb_missing_log_value}" }] });
+					assert.equal(invalidLog.body.breakpoints[0].verified, true);
+					const beforeFailure = dap.events.length;
+					await dap.request("continue", { sessionId: metadata.body.session_id });
+					await until(() => dap.events.slice(beforeFailure).some(event => event.event === "stopped" && event.body.hitBreakpointIds?.includes(invalidLog.body.breakpoints[0].id)), "failed logpoint leaves target stopped");
+					assert.ok(dap.events.slice(beforeFailure).some(event => event.event === "output" && event.body.category === "stderr" && event.body.output.includes("DDB logpoint failed")));
+					assert.equal((await c.client.call("DebuggerService.GetExecutionState", { target })).executionState?.running ?? false, false);
+					assert.equal((await dap.request("setBreakpoints", { source: { path: source }, breakpoints: [] })).success, true);
+
+				}
 				const controlledThread = c.state.all("thread").find(item => item.threadId === thread.threadId)!;
 				const continued = await dap.request("continue", { sessionId: metadata.body.session_id });
 				assert.equal(continued.success, true, continued.message);

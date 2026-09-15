@@ -25,7 +25,7 @@ suite("Canonical breakpoint updates", () => {
 			},
 		} as unknown as DdbInspection;
 		const breakpoints = new DdbBreakpoints(model);
-		const requested = [{ source: { path: "main.c", name: "main.c" }, line: 6, subbkpts: [{ type: SubBkptType.Group, target: 1 }] }];
+		const requested = [{ source: { path: "main.c", name: "main.c" }, line: 6, logMessage: "value={counter}", subbkpts: [{ type: SubBkptType.Group, target: 1 }] }];
 		const [pending] = await breakpoints.set("main.c", requested);
 		resource = { ...resource, revision: "9007199254740993", verified: true, pending: false, message: undefined };
 		const [installed] = breakpoints.refresh();
@@ -39,6 +39,10 @@ suite("Canonical breakpoint updates", () => {
 		assert.deepEqual(breakpoints.refresh(), [], "hit counts alone do not change DAP breakpoint presentation");
 		resource = { ...resource, revision: "9007199254740995", verified: false, pending: true };
 		assert.equal(breakpoints.refresh()[0].verified, false);
+		const log = breakpoints.logMessage("opaque-breakpoint");
+		assert.ok(log?.length);
+		breakpoints.forget("opaque-breakpoint");
+		assert.deepEqual(breakpoints.logMessage("opaque-breakpoint"), log, "one-shot deletion must not discard a pending logpoint stop");
 	});
 	test("source and function sets reconcile independently and retain unchanged IDs", async () => {
 		const resources = new Map<string, Breakpoint>();
