@@ -168,7 +168,7 @@ export class CanonicalDebugSession extends DebugSession {
 				this.knownThreads.delete(id);
 				this.stopRevisions.delete(id);
 				this.pendingStops.delete(id);
-				inspection.invalidate();
+				inspection.invalidate(id);
 			}
 		}
 		for (const thread of threads) {
@@ -179,7 +179,7 @@ export class CanonicalDebugSession extends DebugSession {
 			if (thread.state === "THREAD_STATE_RUNNING" && previous?.state !== thread.state) {
 				this.pendingStops.delete(thread.threadId);
 				if (thread.sessionId) this.execution!.resumed(thread.sessionId);
-				inspection.invalidate();
+				inspection.invalidate(thread.threadId);
 				this.sendEvent(new ContinuedEvent(inspection.threadHandle(thread.threadId), false));
 			}
 		}
@@ -190,7 +190,7 @@ export class CanonicalDebugSession extends DebugSession {
 			if (!threadId || state.running || this.knownThreads.get(threadId)?.state !== "THREAD_STATE_STOPPED") continue;
 			const revision = `${state.executionStateId}:${state.revision ?? "0"}`;
 			if (this.stopRevisions.get(threadId) === revision) continue;
-			if (this.stopRevisions.has(threadId)) inspection.invalidate();
+			if (this.stopRevisions.has(threadId)) inspection.invalidate(threadId);
 			this.stopRevisions.set(threadId, revision);
 			if (this.configured) this.stopped(threadId, state); else this.pendingStops.set(threadId, state);
 		}

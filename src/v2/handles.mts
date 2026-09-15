@@ -23,6 +23,11 @@ export class Handles<T> {
 		return id;
 	}
 
+	removeWhere(predicate: (value: T) => boolean): void {
+		for (const [id, value] of this.values) if (predicate(value)) this.values.delete(id);
+		for (const [key, id] of this.keys) if (!this.values.has(id)) this.keys.delete(key);
+	}
+
 	/** Never reuse an expired handle, even after a server restart. */
 	clear(): void {
 		this.values.clear();

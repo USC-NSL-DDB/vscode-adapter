@@ -596,3 +596,26 @@ navigation before the fix. It serves source text and verifies the registered
 command opens the debug editor at the requested line, with and without a remote
 path. The existing GDB scenario verifies local-file navigation. This fixture
 covers frontend navigation, not remote backend file resolution.
+
+
+## Inspection lifetime checkpoint
+
+Execution updates now invalidate frame and variable handles for the affected
+thread. Full replacement snapshots still invalidate all handles. This preserves
+inspection of a stopped peer while another session steps or resumes.
+
+Inspection requests capture execution generations before waiting for backend
+results. Stack, scope, variable, register, evaluation and assignment responses
+check those generations before returning values or publishing child handles.
+A delayed response can no longer recreate handles after they were invalidated.
+Assignment checks reject stale results; they do not add atomic mutation
+preconditions to the backend API.
+
+Four initial regressions reproduced late-result acceptance and unnecessary peer
+invalidation. Additional tests cover evaluation/assignment responses and an
+in-flight request for an unaffected thread. The integration scenario also keeps
+peer frame and scope handles across an actual DDB step and reads them afterward.
+
+Validation: 98 unit tests, six canonical integration tests with GDB and mock,
+and the real VS Code extension-host scenarios pass. No backend change was
+needed for this checkpoint.

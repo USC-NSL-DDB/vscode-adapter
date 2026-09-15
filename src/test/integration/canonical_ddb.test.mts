@@ -173,6 +173,11 @@ suite("Canonical DDB binary", function () {
 				seq = dap.nextSequence + 1;
 				assert.equal((await dap.request("setSessionBreakpoints", { seq, arguments: invalidSelection })).success, false);
 				assert.equal((await dap.request("setBreakpoints", invalidSelection)).success, false);
+				const otherStack = await dap.request("stackTrace", { threadId: dapThreads.body.threads[1].id });
+				assert.equal(otherStack.success, true, otherStack.message);
+				const otherFrameId = otherStack.body.stackFrames[0].id;
+				const otherScopes = await dap.request("scopes", { frameId: otherFrameId });
+				assert.equal(otherScopes.success, true, otherScopes.message);
 				const beforeStepEvents = dap.events.length;
 				const beforeStep = BigInt(c.state.get("thread", thread.threadId!)?.revision ?? "0");
 				await c.complete(await c.client.call("DebuggerControlService.Execute", { target, action: "EXECUTION_ACTION_NEXT" }));
@@ -181,6 +186,12 @@ suite("Canonical DDB binary", function () {
 				assert.equal(stoppedState.executionState?.stopReason?.kind, "STOP_REASON_KIND_STEP", "canonical API must preserve the step stop reason");
 				assert.equal(stoppedState.executionState?.stopReason?.threadId, thread.threadId);
 				await until(() => dap.events.slice(beforeStepEvents).some(event => event.event === "stopped" && event.body.threadId === dapThreadId && event.body.reason === "step"), "DAP step reason");
+				const retainedScopes = await dap.request("scopes", { frameId: otherFrameId });
+				assert.equal(retainedScopes.success, true, "stepping a peer must preserve stopped-frame handles: " + retainedScopes.message);
+				for (const scope of otherScopes.body.scopes) {
+					const retainedVariables = await dap.request("variables", { variablesReference: scope.variablesReference });
+					assert.equal(retainedVariables.success, true, retainedVariables.message);
+				}
 				if (streamError) throw streamError;
 				if (backend === "gdb") {
 					const jumpTargets = await dap.request("gotoTargets", { source: { path: source, name: "main.c" }, line: 6 });
