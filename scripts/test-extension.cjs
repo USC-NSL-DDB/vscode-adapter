@@ -28,12 +28,12 @@ try {
     'ddb.otel.enabled': false,
   }));
   const result = spawnSync(process.env.DDB_VSCODE_EXECUTABLE, [
-    '--no-sandbox', '--disable-gpu', '--disable-workspace-trust', '--skip-welcome',
+    '--no-sandbox', '--disable-gpu', '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', '--disable-workspace-trust', '--skip-welcome',
     '--skip-release-notes', '--disable-extensions', `--user-data-dir=${profile}`,
     `--extensions-dir=${join(directory, 'extensions')}`,
     `--extensionDevelopmentPath=${extensionDirectory}`,
     `--extensionTestsPath=${testsPath}`,
-  ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, env: { ...process.env, OTEL_SDK_DISABLED: 'true' }, timeout: 90000, detached: true });
+  ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, env: { ...process.env, OTEL_SDK_DISABLED: 'true', DDB_TEST_PROFILE: profile, DDB_TEST_CDP_SCRIPT: resolve(__dirname, 'test-vscode-cdp.cjs'), DDB_TEST_NODE: process.execPath }, timeout: 90000, detached: true });
   process.stdout.write(result.stdout ?? "");
   process.stderr.write(result.stderr ?? "");
   if (result.pid) { try { process.kill(-result.pid, 'SIGTERM'); } catch {} }

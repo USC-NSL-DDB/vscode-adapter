@@ -53,8 +53,8 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Jump to line | Temporary canonical breakpoint followed by Execute JUMP | Local and substituted-source GDB destination stops, consumed breakpoint and invalid targets tested |
 | Debug Console, autorun, path substitution | Canonical raw-command escape hatch where typed APIs do not cover the command | Implemented with focused-frame CLI/raw console and per-session setup; entrypoint tests cover autorun and substitution |
 | Memory reads | ReadMemory | Real GDB bytes, positive/negative offsets, empty reads and limits tested; memory-view UI still unverified |
-| Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Real VS Code activation, sidebar refresh/grouping and disconnect tested; group-selection dialog and disable/re-enable tested; session-selection toggles and rendered decorations pending |
-| Focused frame navigation | Frame metadata lookup through DAP, no bit decoding | Focused-frame source navigation passes in a real VS Code host; status/decorations audit remains |
+| Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Real VS Code activation, sidebar refresh/grouping and disconnect tested; group/session selection, toggle retention, disable/re-enable and rendered breakpoint/execution labels tested |
+| Focused frame navigation | Frame metadata lookup through DAP, no bit decoding | Focused-frame source navigation, status-bar metadata and rendered execution labels pass in a real VS Code host |
 | Reconnect, replay gap, output gap, restart | SDK recovery, projection rehydration, explicit loss/restart handling | Real HTTP socket interruption tests cover cursor resume, output gaps, state replay-gap rehydration and changed-instance rejection; managed-child crash termination tested |
 
 ## Confirmed contract limits
@@ -810,3 +810,17 @@ its bundled README predates this additional backend requirement.
 
 Validation: 315 backend tests pass with one ignored; all ten canonical adapter
 integration tests pass against /tmp/ddb-canonical-build/debug/ddb.
+
+
+## Rendered selection and decoration checkpoint
+
+The extension-host runner opens an ephemeral loopback DevTools endpoint for its
+isolated test window. A test-only Node helper clicks the actual Quick Pick toggle
+and reads rendered controls and CSS decoration content. It is excluded from VSIX
+packages and does not change extension runtime behavior.
+
+The real GDB scenario now verifies that a selected group survives switching to
+Sessions and back, and that selecting an individual session creates a canonical
+session-targeted breakpoint. It checks rendered Groups/Sessions labels, the
+execution-line session/thread annotation, and focused-frame status-bar metadata.
+Disconnect clears the rendered execution annotation. All these checks pass.

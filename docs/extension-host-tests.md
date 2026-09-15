@@ -28,9 +28,12 @@ The first verified run used VS Code 1.104.3 and Xvfb 21.1.12 extracted under
 archive SHA-256 was
 `4bd1f5219195dc165eda48d2764b7c4be4a1135110034ca228497ae6d34db49c`.
 
-This test is not a complete visual audit. It does not yet exercise breakpoint
-session-selection toggles or inspect rendered decorations. The group-selection
-dialog and disable/re-enable actions are covered.
+The test clicks the rendered group/session toggle button through the isolated
+window's loopback DevTools endpoint. It verifies group selection survives view
+switching, creates a session-targeted breakpoint, and checks rendered editor
+labels, the execution annotation, and focused-frame status. Disconnect clears
+the execution annotation. The helper uses the Node test runner's built-in fetch
+and WebSocket support; this setup is validated with Node 24.
 
 A second session uses an inline DAP fixture to serve source content through a
 source reference. It tests the registered focused-frame command with a
