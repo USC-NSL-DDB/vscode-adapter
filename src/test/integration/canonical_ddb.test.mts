@@ -409,14 +409,23 @@ suite("Canonical DDB binary", function () {
 
 				}
 				const controlledThread = c.state.all("thread").find(item => item.threadId === thread.threadId)!;
+				const beforeContinueEvents = dap.events.length;
 				const continued = await dap.request("continue", { sessionId: metadata.body.session_id });
 				assert.equal(continued.success, true, continued.message);
 				assert.equal(continued.body.allThreadsContinued, false);
-				await until(() => c.state.get("thread", controlledThread.threadId!)?.state === "THREAD_STATE_RUNNING", "session continue");
+				await until(() => dap.events.slice(beforeContinueEvents).some(event => event.event === "continued" && event.body.threadId === metadata.body.thread_id), "session continue event");
+				if (backend === "gdb") await until(() => c.state.get("thread", controlledThread.threadId!)?.state === "THREAD_STATE_RUNNING", "session continue");
+				else {
+					// The mock always schedules a stop 25 ms after continue, even
+					// without breakpoints. A sampled RUNNING state is not durable.
+					await until(() => c.state.get("thread", controlledThread.threadId!)?.state === "THREAD_STATE_STOPPED", "mock's scheduled continue stop");
+				}
 				assert.ok(c.state.all("thread").some(item => item.threadId !== controlledThread.threadId && item.state === "THREAD_STATE_STOPPED"));
 				const beforePauseEvents = dap.events.length;
 				const paused = await dap.request("pause", { sessionId: metadata.body.session_id });
 				assert.equal(paused.success, true, paused.message);
+				// Pausing an already stopped mock is an idempotent operation.
+				if (backend === "gdb") await until(() => dap.events.slice(beforePauseEvents).some(event => event.event === "stopped" && event.body.threadId === metadata.body.thread_id && event.body.reason === "pause"), "explicit session pause event");
 				await until(() => c.state.get("thread", controlledThread.threadId!)?.state === "THREAD_STATE_STOPPED", "session pause");
 				if (backend === "gdb") {
 					const signalState = (await c.client.call("DebuggerService.GetExecutionState", { target })).executionState;

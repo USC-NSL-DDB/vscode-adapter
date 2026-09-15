@@ -9,16 +9,16 @@ import { setTimeout as delay } from "node:timers/promises";
 suite("Canonical adapter entrypoint", function () {
 	this.timeout(40000);
 	setup(function () { if (!process.env.DDB_TEST_BINARY) this.skip(); });
-	for (const backend of ["mock", "gdb"] as const) test(`${backend}: stdio launch, sidebar, distributed stack and disconnect`, async () => {
+	for (const { backend, formatting } of [{ backend: "mock", formatting: "prettyPrinters" }, ...["prettyPrinters", "parseText", "disabled"].map(formatting => ({ backend: "gdb", formatting }))]) test(`${backend}: ${formatting} stdio launch, sidebar, distributed stack and disconnect`, async () => {
 		const directory = await mkdtemp(join(tmpdir(), "ddb-stdio-test-"));
 		const config = join(directory, "ddb.yaml");
 		const executable = join(directory, "main");
 		if (backend === "gdb") {
-			await writeFile(join(directory, "main.c"), "int entry_target(void) { return 1; }\nint main(void) { int value = entry_target(); return value; }\n");
+			await writeFile(join(directory, "main.c"), "int values[2] = {3, 5};\nint entry_target(void) { return 1; }\nint main(void) { int value = entry_target(); return value; }\n");
 			execFileSync("cc", ["-g", "-O0", join(directory, "main.c"), "-o", executable]);
 		}
 		await writeFile(config, `Framework: unspecified\nConf:\n  auto_shutdown: false\n  on_exit: kill\n  base_dir: ${JSON.stringify(join(directory, "base"))}\n  log_dir: ${JSON.stringify(join(directory, "logs"))}\n  Debugger:\n    backend: ${backend}\nStaticSessions:\n  - tag: stdio\n    alias: stdio\n    hash: stdio-group\n    pid: 4501\n${backend === "gdb" ? `    start_mode: binary\n    binary_path: ${JSON.stringify(executable)}\n    stop_at_entry: true\n` : ""}`);
-		const child = spawn(process.execPath, [process.env.DDB_TEST_ADAPTER ?? fileURLToPath(new URL("../../gdb.js", import.meta.url))], { stdio: ["pipe", "pipe", "pipe"], detached: true });
+		const child = spawn(process.execPath, [process.env.DDB_TEST_ADAPTER ?? fileURLToPath(new URL("../../gdb.js", import.meta.url))], { stdio: ["pipe", "pipe", "pipe"], detached: true, env: { ...process.env, DDB_ADAPTER_ENV_REMOVE: "remove this inherited value" } });
 		let sequence = 0;
 		let buffer = Buffer.alloc(0);
 		let stderr = "";
@@ -51,7 +51,7 @@ suite("Canonical adapter entrypoint", function () {
 		});
 		try {
 			assert.equal((await request("initialize", { adapterID: "ddb", pathFormat: "path", linesStartAt1: true, columnsStartAt1: true })).success, true);
-			const launched = await request("launch", { printCalls: true, ddbpath: process.env.DDB_TEST_BINARY, configFilePath: config, cwd: directory, stopAtEntry: backend === "gdb" ? "entry_target" : false, debugger_args: ["--console-level", "warn"], autorun: backend === "gdb" ? ["set print elements 33"] : [], pathSubstitutions: backend === "gdb" ? { "/old build path": "/new source path" } : {} });
+			const launched = await request("launch", { printCalls: true, valuesFormatting: formatting, ddbpath: process.env.DDB_TEST_BINARY, configFilePath: config, cwd: directory, env: { DDB_ADAPTER_ENV_TEST: "value with spaces", DDB_ADAPTER_ENV_REMOVE: null }, stopAtEntry: backend === "gdb" ? "entry_target" : false, debugger_args: ["--console-level", "warn"], autorun: backend === "gdb" ? ["set print elements 33"] : [], pathSubstitutions: backend === "gdb" ? { "/old build path": "/new source path" } : {} });
 			assert.equal(launched.success, true, launched.message);
 			assert.ok(events.includes("initialized"));
 			assert.ok(output.some(line => line.startsWith("[DDB API] ")), "printCalls must emit canonical request diagnostics");
@@ -78,6 +78,23 @@ suite("Canonical adapter entrypoint", function () {
 			}
 			assert.equal((await request("ddb.status")).body.status, "up");
 			if (backend === "gdb") {
+				const watch = await request("evaluate", { expression: "values", context: "watch", frameId: stack.body.stackFrames[0].id });
+				assert.equal(watch.success, true, watch.message);
+				if (formatting === "disabled") assert.equal(watch.body.variablesReference, 0, "disabled formatting must expose the value without expansion");
+				else {
+					assert.ok(watch.body.variablesReference > 0, `${formatting} must expand arrays`);
+					const children = await request("variables", { variablesReference: watch.body.variablesReference });
+					assert.equal(children.success, true, children.message);
+					assert.deepEqual(children.body.variables.map((variable: any) => variable.value), ["3", "5"]);
+				}
+			}
+			if (backend === "gdb") {
+				for (const [name, expected] of [["DDB_ADAPTER_ENV_TEST", "DDB_ADAPTER_ENV_TEST = value with spaces"], ["DDB_ADAPTER_ENV_REMOVE", 'Environment variable "DDB_ADAPTER_ENV_REMOVE" not defined.']]) {
+					const environment = await request("evaluate", { expression: `show environment ${name}`, context: "repl", frameId: stack.body.stackFrames[0].id });
+					assert.equal(environment.success, true, environment.message);
+					for (let attempt = 0; !output.some(line => line.includes(expected)) && attempt < 100; attempt++) await delay(20);
+					assert.ok(output.some(line => line.includes(expected)), `managed environment must reach GDB: ${name}`);
+				}
 				const shown = await request("evaluate", { expression: "show print elements", context: "repl", frameId: stack.body.stackFrames[0].id });
 				assert.equal(shown.success, true, shown.message);
 				for (let attempt = 0; !output.some(line => /33/.test(line)) && attempt < 100; attempt++) await delay(20);

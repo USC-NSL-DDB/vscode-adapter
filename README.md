@@ -4,8 +4,8 @@ This development branch migrates the extension to DDB's canonical API v2 and
 TypeScript SDK. The adapter owns the backend connection; the sidebar communicates
 with it through VS Code's Debug Adapter Protocol.
 
-**Migration validation is still in progress.** See the
-[feature checklist and test evidence](docs/canonical-api-migration.md).
+See the [feature audit and test evidence](docs/canonical-parity-audit.md)
+for the supported compatibility features and validation limits.
 The compatibility adapter remains on `codex/migrate-current-ddb`.
 
 ## Required DDB build

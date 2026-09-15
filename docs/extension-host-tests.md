@@ -67,3 +67,8 @@ refuses modal dialogs in extension-test mode. Those tests verify confirmation,
 cancellation, owning-session capture, awaited control failures, and signal-picker
 cancellation during loading. The real extension-host test covers delivery of the
 same SIGKILL signal to GDB.
+
+Packaged stdio tests also check environment override/removal and the three
+variable display modes. The mock backend emits a scheduled stop after Continue;
+the integration scenario observes that event instead of polling for a lasting
+running state. Real GDB verifies running-to-paused behavior.

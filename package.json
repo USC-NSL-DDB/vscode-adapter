@@ -302,7 +302,7 @@
               },
               "valuesFormatting": {
                 "type": "string",
-                "description": "Set the way of showing variable values. 'disabled' - show value as is, 'parseText' - parse debuggers output text into structure, 'prettyPrinters' - enable debuggers custom pretty-printers if there are any",
+                "description": "Variable display mode: 'disabled' shows values without expansion; 'parseText' expands structured debugger values without enabling pretty-printers; 'prettyPrinters' also enables GDB pretty-printers.",
                 "default": "prettyPrinters",
                 "enum": [
                   "disabled",
@@ -443,7 +443,7 @@
               },
               "valuesFormatting": {
                 "type": "string",
-                "description": "Set the way of showing variable values. 'disabled' - show value as is, 'parseText' - parse debuggers output text into structure, 'prettyPrinters' - enable debuggers custom pretty-printers if there are any",
+                "description": "Variable display mode: 'disabled' shows values without expansion; 'parseText' expands structured debugger values without enabling pretty-printers; 'prettyPrinters' also enables GDB pretty-printers.",
                 "default": "parseText",
                 "enum": [
                   "disabled",

@@ -1,3 +1,9 @@
+# Migration investigation log
+
+For the current feature audit, see [canonical parity audit](canonical-parity-audit.md).
+The checkpoints below retain their original counts and incomplete-work notes.
+They describe intermediate states, not the final validation status.
+
 # Canonical API migration
 
 Work branch: `codex/canonical-ddb-api`, based on compatibility commit `8e7317b`.
@@ -860,3 +866,12 @@ it does not establish the cause of the earlier mock timeout.
 
 After the readiness correction, all 10 canonical binary integration tests pass.
 The real extension-host scenario also passes with typed signal delivery.
+
+## Final launch and fixture audit
+
+Packaged GDB tests now verify environment override/removal and all three variable
+display modes. The old mock timeout was reproduced with execution tracing: the
+mock emits an unconditional stop 25 ms after Continue. The test now checks the
+continued event, waits for that scheduled stop, and treats the following pause
+as idempotent. Real GDB still checks persistent running and an explicit pause.
+No backend change was required for this fixture correction.
