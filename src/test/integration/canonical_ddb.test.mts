@@ -55,9 +55,10 @@ suite("Canonical DDB binary", function () {
 				const evaluation = await c.complete(await c.client.call("DebuggerControlService.Evaluate", { target, frameId: frames[0].frameId, expression: "1 + 2", evaluationContext: "EVALUATION_CONTEXT_WATCH" }));
 				assert.ok(evaluation.evaluation?.value !== undefined);
 				if (backend === "gdb") assert.equal(evaluation.evaluation.value, "3");
-				const functionBreakpoint = await c.complete(await c.client.call("DebuggerControlService.CreateBreakpoint", { target: { session: { sessionId: thread.sessionId } }, breakpoint: { function: { functionName: "main" }, enabled: true } }));
+				const functionBreakpoint = await c.complete(await c.client.call("DebuggerControlService.CreateBreakpoint", { target: { session: { sessionId: thread.sessionId } }, breakpoint: { function: { functionName: "main" }, enabled: true, ignoreCount: "2" } }));
 				assert.equal(functionBreakpoint.breakpoint?.spec?.function?.functionName, "main");
 				assert.equal(functionBreakpoint.breakpoint?.verified, true);
+				assert.equal(functionBreakpoint.breakpoint?.spec?.ignoreCount, "2");
 				await c.complete(await c.client.call("DebuggerControlService.DeleteBreakpoint", { target: { broadcast: {} }, breakpointId: functionBreakpoint.breakpoint?.breakpointId }));
 				const breakpoint = await c.complete(await c.client.call("DebuggerControlService.CreateBreakpoint", { target: { multiple: { targets: c.state.all("group").map(group => ({ group: { groupId: group.groupId } })) } }, breakpoint: { source: { source, line: 5 }, enabled: true } }));
 				assert.ok(breakpoint.breakpoint?.breakpointId);
@@ -255,6 +256,32 @@ suite("Canonical DDB binary", function () {
 					assert.equal(clearFunctions.success, true, clearFunctions.message);
 					assert.deepEqual(clearFunctions.body.breakpoints, []);
 					assert.deepEqual(await c.client.collect("DebuggerService.ListBreakpoints", {}), []);
+					for (const [hitCondition, skipped] of [[">2", 2], ["1", 1]] as const) {
+						const beforeStack = await dap.request("stackTrace", { threadId: dapThreadId });
+						const beforeCounter = await dap.request("evaluate", { frameId: beforeStack.body.stackFrames[0].id, expression: "counter", context: "watch" });
+						const counted = await dap.request("setFunctionBreakpoints", { breakpoints: [{ name: "tick", hitCondition }] });
+						assert.equal(counted.success, true, counted.message);
+						assert.equal(counted.body.breakpoints[0].verified, true, counted.body.breakpoints[0].message);
+						const eventOffset = dap.events.length;
+						await c.complete(await c.client.call("DebuggerControlService.Execute", { target, action: "EXECUTION_ACTION_CONTINUE" }));
+						await until(() => dap.events.slice(eventOffset).some(event => event.event === "stopped" && event.body.hitBreakpointIds?.includes(counted.body.breakpoints[0].id)), `counted function hit ${hitCondition}`);
+						const afterStack = await dap.request("stackTrace", { threadId: dapThreadId });
+						const afterCounter = await dap.request("evaluate", { frameId: afterStack.body.stackFrames[0].id, expression: "counter", context: "watch" });
+						assert.equal(Number(afterCounter.body.result), Number(beforeCounter.body.result) - skipped - 1);
+						if (hitCondition === ">2") {
+							const nextOffset = dap.events.length;
+							await c.complete(await c.client.call("DebuggerControlService.Execute", { target, action: "EXECUTION_ACTION_CONTINUE" }));
+							await until(() => dap.events.slice(nextOffset).some(event => event.event === "stopped" && event.body.hitBreakpointIds?.includes(counted.body.breakpoints[0].id)), "persistent hit after ignore count is exhausted");
+							const nextStack = await dap.request("stackTrace", { threadId: dapThreadId });
+							const nextCounter = await dap.request("evaluate", { frameId: nextStack.body.stackFrames[0].id, expression: "counter", context: "watch" });
+							assert.equal(Number(nextCounter.body.result), Number(afterCounter.body.result) - 1);
+						}
+						const remaining = await c.client.collect("DebuggerService.ListBreakpoints", {});
+						assert.equal(remaining[0].spec?.ignoreCount, String(skipped));
+						assert.equal(remaining[0].subBreakpoints?.length, hitCondition === "1" ? 1 : 2);
+						assert.equal((await dap.request("setFunctionBreakpoints", { breakpoints: [] })).success, true);
+					}
+
 				}
 				const controlledThread = c.state.all("thread").find(item => item.threadId === thread.threadId)!;
 				const continued = await dap.request("continue", { sessionId: metadata.body.session_id });

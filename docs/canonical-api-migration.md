@@ -47,7 +47,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Variable assignment | Evaluate assignment if supported; backend escape hatch otherwise | Root and array-child DAP assignment tested with real GDB |
 | Source/function breakpoints | Create/Update/DeleteBreakpoint operations | Source and function creation, conditions, real hits, replacement and deletion tested with patched DDB |
 | Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Group selection, verified member projection and paired requests tested; streamed verification refresh implemented |
-| Conditions, hit counts, enable/disable, logpoints | Typed fields where supported; logpoints need explicit implementation | Pending |
+| Conditions, hit counts, enable/disable, logpoints | Typed conditions and ignore counts; logpoints need explicit implementation | Conditions and legacy hit conditions tested; logpoints and enable/disable UI audit pending |
 | Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | Next, session-specific continue/pause and typed stop metadata tested with patched DDB; all-stop coordination and other actions pending |
 | Signals and session kill | ListSignals and v2 raw signal command | DAP list/validation tested on mock/GDB; SIGKILL tested on GDB |
 | Jump to line | Execute JUMP with source location | Pending |
@@ -77,7 +77,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 65 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 66 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -141,9 +141,9 @@ can use setBreakpoints directly.
 Full breakpoint parity remains unproven:
 
 - DDB commit `7390297a` implements typed function locations. Function creation,
-  real hits, conditions, replacement and deletion are covered. Ignore counts
-  remain unsupported and function hit-condition parity is still pending.
-- Logpoints and hit conditions remain explicitly unimplemented in the canonical
+  real hits, conditions, replacement and deletion are covered. DDB commit
+  `33fc7007` adds ignore counts; source and function hit conditions are implemented.
+- Logpoints remain explicitly unimplemented in the canonical
   adapter. They must be implemented and exercised before declaring migration complete.
 - DDB commit `ba512f18` corrects group-only breakpoint verification and projects
   installed session members. Paired DAP, sidebar and real group-hit checks cover
@@ -233,7 +233,7 @@ The original release binary remains available for baseline comparisons.
 
 This checkpoint does not establish full execution or breakpoint parity.
 Explicit-pause versus external-signal presentation, entry-stop classification,
-all-stop coordination, logpoints and hit conditions still need work. No current VSIX has been
+all-stop coordination and logpoints still need work. No current VSIX has been
 packaged or GUI-tested.
 
 ## Group breakpoint projection and refresh
@@ -285,5 +285,39 @@ SDK using a revision-qualified tarball name and a pinned integrity digest.
 
 Current checks pass: 65 adapter unit tests; four canonical integration tests;
 314 DDB core tests with one ignored; six API v1/v2 integration tests; seven SDK
-tests; and two LLDB bridge option tests. Function hit conditions remain pending,
-as do the other incomplete items in the parity checklist.
+tests; and two LLDB bridge option tests. The subsequent checkpoint below adds
+hit conditions; other incomplete items remain in the parity checklist.
+
+## Hit conditions and consumed breakpoint cleanup
+
+DDB commit `33fc7007` retains ignore counts in logical breakpoint properties,
+returns them through the canonical API, and carries them into group inheritance.
+The GDB insertion command uses `-i`. The LLDB bridge sets and verifies the count,
+removing the breakpoint if that configuration fails. The mock backend accounts
+for ignored breakpoint encounters. The adapter advertises hit-condition support
+and sends typed ignoreCount/temporary fields for source and function breakpoints.
+
+The accepted forms preserve the legacy adapter's semantics:
+
+| Form | Behavior |
+| --- | --- |
+| `>N` | Skip the first N hits, then stop on subsequent hits. |
+| `N`, positive | Skip N hits, then stop once on each installed debugger member. |
+| `0` or empty | Ordinary breakpoint. |
+
+Counts use decimal strings and BigInt validation. Unsupported expressions and
+values outside unsigned 64-bit range produce an error; backend limits can also
+reject an admitted configuration. No JavaScript number conversion changes a count.
+
+The real-GDB regression checks the number of skipped function calls, a subsequent
+persistent hit, one-shot member removal, and preservation of the other installed
+group member. Unit coverage also checks source breakpoint requests and exact
+large counts. When a logical breakpoint is deleted, the adapter removes its
+cached entry and emits a DAP removed event, allowing the same request to create
+a new live breakpoint. Deletion racing an adapter reconciliation cannot remove
+an unrelated cached entry.
+
+Validation: 66 adapter unit tests, four canonical integration tests, 315 backend
+core tests with one ignored, six API v1/v2 tests, and four LLDB bridge option tests
+pass. Real LLDB execution and full GUI behavior remain unverified. Logpoints,
+all-stop coordination and the other incomplete checklist items remain required.

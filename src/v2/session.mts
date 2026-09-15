@@ -54,6 +54,7 @@ export class CanonicalDebugSession extends DebugSession {
 			supportsConfigurationDoneRequest: true,
 			supportsConditionalBreakpoints: true,
 			supportsFunctionBreakpoints: true,
+			supportsHitConditionalBreakpoints: true,
 			supportsEvaluateForHovers: true,
 			supportsSetVariable: true,
 			supportsReadMemoryRequest: true,
@@ -163,6 +164,10 @@ export class CanonicalDebugSession extends DebugSession {
 			if (this.stopRevisions.has(threadId)) inspection.invalidate();
 			this.stopRevisions.set(threadId, revision);
 			if (this.configured) this.stopped(threadId, state); else this.pendingStops.set(threadId, state);
+		}
+		const deleted = _item.type === "event" ? _item.event.deleted : undefined;
+		if (deleted?.resourceKind === "RESOURCE_KIND_BREAKPOINT" && deleted.resourceId) {
+			for (const breakpoint of this.breakpoints!.forget(deleted.resourceId)) this.sendEvent(new BreakpointEvent("removed", breakpoint));
 		}
 		for (const breakpoint of this.breakpoints!.refresh()) this.sendEvent(new BreakpointEvent("changed", breakpoint));
 		this.sendEvent(new Event("ddb.stateChanged"));

@@ -1,5 +1,5 @@
 import type { DebugProtocol } from "vscode-debugprotocol";
-import type { Breakpoint, Target } from "@ddb-debugger/api-client";
+import type { Breakpoint, BreakpointSpec, Target } from "@ddb-debugger/api-client";
 import type { DdbInspection } from "./inspection.mjs";
 import { Handles } from "./handles.mjs";
 
@@ -8,6 +8,17 @@ export type BreakpointTarget = SubBkpt;
 export interface SourceBreakpoint extends DebugProtocol.SourceBreakpoint { subbkpts?: BreakpointTarget[] }
 type Request = SourceBreakpoint | DebugProtocol.FunctionBreakpoint;
 interface Entry { request: Request; fingerprint: string; resource: Breakpoint }
+
+/** Legacy forms: N skips N hits then stops once; >N keeps stopping afterward. */
+export function hitCondition(condition?: string): Pick<BreakpointSpec, "ignoreCount" | "temporary"> {
+	if (!condition?.trim()) return {};
+	const match = /^(>)?(\d+)$/.exec(condition.trim());
+	if (!match) throw new Error("Hit condition must be N or >N, where N is a nonnegative integer");
+	const count = BigInt(match[2]);
+	if (count > 18446744073709551615n) throw new Error("Hit count exceeds the supported unsigned 64-bit range");
+	if (!match[1] && count === 0n) return {};
+	return { ignoreCount: count.toString(), temporary: !match[1] };
+}
 
 /** Reconciles source and function breakpoint sets through canonical operations. */
 export class DdbBreakpoints {
@@ -33,6 +44,18 @@ export class DdbBreakpoints {
 
 	all(): DebugProtocol.Breakpoint[] {
 		return [...this.bySource].flatMap(([source, entries]) => entries.map(entry => this.present(source, entry)));
+	}
+
+	forget(resourceId: string): DebugProtocol.Breakpoint[] {
+		const removed: DebugProtocol.Breakpoint[] = [];
+		for (const [source, entries] of this.bySource) {
+			for (let index = entries.length - 1; index >= 0; index--) {
+				if (entries[index].resource.breakpointId !== resourceId) continue;
+				removed.push(this.present(source, entries[index]));
+				entries.splice(index, 1);
+			}
+		}
+		return removed;
 	}
 
 	/** Update DAP verification when installed group members change. */
@@ -79,17 +102,19 @@ export class DdbBreakpoints {
 				: { source: { source, line: (request as SourceBreakpoint).line, column: (request as SourceBreakpoint).column } };
 			if (location.function && !location.function.functionName?.trim()) throw new Error("Breakpoint function name is required");
 			if (location.source && (!Number.isInteger(location.source.line) || location.source.line < 1)) throw new Error("Breakpoint line must be a positive integer");
+			const hit = hitCondition(request.hitCondition);
 			const logMessage = "logMessage" in request ? request.logMessage : undefined;
 			const target = this.target(request);
 			const fingerprint = JSON.stringify([location, request.condition ?? "", request.hitCondition ?? "", logMessage ?? "", target]);
-			return { request, target, fingerprint, location, logMessage };
+			return { request, target, fingerprint, location, logMessage, hit };
 		});
 		const entries = [...previous];
 		this.bySource.set(source, entries);
 		for (const entry of previous) {
 			if (modified || !requested.some(item => item.fingerprint === entry.fingerprint)) {
 				await connection.complete(await connection.client.call("DebuggerControlService.DeleteBreakpoint", { breakpointId: entry.resource.breakpointId, target: { broadcast: {} } }));
-				entries.splice(entries.indexOf(entry), 1);
+				const index = entries.indexOf(entry);
+				if (index >= 0) entries.splice(index, 1);
 			}
 		}
 		const response: DebugProtocol.Breakpoint[] = [];
@@ -99,9 +124,8 @@ export class DdbBreakpoints {
 			try {
 				if (!item.target) throw new Error("No sessions or groups selected for this breakpoint");
 				if (item.logMessage) throw new Error("Canonical logpoint handling is not yet implemented");
-				if (item.request.hitCondition) throw new Error("Canonical hit-condition handling is not yet implemented");
 				const result = await connection.complete(await connection.client.call("DebuggerControlService.CreateBreakpoint", {
-					target: item.target, breakpoint: { ...item.location, enabled: true, condition: item.request.condition || undefined },
+					target: item.target, breakpoint: { ...item.location, ...item.hit, enabled: true, condition: item.request.condition || undefined },
 				}));
 				if (!result.breakpoint?.breakpointId) throw new Error("DDB omitted the breakpoint identity");
 				const entry: Entry = { request: item.request, fingerprint: item.fingerprint, resource: result.breakpoint };
