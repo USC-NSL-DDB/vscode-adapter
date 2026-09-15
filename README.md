@@ -1,11 +1,32 @@
 # DDB debugger for VS Code
 
-Version 0.0.11 supports the local compatibility interfaces of DDB 0.1.15.
-See the [migration findings and verification notes](docs/ddb-0.1.15-migration.md).
+This development branch migrates the extension to DDB's canonical API v2 and
+TypeScript SDK. The adapter owns the backend connection; the sidebar communicates
+with it through VS Code's Debug Adapter Protocol.
 
-## Configure
+**Migration validation is still in progress.** See the
+[feature checklist and test evidence](docs/canonical-api-migration.md).
+The compatibility adapter remains on `codex/migrate-current-ddb`.
 
-Install DDB and use a working DDB YAML configuration. In `.vscode/launch.json`:
+## Required DDB build
+
+Use DDB's `codex/vscode-api-parity` branch at commit `33fc7007` or a descendant
+containing those fixes. The unpatched 0.1.15 binary lacks required stop metadata,
+function-breakpoint and hit-count behavior. API v2 and its SDK are preview APIs.
+
+Build from a separate DDB worktree. For example:
+
+```sh
+cargo build --manifest-path /path/to/ddb-worktree/ddb/Cargo.toml \
+  --package ddb --bin ddb --target-dir /tmp/ddb-canonical-build
+```
+
+Use `/tmp/ddb-canonical-build/debug/ddb` as `ddbpath` below. The adapter repository
+vendors the matching SDK install archive; `npm ci` installs it.
+
+## Managed launch
+
+Use a working DDB YAML configuration. In `.vscode/launch.json`:
 
 ```json
 {
@@ -18,31 +39,63 @@ Install DDB and use a working DDB YAML configuration. In `.vscode/launch.json`:
       "ddbpath": "/absolute/path/to/ddb",
       "configFilePath": "${workspaceFolder}/ddb.yaml",
       "cwd": "${workspaceFolder}",
+      "distributedStack": true,
       "debugger_args": []
     }
   ]
 }
 ```
 
-Set `ddb.serviceUrl` in VS Code settings to DDB's loopback API address. The
-standard value is `http://localhost:5000`; its port must match
-`Conf.api_server_port` in the DDB YAML. `DDB_API_URL` overrides the setting.
-The extension forwards the same URL to the debug adapter process.
+The adapter starts `ddb serve --managed`, creates private authentication and
+startup-report files, and connects to the reported loopback endpoint. Disconnect
+shuts down that owned process and removes its temporary files. Configure debugged
+programs and their startup behavior in DDB YAML.
 
-Use the YAML config launch form, not `ddb serve`, because the adapter consumes
-MI stdout. API v2-only listeners are not supported in this release.
+`stopAtEntry: true` additionally installs a temporary `main` breakpoint;
+a function-name string selects a different entry function. This setting does not
+automatically continue an initially stopped process.
+
+`debugger_args` accepts additional DDB flags. Bind, authentication, managed-mode,
+and startup-report flags belong to the adapter and cannot be overridden there.
+`printCalls: true` shows API methods and HTTP status without headers or payloads.
+`showDevDebugOutput: true` also shows managed-process stdout.
+
+## Attach to an existing API v2 server
+
+```json
+{
+  "type": "ddb",
+  "request": "attach",
+  "name": "Existing DDB",
+  "apiEndpoint": "http://127.0.0.1:5000"
+}
+```
+
+Supply authentication through `DDB_API_TOKEN` in VS Code's environment, or the
+optional `apiToken` launch property. Disconnect closes the client and leaves an
+external server running.
+
+The old `ddb.serviceUrl`, `serviceUrl`, and `DDB_API_URL` settings do not select
+the canonical connection. Managed launch discovers its endpoint; attach uses
+`apiEndpoint`. The adapter no longer consumes DDB's MI stdout transport.
 
 ## Build and test
 
-```bash
+```sh
 npm ci
 npm test
-DDB_TEST_BINARY=/absolute/path/to/ddb npm run test:integration
+DDB_TEST_BINARY=/absolute/path/to/patched/ddb npm run test:canonical
 npx vsce package
 ```
 
-Install the resulting `ddb-debugger-0.0.11.vsix` using VS Code's **Extensions:
-Install from VSIX** command. The integration tests require a C compiler and GDB.
+The canonical integration suite requires C and C++ compilers and GDB. It tests
+managed startup, external ownership, inspection, execution, C++ pretty printers,
+and a two-session distributed mock topology. See
+[extension-host tests](docs/extension-host-tests.md) for real VS Code validation.
+
+Install the resulting VSIX using VS Code's **Extensions: Install from VSIX**
+command. The package version remains 0.0.11 during development; a package built
+from this branch has different requirements from the compatibility package.
 
 ## Origin
 

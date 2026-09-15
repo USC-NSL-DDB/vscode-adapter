@@ -78,7 +78,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 103 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 105 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -769,3 +769,21 @@ from those responses, without depending on sidebar cache initialization.
 
 Validation: 105 unit tests and the real VS Code scenario pass, including initial
 group selection, stepping, disable/re-enable, and scoped disconnect cleanup.
+
+
+## Development package checkpoint
+
+The README now describes canonical managed launch, external attach, required
+backend fixes, and the current test commands. The previous README incorrectly
+described the compatibility MI transport and rejected API v2.
+
+A development VSIX was built from runtime commit b6dc5fe with the updated README:
+/tmp/ddb-canonical-development.vsix, 5731 files, approximately 9.5 MB. SHA-256:
+977424d687bc56218be039df1b27ad33a276f19cc73d3ecfcd2e970dad7d2ccc.
+The archive contains the canonical entrypoint and SDK and excludes test code.
+
+Both mock and GDB stdio tests passed against its extracted entrypoint. The real
+VS Code suite also passed against the extracted extension, including pre-launch
+breakpoint selection and debugger-source navigation. Temporary fixture copies
+were removed afterward. This is a tested development artifact, not a completed
+release or proof that every remaining checklist item is done.

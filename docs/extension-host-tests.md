@@ -38,3 +38,22 @@ reference-only source and with a remote path plus reference. Both must open a
 VS Code debug editor with the supplied content and selected line. This tests
 frontend navigation and the editor content provider; it does not test a remote
 DDB deployment.
+
+## Test an extracted VSIX
+
+Set DDB_TEST_EXTENSION_DIRECTORY to the `extension` directory extracted from a
+VSIX to test its packaged runtime. The runner temporarily copies its two test
+files under that directory so VS Code attributes fixture API calls to the DDB
+extension. It removes those files afterward. The directory must be writable.
+The test asserts that VS Code loaded the requested extension path.
+
+```sh
+DISPLAY=:191 \
+DDB_VSCODE_EXECUTABLE=/path/to/VSCode-linux-x64/code \
+DDB_TEST_BINARY=/path/to/ddb \
+DDB_TEST_EXTENSION_DIRECTORY=/tmp/extracted-vsix/extension \
+npm run test:extension
+```
+
+For packaged stdio tests, set DDB_TEST_ADAPTER to the extracted
+`extension/out/src/gdb.js` and run the compiled canonical_stdio integration test.

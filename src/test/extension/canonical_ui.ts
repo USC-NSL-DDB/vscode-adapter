@@ -2,7 +2,7 @@ import { testSourceNavigation } from "./source_navigation";
 import * as assert from "node:assert/strict";
 import * as vscode from "vscode";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
@@ -32,6 +32,7 @@ export async function run(): Promise<void> {
 	try {
 		const extension = vscode.extensions.getExtension("ddb.ddb-debugger");
 		assert.ok(extension, "DDB extension must be installed in the test host");
+		if (process.env.DDB_TEST_EXTENSION_DIRECTORY) assert.equal(extension.extensionPath, resolve(process.env.DDB_TEST_EXTENSION_DIRECTORY), "test host must load the extracted extension");
 		await extension.activate();
 		assert.equal(extension.isActive, true);
 		const commands = await vscode.commands.getCommands(true);
