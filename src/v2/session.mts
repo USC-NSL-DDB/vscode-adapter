@@ -49,6 +49,7 @@ export class CanonicalDebugSession extends DebugSession {
 	private stateTask?: Promise<void>;
 	private outputTask?: Promise<void>;
 	private closing = false;
+	private terminated = false;
 	private controlEpoch = 0;
 	private configured = false;
 	private distributed = false;
@@ -120,7 +121,7 @@ export class CanonicalDebugSession extends DebugSession {
 					this.closing = true;
 					this.sendEvent(new OutputEvent(`DDB state synchronization failed: ${String(error)}\n`, "stderr"));
 					await connection.close();
-					this.sendEvent(new TerminatedEvent());
+					this.terminate();
 				}
 			}
 		})();
@@ -445,6 +446,12 @@ export class CanonicalDebugSession extends DebugSession {
 		});
 	}
 
+	private terminate(): void {
+		if (this.terminated) return;
+		this.terminated = true;
+		this.sendEvent(new TerminatedEvent());
+	}
+
 	protected override async disconnectRequest(response: DebugProtocol.DisconnectResponse): Promise<void> {
 		await this.reply(response, async () => {
 			this.closing = true;
@@ -452,7 +459,7 @@ export class CanonicalDebugSession extends DebugSession {
 			this.breakpointRequests.clear();
 			await this.connection?.close();
 			await Promise.all([this.stateTask, this.outputTask]);
-			this.sendEvent(new TerminatedEvent());
+			this.terminate();
 		});
 	}
 

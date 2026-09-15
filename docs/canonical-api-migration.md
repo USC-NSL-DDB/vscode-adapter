@@ -36,7 +36,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Existing behavior | Canonical workflow | Status |
 | --- | --- | --- |
 | Local YAML launch, cwd/environment, bounded shutdown | Managed startup report, authenticated handshake, admin shutdown | Connection tested with mock and GDB |
-| External endpoint | SDK endpoint and bearer token, disconnect without shutdown | DAP launch configuration implemented; external ownership tests pending |
+| External endpoint | SDK endpoint and bearer token, disconnect without shutdown | Real DAP attach/disconnect leaves the existing server responsive; owner shutdown removes process and private startup directory |
 | Session/group/thread discovery | Snapshot and replayed resource upserts/tombstones | Connection, DAP view models and frontend facade tested |
 | Thread selection | SelectThread operation | Connection tested |
 | Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging implemented and exercised; remote source reads pending verification |
@@ -55,7 +55,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Memory reads | ReadMemory | Pending |
 | Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Frontend facade and events wired; GUI/decorations verification pending |
 | Focused frame navigation | Frame metadata lookup through DAP, no bit decoding | Frame status wiring complete; GUI verification pending |
-| Reconnect, replay gap, output gap, restart | SDK recovery, projection rehydration, explicit loss/restart handling | Projection unit tests; transport fault tests pending |
+| Reconnect, replay gap, output gap, restart | SDK recovery, projection rehydration, explicit loss/restart handling | Projection unit tests and managed-child crash termination tested; replay/output gap and external restart tests pending |
 
 ## Confirmed contract limits
 
@@ -383,3 +383,23 @@ main, and next, checking each new step stop and stack function.
 Validation: 78 unit tests and four canonical integration tests pass against the
 patched DDB debug binary. Remote paths/source references and real LLDB jump
 behavior are still outside the verified coverage.
+
+## Connection ownership and managed exit checkpoint
+
+A real managed-process crash exposed an indefinite wait: the SDK kept retrying
+streams after its child DDB process had exited. The connection now observes
+owned-child exit, closes the SDK to abort streams and requests, and reports
+the process status through state synchronization. The DAP session terminates
+once, including when the client sends disconnect after the crash.
+
+The lifecycle tests kill only their own fixture process, then verify the error
+output, termination event and closed SDK. A separate real DAP attach test
+disconnects from an externally owned endpoint and confirms that the original
+server remains responsive with the same instance ID. Closing the owner is
+idempotent and removes both its process and private startup directory.
+
+These tests do not establish recovery from external-server restarts, replay
+gaps or output gaps; those remain separate checklist items.
+
+Validation for the ownership checkpoint: 78 unit tests and all six canonical
+integration tests pass with the patched DDB debug binary.

@@ -64,11 +64,23 @@ export function operationResult(operation: Operation): OperationResult {
 export class DdbConnection {
 	readonly state = new DdbState();
 	private stopping?: Promise<void>;
+	private processError?: Error;
 	private constructor(
 		readonly client: DdbClient,
 		readonly handshake: Handshake,
 		private readonly owned?: { child: ChildProcess; directory: string },
-	) {}
+	) {
+		if (owned) {
+			const exited = () => {
+				if (this.stopping) return;
+				this.processError = new Error(`DDB process exited unexpectedly (${owned.child.exitCode ?? owned.child.signalCode ?? "unknown status"})`);
+				// A managed child cannot reconnect after exit. Abort streams and pending calls.
+				this.client.close();
+			};
+			owned.child.once("exit", exited);
+			if (owned.child.exitCode !== null || owned.child.signalCode !== null) exited();
+		}
+	}
 
 	static async connect(config: DdbClientConfig): Promise<DdbConnection> {
 		const client = new DdbClient(config);
@@ -141,6 +153,7 @@ export class DdbConnection {
 
 	/** The SDK handles replay gaps; requiredResync events also require rehydration. */
 	async *states(): AsyncGenerator<StateSyncItem> {
+		if (this.processError) throw this.processError;
 		while (!this.client.closed) {
 			try {
 				for await (const item of this.client.stateSync({ sections: [
@@ -156,8 +169,10 @@ export class DdbConnection {
 					} else if (!this.state.apply(item.event)) continue;
 					yield item;
 				}
+				if (this.processError) throw this.processError;
 				return;
 			} catch (error) {
+				if (this.processError) throw this.processError;
 				if (!(error instanceof ResyncRequired)) throw error;
 			}
 		}
