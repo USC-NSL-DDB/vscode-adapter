@@ -2,6 +2,7 @@ import dap from "vscode-debugadapter";
 import type { DebugProtocol } from "vscode-debugprotocol";
 import type { ExecuteRequest, ExecutionState, Thread as DdbThread, StateSyncItem, OutputEvent as DdbOutput } from "@ddb-debugger/api-client";
 import { DdbConnection } from "./connection.mjs";
+import { DdbJump } from "./jump.mjs";
 import { DdbExecution } from "./execution.mjs";
 import { DdbLogpoints } from "./logpoints.mjs";
 import { DdbCommands } from "./commands.mjs";
@@ -35,6 +36,7 @@ export class CanonicalDebugSession extends DebugSession {
 	private sidebar?: DdbSidebar;
 	private commands?: DdbCommands;
 	private execution?: DdbExecution;
+	private jump?: DdbJump;
 	private startupOptions?: CanonicalLaunchArguments;
 	private readonly sessionSetup = new Map<string, Promise<void>>();
 	protected pairedBreakpoints = false;
@@ -63,6 +65,7 @@ export class CanonicalDebugSession extends DebugSession {
 			supportsEvaluateForHovers: true,
 			supportsSetVariable: true,
 			supportsReadMemoryRequest: true,
+			supportsGotoTargetsRequest: true,
 		};
 		this.sendResponse(response);
 	}
@@ -98,6 +101,7 @@ export class CanonicalDebugSession extends DebugSession {
 		this.connection = connection;
 		this.inspection = new DdbInspection(connection, this.startupOptions?.valuesFormatting);
 		this.breakpoints = new DdbBreakpoints(this.inspection);
+		this.jump = new DdbJump(this.inspection);
 		this.sidebar = new DdbSidebar(this.inspection, this.breakpoints);
 		this.commands = new DdbCommands(connection);
 		this.execution = new DdbExecution(connection, message => { if (!this.closing) this.sendEvent(new OutputEvent(`${message}\n`, "stderr")); });
@@ -388,6 +392,19 @@ export class CanonicalDebugSession extends DebugSession {
 		});
 	}
 
+	protected override async gotoTargetsRequest(response: DebugProtocol.GotoTargetsResponse, args: DebugProtocol.GotoTargetsArguments): Promise<void> {
+		await this.reply(response, async () => {
+			if (!this.jump) throw new Error("DDB is not connected");
+			return { targets: this.jump.list(args) };
+		});
+	}
+	protected override async gotoRequest(response: DebugProtocol.GotoResponse, args: DebugProtocol.GotoArguments): Promise<void> {
+		this.controlEpoch++;
+		await this.reply(response, async () => {
+			if (!this.jump) throw new Error("DDB is not connected");
+			await this.jump.run(args, request => this.runExecution(request));
+		});
+	}
 	protected override async nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): Promise<void> {
 		await this.execute(response, () => ({ target: this.model.threadTarget(args.threadId), action: "EXECUTION_ACTION_NEXT" }));
 	}
@@ -406,14 +423,17 @@ export class CanonicalDebugSession extends DebugSession {
 	private async execute(response: DebugProtocol.Response, makeRequest: () => ExecuteRequest, body?: object): Promise<void> {
 		this.controlEpoch++;
 		await this.reply(response, async () => {
-			const connection = this.model.connection;
-			const request = makeRequest();
-			if (!connection.handshake.capabilities.executionActions?.includes(request.action!)) throw new Error(`DDB does not support ${request.action}`);
-			const undo = this.execution!.userControl(request);
-			try { await connection.complete(await connection.client.call("DebuggerControlService.Execute", request)); }
-			catch (error) { undo(); throw error; }
+			await this.runExecution(makeRequest());
 			return body;
 		});
+	}
+
+	private async runExecution(request: ExecuteRequest): Promise<void> {
+		const connection = this.model.connection;
+		if (!connection.handshake.capabilities.executionActions?.includes(request.action!)) throw new Error(`DDB does not support ${request.action}`);
+		const undo = this.execution!.userControl(request);
+		try { await connection.complete(await connection.client.call("DebuggerControlService.Execute", request)); }
+		catch (error) { undo(); throw error; }
 	}
 
 	protected override async readMemoryRequest(response: DebugProtocol.ReadMemoryResponse, args: DebugProtocol.ReadMemoryArguments): Promise<void> {

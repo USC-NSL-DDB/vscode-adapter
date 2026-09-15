@@ -48,9 +48,9 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Source/function breakpoints | Create/Update/DeleteBreakpoint operations | Source and function creation, conditions, real hits, replacement and deletion tested with patched DDB |
 | Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Group selection, verified member projection and paired requests tested; streamed verification refresh implemented |
 | Conditions, hit counts, enable/disable, logpoints | Typed conditions/counts; adapter evaluates and continues logpoint stops | Conditions, hit conditions and logpoints tested; enable/disable UI audit pending |
-| Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | Next, session-specific continue/pause, peer all-stop coordination and stopped-frame metadata tested with patched DDB; other actions pending |
+| Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | DAP next/step-in/step-out, session-specific continue/pause, peer all-stop coordination and stopped-frame metadata tested with patched GDB |
 | Signals and session kill | ListSignals and v2 raw signal command | DAP list/validation tested on mock/GDB; SIGKILL tested on GDB |
-| Jump to line | Execute JUMP with source location | Pending |
+| Jump to line | Temporary canonical breakpoint followed by Execute JUMP | Local GDB destination stop, consumed breakpoint and invalid targets tested; remote source mapping remains unverified |
 | Debug Console, autorun, path substitution | Canonical raw-command escape hatch where typed APIs do not cover the command | Implemented with focused-frame CLI/raw console and per-session setup; entrypoint tests cover autorun and substitution |
 | Memory reads | ReadMemory | Pending |
 | Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Frontend facade and events wired; GUI/decorations verification pending |
@@ -78,7 +78,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 74 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 78 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -365,3 +365,21 @@ subsequent ordinary breakpoint.
 Validation: 74 unit tests and all four canonical binary/entrypoint integration
 tests pass with the patched debug DDB binary. Real VS Code decoration rendering
 and LLDB execution remain unverified.
+
+## Jump and stepping checkpoint
+
+The canonical DAP entrypoint now advertises gotoTargets and implements goto.
+Targets use bounded local handles and validated source locations. A jump creates
+a temporary breakpoint in the selected thread's session, then executes typed
+JUMP against that thread. An unresolved destination never resumes execution.
+A rejected jump removes its temporary breakpoint and reports cleanup failures.
+
+The real GDB test failed before this change because gotoTargets returned no
+destination. It now verifies the destination line in both the stopped event and
+fresh stack, consumption of the temporary breakpoint, and invalid target/line
+errors. The same test exercises actual DAP step-in into tick, step-out back to
+main, and next, checking each new step stop and stack function.
+
+Validation: 78 unit tests and four canonical integration tests pass against the
+patched DDB debug binary. Remote paths/source references and real LLDB jump
+behavior are still outside the verified coverage.

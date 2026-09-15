@@ -173,6 +173,28 @@ suite("Canonical DDB binary", function () {
 				await until(() => dap.events.slice(beforeStepEvents).some(event => event.event === "stopped" && event.body.threadId === dapThreadId && event.body.reason === "step"), "DAP step reason");
 				if (streamError) throw streamError;
 				if (backend === "gdb") {
+					const jumpTargets = await dap.request("gotoTargets", { source: { path: source, name: "main.c" }, line: 6 });
+					assert.equal(jumpTargets.success, true, jumpTargets.message);
+					assert.ok(jumpTargets.body?.targets?.length, "gotoTargets must return a destination");
+					assert.equal(jumpTargets.body.targets[0].line, 6);
+					const beforeJump = dap.events.length;
+					const jumped = await dap.request("goto", { threadId: dapThreadId, targetId: jumpTargets.body.targets[0].id });
+					assert.equal(jumped.success, true, jumped.message);
+					await until(() => dap.events.slice(beforeJump).some(event => event.event === "stopped" && event.body.threadId === dapThreadId && event.body.stoppedFrameInfo?.line === 6), "jump stops at requested line");
+					const jumpedStack = await dap.request("stackTrace", { threadId: dapThreadId });
+					assert.equal(jumpedStack.body.stackFrames[0].line, 6);
+					assert.equal((await dap.request("goto", { threadId: dapThreadId, targetId: 2147483647 })).success, false);
+					assert.equal((await dap.request("gotoTargets", { source: { path: source }, line: 0 })).success, false);
+					await until(() => c.state.all("breakpoint").length === 0, "jump temporary breakpoint consumed");
+					for (const [command, functionName] of [["stepIn", "tick"], ["stepOut", "main"], ["next", "main"]]) {
+						const before = dap.events.length;
+						const stepped = await dap.request(command, { threadId: dapThreadId });
+						assert.equal(stepped.success, true, stepped.message);
+						await until(() => dap.events.slice(before).some(event => event.event === "stopped" && event.body.threadId === dapThreadId && event.body.reason === "step"), `${command} DAP stop`);
+						const stack = await dap.request("stackTrace", { threadId: dapThreadId });
+						assert.equal(stack.success, true, stack.message);
+						assert.ok(stack.body.stackFrames[0].name.includes(functionName), `${command}: ${stack.body.stackFrames[0].name}`);
+					}
 					const freshStack = await dap.request("stackTrace", { threadId: dapThreadId });
 					assert.equal(freshStack.success, true, freshStack.message);
 					const freshFrame = freshStack.body.stackFrames[0];
