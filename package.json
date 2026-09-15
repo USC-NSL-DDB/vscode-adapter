@@ -723,7 +723,8 @@
     "prettier-write-docs": "prettier --write **/*.md",
     "prettier-check-docs": "prettier --check **/*.md",
     "test:integration": "tsc -p ./ && node -e \"if (!process.env.DDB_TEST_BINARY) throw new Error('Set DDB_TEST_BINARY to the current DDB executable')\" && mocha --no-config --ui tdd out/src/test/integration/**/*.test.js",
-    "test:canonical": "tsc -p ./ && node -e \"if (!process.env.DDB_TEST_BINARY) throw new Error('Set DDB_TEST_BINARY to the current DDB executable')\" && mocha --no-config --ui tdd \"out/src/test/integration/canonical*.test.mjs\""
+    "test:canonical": "tsc -p ./ && node -e \"if (!process.env.DDB_TEST_BINARY) throw new Error('Set DDB_TEST_BINARY to the current DDB executable')\" && mocha --no-config --ui tdd \"out/src/test/integration/canonical*.test.mjs\"",
+    "test:extension": "tsc -p ./ && node scripts/test-extension.cjs"
   },
   "dependencies": {
     "@ddb-debugger/api-client": "file:vendor/ddb-debugger-api-client-0.1.0-25e4a354.tgz",

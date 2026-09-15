@@ -116,6 +116,9 @@ export class SessionManager {
   // ============================================================================
   private refreshInterval: NodeJS.Timeout | null;
   private debounceTimeout: NodeJS.Timeout | null;
+  private updateCompletion: Promise<void> = Promise.resolve();
+  private pendingBatch?: { resolve: () => void; reject: (error: unknown) => void };
+  private cacheEpoch = 0;
   private pendingUpdates: Set<string>;
   private readonly DEBOUNCE_MS = 100; // Debounce interval in milliseconds
   private readonly AUTO_REFRESH_MS = 15000; // Default 15 seconds
@@ -165,8 +168,15 @@ export class SessionManager {
     }
 
     // Schedule consolidated update
+    if (!this.pendingBatch) {
+      this.updateCompletion = new Promise<void>((resolve, reject) => { this.pendingBatch = { resolve, reject }; });
+      // Keep fire-and-forget callers safe while awaited callers still receive failures.
+      void this.updateCompletion.catch(() => undefined);
+    }
     this.debounceTimeout = setTimeout(() => {
-      this.executeQueuedUpdates();
+      const batch = this.pendingBatch!;
+      this.pendingBatch = undefined;
+      void this.executeQueuedUpdates().then(batch.resolve, batch.reject);
     }, this.DEBOUNCE_MS);
   }
 
@@ -213,16 +223,7 @@ export class SessionManager {
    * Wait for any pending debounced updates to complete.
    */
   private async waitForPendingUpdates(): Promise<void> {
-    return new Promise((resolve) => {
-      const checkComplete = () => {
-        if (!this.debounceTimeout) {
-          resolve();
-        } else {
-          setTimeout(checkComplete, 50);
-        }
-      };
-      checkComplete();
-    });
+    return this.updateCompletion;
   }
 
   // ============================================================================
@@ -239,7 +240,7 @@ export class SessionManager {
   }
   
   public async immediateUpdateAll(): Promise<void> {
-    this.performUpdateAll();
+    await this.performUpdateAll();
   }
 
   /**
@@ -252,7 +253,7 @@ export class SessionManager {
   }
 
   public async immediateUpdateSessions(): Promise<void> {
-    this.performUpdateSessions();
+    await this.performUpdateSessions();
   }
 
   /**
@@ -265,7 +266,7 @@ export class SessionManager {
   }
 
   public async immediateUpdateGroups(): Promise<void> {
-    this.performUpdateGroups();
+    await this.performUpdateGroups();
   }
 
   /**
@@ -278,7 +279,7 @@ export class SessionManager {
   }
 
   public async immediateUpdateGroup(groupId: number): Promise<void> {
-    this.performUpdateGroup(groupId);
+    await this.performUpdateGroup(groupId);
   }
 
   /**
@@ -296,11 +297,14 @@ export class SessionManager {
    * Cache source-to-groups mappings.
    */
   public async updateSrcMappings(src: string): Promise<void> {
+    const epoch = this.cacheEpoch;
     try {
       const group_ids = await resolveSrcToGroupIds(src);
+      if (epoch !== this.cacheEpoch) return;
       this.srcToGroups.set(src, group_ids);
       this.notifyListeners();
     } catch (error) {
+      if (epoch !== this.cacheEpoch) return;
       console.error(`Failed to update src mappings for ${src}:`, error);
     }
   }
@@ -313,17 +317,20 @@ export class SessionManager {
    * Perform the actual update of all sessions and groups.
    */
   private async performUpdateAll(): Promise<void> {
+    const epoch = this.cacheEpoch;
     try {
       const [sessions, groups] = await Promise.all([
         getSessions(),
         getGroups(),
       ]);
+      if (epoch !== this.cacheEpoch) return;
 
       this.rebuildCache(sessions, groups);
       this.lastUpdateTime = Date.now();
       this.initialized = true;
       this.notifyListeners();
     } catch (error) {
+      if (epoch !== this.cacheEpoch) return;
       console.error("Failed to update all data:", error);
       throw error;
     }
@@ -333,13 +340,16 @@ export class SessionManager {
    * Perform the actual update of sessions only.
    */
   private async performUpdateSessions(): Promise<void> {
+    const epoch = this.cacheEpoch;
     try {
       const sessions = await getSessions();
+      if (epoch !== this.cacheEpoch) return;
       this.updateSessionCache(sessions);
       this.lastUpdateTime = Date.now();
       this.initialized = true;
       this.notifyListeners();
     } catch (error) {
+      if (epoch !== this.cacheEpoch) return;
       console.error("Failed to update sessions:", error);
     }
   }
@@ -348,13 +358,16 @@ export class SessionManager {
    * Perform the actual update of all groups.
    */
   private async performUpdateGroups(): Promise<void> {
+    const epoch = this.cacheEpoch;
     try {
       const groups = await getGroups();
+      if (epoch !== this.cacheEpoch) return;
       this.updateGroupCache(groups);
       this.lastUpdateTime = Date.now();
       this.initialized = true;
       this.notifyListeners();
     } catch (error) {
+      if (epoch !== this.cacheEpoch) return;
       console.error("Failed to update groups:", error);
     }
   }
@@ -363,13 +376,16 @@ export class SessionManager {
    * Perform the actual update of a specific group.
    */
   private async performUpdateGroup(groupId: number): Promise<void> {
+    const epoch = this.cacheEpoch;
     try {
       const group = await getGroup({ grp_id: groupId });
+      if (epoch !== this.cacheEpoch) return;
       this.updateSingleGroup(group);
       this.lastUpdateTime = Date.now();
       this.initialized = true;
       this.notifyListeners();
     } catch (error) {
+      if (epoch !== this.cacheEpoch) return;
       console.error(`Failed to update group ${groupId}:`, error);
     }
   }
@@ -934,6 +950,12 @@ export class SessionManager {
    * Useful when debug session ends and data is no longer valid.
    */
   public clearCache(): void {
+    this.cacheEpoch++;
+    if (this.debounceTimeout) clearTimeout(this.debounceTimeout);
+    this.debounceTimeout = null;
+    this.pendingUpdates.clear();
+    this.pendingBatch?.resolve();
+    this.pendingBatch = undefined;
     this.sessions.clear();
     this.groups.clear();
     this.groupsByHash.clear();
@@ -952,6 +974,12 @@ export class SessionManager {
    * Should be called when the SessionManager is no longer needed.
    */
   public dispose(): void {
+    this.cacheEpoch++;
+    if (this.debounceTimeout) clearTimeout(this.debounceTimeout);
+    this.debounceTimeout = null;
+    this.pendingUpdates.clear();
+    this.pendingBatch?.resolve();
+    this.pendingBatch = undefined;
     this.stopAutoRefresh();
     if (this.debounceTimeout) {
       clearTimeout(this.debounceTimeout);

@@ -98,6 +98,9 @@ export class BreakpointManager {
   // ============================================================================
   private refreshInterval: NodeJS.Timeout | null;
   private debounceTimeout: NodeJS.Timeout | null;
+  private updateCompletion: Promise<void> = Promise.resolve();
+  private pendingBatch?: { resolve: () => void; reject: (error: unknown) => void };
+  private cacheEpoch = 0;
   private pendingUpdates: Set<string>;
   private readonly DEBOUNCE_MS = 50; // Debounce interval in milliseconds
   private readonly AUTO_REFRESH_MS = 15000; // Default 15 seconds
@@ -138,8 +141,15 @@ export class BreakpointManager {
     }
 
     // Schedule consolidated update
+    if (!this.pendingBatch) {
+      this.updateCompletion = new Promise<void>((resolve, reject) => { this.pendingBatch = { resolve, reject }; });
+      // Keep fire-and-forget callers safe while awaited callers still receive failures.
+      void this.updateCompletion.catch(() => undefined);
+    }
     this.debounceTimeout = setTimeout(() => {
-      this.executeQueuedUpdates();
+      const batch = this.pendingBatch!;
+      this.pendingBatch = undefined;
+      void this.executeQueuedUpdates().then(batch.resolve, batch.reject);
     }, this.DEBOUNCE_MS);
   }
 
@@ -161,16 +171,7 @@ export class BreakpointManager {
    * Wait for any pending debounced updates to complete.
    */
   private async waitForPendingUpdates(): Promise<void> {
-    return new Promise((resolve) => {
-      const checkComplete = () => {
-        if (!this.debounceTimeout) {
-          resolve();
-        } else {
-          setTimeout(checkComplete, 50);
-        }
-      };
-      checkComplete();
-    });
+    return this.updateCompletion;
   }
 
   // ============================================================================
@@ -217,13 +218,16 @@ export class BreakpointManager {
    * Perform the actual update of all breakpoints.
    */
   private async performUpdateAll(): Promise<void> {
+    const epoch = this.cacheEpoch;
     try {
       const breakpoints = await getBreakpoints();
+      if (epoch !== this.cacheEpoch) return;
       this.rebuildCache(breakpoints);
       this.lastUpdateTime = Date.now();
       this.initialized = true;
       this.notifyListeners();
     } catch (error) {
+      if (epoch !== this.cacheEpoch) return;
       console.error("Failed to update breakpoints:", error);
       throw error;
     }
@@ -520,6 +524,12 @@ export class BreakpointManager {
    * Useful when debug session ends and data is no longer valid.
    */
   public clearCache(): void {
+    this.cacheEpoch++;
+    if (this.debounceTimeout) clearTimeout(this.debounceTimeout);
+    this.debounceTimeout = null;
+    this.pendingUpdates.clear();
+    this.pendingBatch?.resolve();
+    this.pendingBatch = undefined;
     this.breakpointsById.clear();
     this.breakpointsByFile.clear();
     this.lastUpdateTime = null;
@@ -533,6 +543,12 @@ export class BreakpointManager {
    * Should be called when the BreakpointManager is no longer needed.
    */
   public dispose(): void {
+    this.cacheEpoch++;
+    if (this.debounceTimeout) clearTimeout(this.debounceTimeout);
+    this.debounceTimeout = null;
+    this.pendingUpdates.clear();
+    this.pendingBatch?.resolve();
+    this.pendingBatch = undefined;
     this.stopAutoRefresh();
     if (this.debounceTimeout) {
       clearTimeout(this.debounceTimeout);

@@ -27,3 +27,4 @@ gdb.txt
 sampleWorkSpace
 # The SDK is installed under node_modules; its install archive is not needed.
 vendor/**
+scripts/test-extension.cjs

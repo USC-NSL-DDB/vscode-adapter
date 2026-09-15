@@ -53,8 +53,8 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Jump to line | Temporary canonical breakpoint followed by Execute JUMP | Local GDB destination stop, consumed breakpoint and invalid targets tested; remote source mapping remains unverified |
 | Debug Console, autorun, path substitution | Canonical raw-command escape hatch where typed APIs do not cover the command | Implemented with focused-frame CLI/raw console and per-session setup; entrypoint tests cover autorun and substitution |
 | Memory reads | ReadMemory | Real GDB bytes, positive/negative offsets, empty reads and limits tested; memory-view UI still unverified |
-| Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Frontend facade and events wired; GUI/decorations verification pending |
-| Focused frame navigation | Frame metadata lookup through DAP, no bit decoding | Frame status wiring complete; GUI verification pending |
+| Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Real VS Code activation, sidebar refresh/grouping and disconnect tested; breakpoint dialogs and rendered decorations pending |
+| Focused frame navigation | Frame metadata lookup through DAP, no bit decoding | Focused-frame source navigation passes in a real VS Code host; status/decorations audit remains |
 | Reconnect, replay gap, output gap, restart | SDK recovery, projection rehydration, explicit loss/restart handling | Real HTTP socket interruption tests cover cursor resume, output gaps, state replay-gap rehydration and changed-instance rejection; managed-child crash termination tested |
 
 ## Confirmed contract limits
@@ -78,7 +78,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 86 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 90 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -537,3 +537,23 @@ migration scope. Diagnostic printCalls and telemetry remain to be audited.
 Validation for entry setup: 86 unit tests and six canonical integration tests
 pass with the patched DDB debug binary. The development VSIX must be rebuilt
 before it includes this change.
+
+## Extension-host validation checkpoint
+
+A real VS Code 1.104.3 instance ran on an isolated Xvfb display. Activation,
+sidebar commands, focused-frame source navigation, VS Code step-over, scopes
+and disconnect passed against GDB. The first run exposed unhandled refresh
+promise rejections during shutdown.
+
+Both UI managers previously considered a debounced update complete when its
+timer fired, before the fetch finished. SessionManager's immediate methods also
+dropped their fetch promises. Updates now track actual completion and propagate
+errors to callers. Clearing a cache cancels queued work and invalidates results
+from in-flight requests, so an old session cannot refill the cleared cache.
+
+Four focused regressions and the extension-host test cover these changes.
+Validation: 90 unit tests and npm run test:extension pass. No backend changes
+were needed. The six adapter integration tests passed at the preceding entry
+setup checkpoint. Caught shutdown-refresh diagnostics still occur and need
+cleanup; rendered decorations and breakpoint-selection UI remain unverified.
+See extension-host-tests.md for the isolated test command and its coverage.
