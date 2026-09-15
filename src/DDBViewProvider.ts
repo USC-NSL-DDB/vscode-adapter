@@ -715,11 +715,15 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push({ dispose: breakpointManagerUnsubscribe });
 
+  let activeSessionId: string | undefined;
+
   const snapshotUnsubscribe = notificationService.onNotification("SnapshotChanged", async () => {
     if (!sessionsProvider.isDebugSessionActive) return;
+    const snapshotSessionId = activeSessionId;
     try {
       const previous = breakpointManager.getAllBreakpoints();
       await Promise.all([sessionManager.updateAll(), breakpointManager.immediateUpdateAll()]);
+      if (!sessionsProvider.isDebugSessionActive || activeSessionId !== snapshotSessionId) return;
       const current = breakpointManager.getAllBreakpoints();
       const paths = new Set(current.map(bp => `${path.normalize(bp.location.src)}:${bp.location.line}`));
       for (const removed of previous) {
@@ -765,6 +769,7 @@ export function activate(context: vscode.ExtensionContext) {
   const debugStartListener = vscode.debug.onDidStartDebugSession(
     async (debugSession) => {
       if (debugSession.type !== "ddb") return;
+      activeSessionId = debugSession.id;
       // Mark debug sessions as active in both providers
       sessionsProvider.isDebugSessionActive = true;
       breakpointsProvider.isDebugSessionActive = true;
@@ -781,6 +786,7 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         // Ensure all DDB services are ready.
         await ddb_api.waitForServiceReady();
+        if (activeSessionId !== debugSession.id) return;
 
         // Start EventStream notification service
         notificationService.start();
@@ -796,6 +802,7 @@ export function activate(context: vscode.ExtensionContext) {
         // Trigger immediate update - fetch both sessions AND groups
         // Tree will auto-refresh via onDataUpdated event when data is ready
         await sessionManager.updateAll();
+        if (activeSessionId !== debugSession.id) return;
 
         // Fetch initial breakpoint data (auto-refresh controlled by EventStream state above)
         await breakpointManager.updateAll();
@@ -809,32 +816,36 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  // Debug session STOP listener
-  const debugStopListener = vscode.debug.onDidTerminateDebugSession(
-    (debugSession) => {
-      if (debugSession.type !== "ddb") return;
-      OTelService.log_info(`[activity] debug_session_stopped`);
-
-      // Stop EventStream notification service
-      notificationService.stop();
-      sessionManager.setEventStreamActive(false);
-
-      // Stop SessionManager auto-refresh
-      sessionManager.stopAutoRefresh();
-
-      // Stop BreakpointManager auto-refresh and clear cache
-      breakpointManager.stopAutoRefresh();
-      breakpointManager.clearCache();
-
-      // Clear tree data in both providers
-      sessionsProvider.clearSessionData();
-      breakpointsProvider.clearSessionData();
-
-      // Clear view descriptions when debug session ends
-      sessionsProvider.clearViewDescription();
-      breakpointsProvider.clearViewDescription();
-    }
-  );
+  // Stop producers before the adapter disconnects, rather than after termination.
+  const stopViews = (debugSession: vscode.DebugSession) => {
+    if (activeSessionId !== debugSession.id) return;
+    activeSessionId = undefined;
+    sessionsProvider.isDebugSessionActive = false;
+    breakpointsProvider.isDebugSessionActive = false;
+    notificationService.stop();
+    sessionManager.setEventStreamActive(false);
+    breakpointManager.setEventStreamActive(false);
+    sessionManager.stopAutoRefresh();
+    breakpointManager.stopAutoRefresh();
+    breakpointManager.clearCache();
+    sessionsProvider.clearSessionData();
+    breakpointsProvider.clearSessionData();
+    sessionsProvider.clearViewDescription();
+    breakpointsProvider.clearViewDescription();
+  };
+  context.subscriptions.push(vscode.debug.registerDebugAdapterTrackerFactory("ddb", {
+    createDebugAdapterTracker: debugSession => ({
+      onWillReceiveMessage: message => {
+        if (message.command === "disconnect" || message.command === "terminate") stopViews(debugSession);
+      },
+      onWillStopSession: () => stopViews(debugSession),
+    }),
+  }));
+  const debugStopListener = vscode.debug.onDidTerminateDebugSession(debugSession => {
+    if (debugSession.type !== "ddb") return;
+    OTelService.log_info(`[activity] debug_session_stopped`);
+    stopViews(debugSession);
+  });
 
   context.subscriptions.push(debugStartListener);
   context.subscriptions.push(debugStopListener);

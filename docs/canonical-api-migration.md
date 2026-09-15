@@ -557,3 +557,27 @@ were needed. The six adapter integration tests passed at the preceding entry
 setup checkpoint. Caught shutdown-refresh diagnostics still occur and need
 cleanup; rendered decorations and breakpoint-selection UI remain unverified.
 See extension-host-tests.md for the isolated test command and its coverage.
+
+
+## Breakpoint controls and shutdown checkpoint
+
+The extension-host test now selects a group through the real Quick Pick and
+checks disable/re-enable against GDB. It reproduced a disabled breakpoint being
+removed from VS Code. DDB deletion events can arrive before the adapter's own
+delete operation completes. Those events now suppress duplicate DAP removal
+notifications during that operation. External deletions remain observable,
+including after a failed delete request. Sidebar reconciliation also preserves
+disabled editor entries and their saved target selections.
+
+Sidebar producers now stop when disconnect begins. Session identity guards
+reject late startup/snapshot work. The extension-host runner captures diagnostics
+and fails on refresh errors as well as unhandled rejections. This closes the
+caught shutdown errors recorded at the previous checkpoint.
+
+No backend changes were needed for these fixes. The backend main worktree remains
+clean at 73097208; existing backend migration changes remain isolated in
+/tmp/ddb-canonical-api-fixes on codex/vscode-api-parity.
+
+Validation: 91 unit tests, six canonical integration tests, and the real VS Code
+extension-host scenario pass. The packaged VSIX still needs rebuilding after
+the remaining migration audit.

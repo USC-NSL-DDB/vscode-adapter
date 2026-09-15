@@ -1182,6 +1182,9 @@ export async function activate(context: vscode.ExtensionContext) {
           return false;
         });
 
+        // VS Code excludes disabled breakpoints from setBreakpoints. Their
+        // backend removal must preserve the editor entry and target selection.
+        if (bpToRemove && !bpToRemove.enabled) return;
         breakpointSelectionsMap.delete(bpId);
         if (bpToRemove) {
           vscode.debug.removeBreakpoints([bpToRemove]);

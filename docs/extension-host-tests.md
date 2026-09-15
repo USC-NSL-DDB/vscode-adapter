@@ -3,8 +3,9 @@
 Run the canonical adapter inside a real VS Code extension host with a dedicated
 profile. The test uses GDB and a temporary C program, activates the extension,
 refreshes and groups the sidebar, opens the focused source frame, steps through
-VS Code, requests scopes, and disconnects. It fails on unhandled promise
-rejections during the run.
+VS Code, requests scopes, selects a breakpoint group through Quick Pick, disables
+and re-enables that breakpoint, and disconnects. It fails on unhandled promise
+rejections or refresh-error diagnostics from the extension host.
 
 Requirements: a Linux VS Code executable, a running X display, `cc`, `gdb`, and
 a DDB binary containing the canonical migration fixes.
@@ -27,6 +28,5 @@ archive SHA-256 was
 `4bd1f5219195dc165eda48d2764b7c4be4a1135110034ca228497ae6d34db49c`.
 
 This test is not a complete visual audit. It does not yet exercise breakpoint
-selection dialogs, enable/disable actions, remote source editors, or inspect
-rendered decorations. Caught refresh failures during disconnect remain visible
-in the test log; unhandled rejections are asserted absent.
+session-selection toggles, remote source editors, or inspect rendered
+decorations. The group-selection dialog and disable/re-enable actions are covered.

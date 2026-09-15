@@ -28,6 +28,7 @@ export class DdbBreakpoints {
 	private readonly handles = new Handles<string>();
 	private queue: Promise<unknown> = Promise.resolve();
 	private readonly retiredLogs = new Map<string, LogPart[]>();
+	private readonly pendingDeletes = new Set<string>();
 	constructor(private readonly model: DdbInspection) {}
 
 	set(source: string, requests: SourceBreakpoint[], modified = false): Promise<DebugProtocol.Breakpoint[]> {
@@ -65,6 +66,9 @@ export class DdbBreakpoints {
 	}
 
 	forget(resourceId: string): DebugProtocol.Breakpoint[] {
+		// setBreakpoints already describes this removal to VS Code. Emitting a
+		// second removal event would delete its disabled breakpoint entry.
+		if (this.pendingDeletes.has(resourceId)) return [];
 		const removed: DebugProtocol.Breakpoint[] = [];
 		for (const [source, entries] of this.bySource) {
 			for (let index = entries.length - 1; index >= 0; index--) {
@@ -146,9 +150,15 @@ export class DdbBreakpoints {
 		for (const entry of previous) {
 			if (modified || !requested.some(item => item.fingerprint === entry.fingerprint)) {
 				this.retire(entry);
-				await connection.complete(await connection.client.call("DebuggerControlService.DeleteBreakpoint", { breakpointId: entry.resource.breakpointId, target: { broadcast: {} } }));
-				const index = entries.indexOf(entry);
-				if (index >= 0) entries.splice(index, 1);
+				const id = entry.resource.breakpointId!;
+				this.pendingDeletes.add(id);
+				try {
+					await connection.complete(await connection.client.call("DebuggerControlService.DeleteBreakpoint", { breakpointId: id, target: { broadcast: {} } }));
+					const index = entries.indexOf(entry);
+					if (index >= 0) entries.splice(index, 1);
+				} finally {
+					this.pendingDeletes.delete(id);
+				}
 			}
 		}
 		const response: DebugProtocol.Breakpoint[] = [];

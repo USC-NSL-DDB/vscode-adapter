@@ -22,8 +22,14 @@ try {
     `--extensions-dir=${join(directory, 'extensions')}`,
     `--extensionDevelopmentPath=${resolve(__dirname, '..')}`,
     `--extensionTestsPath=${resolve(__dirname, '../out/src/test/extension/canonical_ui.js')}`,
-  ], { stdio: 'inherit', env: { ...process.env, OTEL_SDK_DISABLED: 'true' }, timeout: 90000, detached: true });
+  ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, env: { ...process.env, OTEL_SDK_DISABLED: 'true' }, timeout: 90000, detached: true });
+  process.stdout.write(result.stdout ?? "");
+  process.stderr.write(result.stderr ?? "");
   if (result.pid) { try { process.kill(-result.pid, 'SIGTERM'); } catch {} }
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
+  if (/^Failed to update (?:all data|breakpoints|sessions|groups)|rejected promise not handled/m.test(`${result.stdout ?? ""}\n${result.stderr ?? ""}`)) {
+    console.error('Extension-host refresh or unhandled-rejection diagnostics detected');
+    process.exitCode = 1;
+  }
 } finally { rmSync(directory, { recursive: true, force: true }); }

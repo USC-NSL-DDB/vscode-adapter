@@ -6,9 +6,9 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 
-async function until(predicate: () => boolean, description: string) {
+async function until(predicate: () => boolean | Promise<boolean>, description: string) {
 	const deadline = Date.now() + 15000;
-	while (!predicate()) {
+	while (!(await predicate())) {
 		assert.ok(Date.now() < deadline, description);
 		await delay(50);
 	}
@@ -20,6 +20,7 @@ export async function run(): Promise<void> {
 	const directory = await mkdtemp(join(tmpdir(), "ddb-extension-test-"));
 	const messages: any[] = [];
 	const unhandled: unknown[] = [];
+
 	const onUnhandled = (error: unknown) => { unhandled.push(error); };
 	process.on("unhandledRejection", onUnhandled);
 	const tracker = vscode.debug.registerDebugAdapterTrackerFactory("ddb", {
@@ -56,11 +57,27 @@ export async function run(): Promise<void> {
 		assert.equal(stack.stackFrames[0].source.path, source);
 		const scopes = await session.customRequest("scopes", { frameId: stack.stackFrames[0].id });
 		assert.ok(scopes.scopes.length > 0);
+		const sourceBreakpoint = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(source), new vscode.Position(4, 0)));
+		vscode.debug.addBreakpoints([sourceBreakpoint]);
+		await until(() => messages.some(message => message.type === "response" && message.command === "ddb.resolveSourceGroups"), "breakpoint selection must resolve source groups");
+		await delay(700);
+		await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
+		await vscode.commands.executeCommand("workbench.action.quickPickManyToggle");
+		await delay(200);
+		await vscode.commands.executeCommand("workbench.action.acceptSelectedQuickOpenItem");
+		const hasBreakpoint = async () => (await session!.customRequest("ddb.getBreakpoints")).bkpts.some((bp: any) => bp.location.src === source && bp.location.line === 5);
+		await until(hasBreakpoint, "selected group must install the source breakpoint");
+		await vscode.commands.executeCommand("workbench.debug.viewlet.action.disableAllBreakpoints");
+		await until(async () => !(await hasBreakpoint()), "disabling must remove the backend breakpoint");
+		await delay(500);
+		assert.ok(vscode.debug.breakpoints.some(bp => bp instanceof vscode.SourceBreakpoint && bp.location.uri.fsPath === source && !bp.enabled), "disabled source breakpoint must remain in VS Code");
+		await vscode.commands.executeCommand("workbench.debug.viewlet.action.enableAllBreakpoints");
+		await until(hasBreakpoint, "re-enabling must retain the selected group and reinstall the breakpoint");
 		await vscode.debug.stopDebugging(session);
 		await until(() => !vscode.debug.activeDebugSession, "disconnect must remove the debug session");
 		await delay(1200);
 		assert.deepEqual(unhandled, [], "UI refreshes must not produce unhandled rejections");
-		console.log("Canonical extension-host activation, sidebar, navigation, stepping and disconnect passed");
+		console.log("Canonical extension-host activation, sidebar, navigation, stepping, breakpoint selection/disable/re-enable and disconnect passed");
 	} finally {
 		if (session) await vscode.debug.stopDebugging(session);
 		tracker.dispose();

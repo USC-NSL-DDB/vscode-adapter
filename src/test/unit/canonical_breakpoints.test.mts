@@ -84,6 +84,35 @@ suite("Canonical breakpoint updates", () => {
 		assert.equal(resources.size, 0);
 	});
 
+	test("requested deletion suppresses its stream event but failed deletion preserves external notifications", async () => {
+		let failDelete = false;
+		const resource = { breakpointId: "breakpoint", verified: true };
+		const model = {
+			connection: {
+				state: { all: (kind: string) => kind === "group" ? [{ groupId: "group" }] : [] },
+				client: { call: async (method: string) => {
+					if (method.endsWith("DeleteBreakpoint")) {
+						assert.deepEqual(breakpoints.forget(resource.breakpointId), [], "own deletion must not remove the editor entry");
+						if (failDelete) throw new Error("delete failed");
+					}
+					return {};
+				} },
+				complete: async () => ({ breakpoint: resource }),
+			},
+		} as unknown as DdbInspection;
+		const breakpoints = new DdbBreakpoints(model);
+		const request = [{ source: { path: "main.c", name: "main.c" }, line: 6 }];
+		await breakpoints.set("main.c", request);
+		await breakpoints.set("main.c", []);
+		assert.deepEqual(breakpoints.all(), []);
+		assert.deepEqual(breakpoints.forget(resource.breakpointId), [], "late deletion is also harmless");
+		const inserted = await breakpoints.set("main.c", request);
+		failDelete = true;
+		await assert.rejects(breakpoints.set("main.c", []), /delete failed/);
+		assert.deepEqual(breakpoints.all(), inserted);
+		assert.deepEqual(breakpoints.forget(resource.breakpointId), inserted, "external deletion must still be reported after a failed request");
+	});
+
 	test("snapshot reconciliation waits for in-flight creation before listing authoritative breakpoints", async () => {
 		let release!: () => void;
 		const admitted = new Promise<void>(resolve => { release = resolve; });
