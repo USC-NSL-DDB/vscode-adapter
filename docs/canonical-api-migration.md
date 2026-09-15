@@ -49,7 +49,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | Next and session-specific DAP continue/pause tested; all-stop coordination and other actions pending |
 | Signals and session kill | ListSignals and v2 raw signal command | DAP list/validation tested on mock/GDB; SIGKILL tested on GDB |
 | Jump to line | Execute JUMP with source location | Pending |
-| Debug Console, autorun, path substitution | Canonical raw-command escape hatch where typed APIs do not cover the command | Pending |
+| Debug Console, autorun, path substitution | Canonical raw-command escape hatch where typed APIs do not cover the command | Implemented with focused-frame CLI/raw console and per-session setup; entrypoint tests cover autorun and substitution |
 | Memory reads | ReadMemory | Pending |
 | Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Frontend facade and events wired; GUI/decorations verification pending |
 | Focused frame navigation | Frame metadata lookup through DAP, no bit decoding | Frame status wiring complete; GUI verification pending |
@@ -75,7 +75,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 58 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 60 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -178,3 +178,23 @@ sidebar group/readiness requests, and disconnect. This complements direct DAP
 handler tests. No VS Code GUI run has been completed. Legacy transport tests keep
 using the compatibility implementation explicitly; its launcher and notification
 service are retained temporarily for comparison and will need cleanup.
+
+## Console and startup configuration
+
+Debug Console REPL requests run backend CLI commands or explicit raw debugger
+commands through ExecuteRawCommand. CLI commands carry the focused frame and
+thread, with the frame validated before admission. Output arrives on the SDK
+output stream; the command response does not echo an extra `done` marker.
+Truncated results fail explicitly without repeating the mutation.
+
+Managed/external launch applies pretty-printer enablement, path substitutions
+and autorun to each ready session once. The stdio suite includes real GDB and
+checks an autorun print setting and source-path mappings containing spaces via
+subsequent console queries. Direct DAP tests also check focused CLI assignment
+and raw expression commands. Disabled values formatting avoids expandable value
+handles; broader formatting and C++ pretty-printer coverage remains required.
+
+Additional debugger arguments, telemetry forwarding, entry-stop configuration,
+late-session setup ordering, source-path navigation, and remote configuration
+semantics remain part of the completion audit. The implemented startup behavior
+must not be treated as proof that those options already have parity.

@@ -30,7 +30,7 @@ export class DdbInspection {
 	private readonly sources = new Handles<string>();
 
 	private readonly raw: RawVariables;
-	constructor(readonly connection: DdbConnection) { this.raw = new RawVariables(connection); }
+	constructor(readonly connection: DdbConnection, private readonly valuesFormatting = "prettyPrinters") { this.raw = new RawVariables(connection); }
 
 	threadHandle(id: string): number { return this.threadHandles.put(id, id); }
 	sessionHandle(id: string): number { return this.sessionHandles.put(id, id); }
@@ -112,7 +112,7 @@ export class DdbInspection {
 		// object metadata; scalar ExpandVariable currently rejects empty children.
 		for (let offset = 0; offset < variables.length; offset += 4) {
 			await Promise.all(variables.slice(offset, offset + 4).map(async variable => {
-				if (variable.childCount !== undefined || variable.hasChildren || !variable.variableId || !variable.evaluateName) return;
+				if (this.valuesFormatting === "disabled" || variable.childCount !== undefined || variable.hasChildren || !variable.variableId || !variable.evaluateName) return;
 				let hasChildren = this.childHints.get(variable.variableId);
 				if (hasChildren === undefined) {
 					const metadata = await this.raw.inspect({ frame: context.frame, expression: variable.evaluateName, path: [] });
@@ -130,7 +130,7 @@ export class DdbInspection {
 	private variable(variable: Variable, frame: FrameContext): DebugProtocol.Variable {
 		return {
 			name: variable.name ?? "?", value: variable.value ?? "", type: variable.typeName, evaluateName: variable.evaluateName,
-			variablesReference: variable.hasChildren && variable.variableId ? this.variables.put(variable.evaluateName
+			variablesReference: this.valuesFormatting !== "disabled" && variable.hasChildren && variable.variableId ? this.variables.put(variable.evaluateName
 				? { frame, kind: "expression", id: variable.variableId, expression: { frame, expression: variable.evaluateName, path: [] } }
 				: { frame, kind: "variable", id: variable.variableId }, variable.variableId) : 0,
 			memoryReference: variable.address,
@@ -139,7 +139,7 @@ export class DdbInspection {
 
 	async evaluate(args: DebugProtocol.EvaluateArguments): Promise<DebugProtocol.EvaluateResponse["body"]> {
 		const frame = args.frameId === undefined ? undefined : this.frames.get(args.frameId);
-		if (frame && args.context !== "repl") {
+		if (frame && args.context !== "repl" && this.valuesFormatting !== "disabled") {
 			const expression: ExpressionContext = { frame, expression: args.expression, path: [] };
 			const value = await this.raw.inspect(expression);
 			return { result: value.value, type: value.type, variablesReference: value.children > 0 ? this.variables.put({ frame, kind: "expression", id: "", expression }) : 0 };
@@ -152,7 +152,7 @@ export class DdbInspection {
 		const value = result.evaluation;
 		if (!value) throw new Error("DDB omitted evaluation result");
 		return { result: value.value ?? "", type: value.typeName, memoryReference: value.address,
-			variablesReference: value.variableId && frame ? this.variables.put({ frame, kind: "variable", id: value.variableId }, value.variableId) : 0 };
+			variablesReference: this.valuesFormatting !== "disabled" && value.variableId && frame ? this.variables.put({ frame, kind: "variable", id: value.variableId }, value.variableId) : 0 };
 	}
 
 	async setVariable(args: DebugProtocol.SetVariableArguments): Promise<DebugProtocol.SetVariableResponse["body"]> {

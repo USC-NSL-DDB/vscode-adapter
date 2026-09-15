@@ -2,6 +2,7 @@ import dap from "vscode-debugadapter";
 import type { DebugProtocol } from "vscode-debugprotocol";
 import type { ExecuteRequest, Thread as DdbThread, StateSyncItem, OutputEvent as DdbOutput } from "@ddb-debugger/api-client";
 import { DdbConnection } from "./connection.mjs";
+import { DdbCommands } from "./commands.mjs";
 import { DdbSidebar } from "./sidebar.mjs";
 import { DdbBreakpoints } from "./breakpoints.mjs";
 import { DdbInspection } from "./inspection.mjs";
@@ -18,6 +19,9 @@ export interface CanonicalLaunchArguments extends DebugProtocol.LaunchRequestArg
 	distributedStack?: boolean;
 	showDevDebugOutput?: boolean;
 	pairedBreakpointRequests?: boolean;
+	autorun?: string[];
+	valuesFormatting?: "disabled" | "parseText" | "prettyPrinters";
+	pathSubstitutions?: Record<string, string>;
 }
 
 /** Canonical DAP implementation. Activated once the remaining parity handlers land. */
@@ -26,6 +30,9 @@ export class CanonicalDebugSession extends DebugSession {
 	private inspection?: DdbInspection;
 	private breakpoints?: DdbBreakpoints;
 	private sidebar?: DdbSidebar;
+	private commands?: DdbCommands;
+	private startupOptions?: CanonicalLaunchArguments;
+	private readonly sessionSetup = new Map<string, Promise<void>>();
 	protected pairedBreakpoints = false;
 	private readonly breakpointRequests = new Map<number, {
 		promise: Promise<DebugProtocol.Breakpoint[]>;
@@ -53,6 +60,7 @@ export class CanonicalDebugSession extends DebugSession {
 
 	protected override async launchRequest(response: DebugProtocol.LaunchResponse, args: CanonicalLaunchArguments): Promise<void> {
 		await this.reply(response, async () => {
+			this.startupOptions = args;
 			this.distributed = args.distributedStack ?? true;
 			this.pairedBreakpoints = args.pairedBreakpointRequests ?? false;
 			if (!args.apiEndpoint && !args.configFilePath) throw new Error("Set configFilePath for managed DDB, or apiEndpoint for an existing server");
@@ -61,7 +69,10 @@ export class CanonicalDebugSession extends DebugSession {
 				: await DdbConnection.launch({ binary: args.ddbpath ?? "ddb", configFilePath: args.configFilePath!, cwd: args.cwd ?? process.cwd(), env: args.env,
 					onOutput: (category, text) => { if (category === "stderr" || args.showDevDebugOutput) this.sendEvent(new OutputEvent(text, category)); },
 				});
-			try { await this.useConnection(connection); }
+			try {
+				await this.useConnection(connection);
+				await Promise.all(this.sessionSetup.values());
+			}
 			catch (error) { await connection.close(); throw error; }
 			this.sendEvent(new InitializedEvent());
 		});
@@ -76,9 +87,10 @@ export class CanonicalDebugSession extends DebugSession {
 	protected async useConnection(connection: DdbConnection): Promise<void> {
 		if (this.connection) throw new Error("A DDB connection is already active");
 		this.connection = connection;
-		this.inspection = new DdbInspection(connection);
+		this.inspection = new DdbInspection(connection, this.startupOptions?.valuesFormatting);
 		this.breakpoints = new DdbBreakpoints(this.inspection);
 		this.sidebar = new DdbSidebar(this.inspection, this.breakpoints);
+		this.commands = new DdbCommands(connection);
 		let readyResolve!: () => void;
 		let readyReject!: (error: unknown) => void;
 		const ready = new Promise<void>((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
@@ -107,6 +119,15 @@ export class CanonicalDebugSession extends DebugSession {
 
 	private stateChanged(_item: StateSyncItem): void {
 		const inspection = this.model;
+		if (this.startupOptions) {
+			for (const session of this.connection!.state.all("session")) {
+				if (!session.sessionId || this.sessionSetup.has(session.sessionId) || !["SESSION_STATUS_READY", "SESSION_STATUS_STOPPED", "SESSION_STATUS_RUNNING"].includes(session.status ?? "")) continue;
+				const id = session.sessionId;
+				const setup = this.configureBackend(id, session.backend?.kind === "BACKEND_KIND_GDB");
+				this.sessionSetup.set(id, setup);
+				void setup.catch(error => this.sendEvent(new OutputEvent(`DDB session setup failed: ${String(error)}\n`, "stderr")));
+			}
+		}
 		const threads = this.connection!.state.all("thread");
 		const live = new Set(threads.map(thread => thread.threadId));
 		for (const [id] of this.knownThreads) {
@@ -130,6 +151,16 @@ export class CanonicalDebugSession extends DebugSession {
 			}
 		}
 		this.sendEvent(new Event("ddb.stateChanged"));
+	}
+
+	private async configureBackend(sessionId: string, gdb: boolean): Promise<void> {
+		const target = { session: { sessionId } };
+		const options = this.startupOptions!;
+		if (gdb && (options.valuesFormatting ?? "prettyPrinters") === "prettyPrinters") await this.commands!.run("-enable-pretty-printing", target);
+		for (const [from, to] of Object.entries(options.pathSubstitutions ?? {})) {
+			await this.commands!.run(`set substitute-path ${JSON.stringify(from)} ${JSON.stringify(to)}`, target);
+		}
+		for (const command of options.autorun ?? []) await this.commands!.run(command, target);
 	}
 
 	private stopped(thread: DdbThread): void {
@@ -177,7 +208,12 @@ export class CanonicalDebugSession extends DebugSession {
 		await this.reply(response, () => this.model.listVariables(args));
 	}
 	protected override async evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): Promise<void> {
-		await this.reply(response, () => this.model.evaluate(args));
+		await this.reply(response, async () => {
+			if (args.context !== "repl") return this.model.evaluate(args);
+			const frame = args.frameId === undefined ? undefined : this.model.frames.get(args.frameId);
+			const target = frame ? { thread: { threadId: frame.threadId } } : { currentThread: {} };
+			return { result: await this.commands!.run(args.expression, target, frame), variablesReference: 0 };
+		});
 	}
 	protected override async setVariableRequest(response: DebugProtocol.SetVariableResponse, args: DebugProtocol.SetVariableArguments): Promise<void> {
 		await this.reply(response, () => this.model.setVariable(args));

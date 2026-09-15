@@ -180,6 +180,13 @@ suite("Canonical DDB binary", function () {
 					const assigned = await dap.request("evaluate", { frameId: freshFrame.id, expression: "counter", context: "watch" });
 					assert.equal(assigned.success, true, assigned.message);
 					assert.equal(assigned.body.result, "7");
+					const consoleSet = await dap.request("evaluate", { frameId: freshFrame.id, expression: "set variable counter = 19", context: "repl" });
+					assert.equal(consoleSet.success, true, consoleSet.message);
+					const consoleValue = await dap.request("evaluate", { frameId: freshFrame.id, expression: "counter", context: "watch" });
+					assert.equal(consoleValue.body.result, "19");
+					const rawConsole = await dap.request("evaluate", { frameId: freshFrame.id, expression: '-data-evaluate-expression "1 + 2"', context: "repl" });
+					assert.equal(rawConsole.success, true, rawConsole.message);
+					assert.equal(rawConsole.body.result, "3");
 					const childAssignment = await dap.request("setVariable", { variablesReference: compound.variablesReference, name: children.body.variables[0].name, value: "101" });
 					assert.equal(childAssignment.success, true, childAssignment.message);
 					assert.equal(childAssignment.body.value, "101");
