@@ -39,7 +39,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | External endpoint | SDK endpoint and bearer token, disconnect without shutdown | Real DAP attach/disconnect leaves the existing server responsive; owner shutdown removes process and private startup directory |
 | Session/group/thread discovery | Snapshot and replayed resource upserts/tombstones | Connection, DAP view models and frontend facade tested |
 | Thread selection | SelectThread operation | Connection tested |
-| Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging, multi-page source reads and inaccessible-path source-reference fallback tested; local-file and debugger-source GUI navigation tested; remote path mapping remains unverified |
+| Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging, multi-page source reads and inaccessible-path source-reference fallback tested; local-file and debugger-source GUI navigation tested; GDB source-root substitution with spaces tested |
 | Distributed stack and boundary labels | RunDistributedBacktrace typed frames | Actual DDB two-session mock topology tests boundary labels, paging, parent ownership, thread selection and inspection; live framework deployment unverified |
 | Locals and expansion | ListScopes, ListVariables, ExpandVariable | Root/array expansion, C++ vectors, nested and empty dynamic containers, scopes and caller-frame watches tested with real GDB |
 | Registers | ListRegisters | DAP handler tested with mock and GDB |
@@ -50,7 +50,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Conditions, hit counts, enable/disable, logpoints | Typed conditions/counts; adapter evaluates and continues logpoint stops | Conditions, hit conditions and logpoints tested; real VS Code disable/re-enable preserves editor entries and group selection |
 | Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | DAP next/step-in/step-out, session-specific continue/pause, peer all-stop coordination and stopped-frame metadata tested with patched GDB |
 | Signals and session kill | ListSignals and v2 raw signal command | DAP list/validation tested on mock/GDB; SIGKILL tested on GDB |
-| Jump to line | Temporary canonical breakpoint followed by Execute JUMP | Local GDB destination stop, consumed breakpoint and invalid targets tested; remote source mapping remains unverified |
+| Jump to line | Temporary canonical breakpoint followed by Execute JUMP | Local and substituted-source GDB destination stops, consumed breakpoint and invalid targets tested |
 | Debug Console, autorun, path substitution | Canonical raw-command escape hatch where typed APIs do not cover the command | Implemented with focused-frame CLI/raw console and per-session setup; entrypoint tests cover autorun and substitution |
 | Memory reads | ReadMemory | Real GDB bytes, positive/negative offsets, empty reads and limits tested; memory-view UI still unverified |
 | Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Real VS Code activation, sidebar refresh/grouping and disconnect tested; group-selection dialog and disable/re-enable tested; session-selection toggles and rendered decorations pending |
@@ -787,3 +787,26 @@ VS Code suite also passed against the extracted extension, including pre-launch
 breakpoint selection and debugger-source navigation. Temporary fixture copies
 were removed afterward. This is a tested development artifact, not a completed
 release or proof that every remaining checklist item is done.
+
+
+## Source substitution and executable paths checkpoint
+
+A real GDB fixture is compiled with -fdebug-prefix-map so debug information uses
+/remote build/source rather than the local source directory. Stack paths, source
+breakpoint hits and jump destinations resolve correctly through pathSubstitutions,
+including a source filename containing spaces.
+
+The same fixture initially failed before its first stop when the executable
+directory contained spaces. DDB's GDB bootstrap generated an unquoted
+-file-exec-and-symbols path. Backend commit de96ba96 quotes that argument with
+the existing JSON string encoder and tests spaces and embedded quotes. The fix
+is on codex/vscode-api-parity in /tmp/ddb-canonical-api-fixes. The main DDB
+worktree was not edited. The new CLI was built under /tmp/ddb-canonical-build.
+
+Both plain and spaced executable-directory variants pass against the patched
+CLI. This tests compiled source-root substitution, not filesystem access on a
+separate remote host. The tested development VSIX uses the same adapter runtime;
+its bundled README predates this additional backend requirement.
+
+Validation: 315 backend tests pass with one ignored; all ten canonical adapter
+integration tests pass against /tmp/ddb-canonical-build/debug/ddb.

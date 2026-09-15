@@ -10,9 +10,10 @@ The compatibility adapter remains on `codex/migrate-current-ddb`.
 
 ## Required DDB build
 
-Use DDB's `codex/vscode-api-parity` branch at commit `33fc7007` or a descendant
+Use DDB's `codex/vscode-api-parity` branch at commit `de96ba96` or a descendant
 containing those fixes. The unpatched 0.1.15 binary lacks required stop metadata,
-function-breakpoint and hit-count behavior. API v2 and its SDK are preview APIs.
+function-breakpoint and hit-count behavior. The patched branch also fixes
+GDB executable paths containing spaces. API v2 and its SDK are preview APIs.
 
 Build from a separate DDB worktree. For example:
 
