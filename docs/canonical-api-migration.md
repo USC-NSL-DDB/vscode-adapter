@@ -55,7 +55,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Memory reads | ReadMemory | Pending |
 | Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Frontend facade and events wired; GUI/decorations verification pending |
 | Focused frame navigation | Frame metadata lookup through DAP, no bit decoding | Frame status wiring complete; GUI verification pending |
-| Reconnect, replay gap, output gap, restart | SDK recovery, projection rehydration, explicit loss/restart handling | Projection unit tests and managed-child crash termination tested; replay/output gap and external restart tests pending |
+| Reconnect, replay gap, output gap, restart | SDK recovery, projection rehydration, explicit loss/restart handling | Projection and replacement-snapshot DAP tests, plus managed-child crash termination, pass; transport replay/output gaps and external restart tests pending |
 
 ## Confirmed contract limits
 
@@ -78,7 +78,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 78 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 80 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -403,3 +403,23 @@ gaps or output gaps; those remain separate checklist items.
 
 Validation for the ownership checkpoint: 78 unit tests and all six canonical
 integration tests pass with the patched DDB debug binary.
+
+## Snapshot recovery checkpoint
+
+A replacement snapshot now invalidates frame and variable handles and sends a
+DAP invalidated event when the client supports it. Breakpoint reconciliation
+runs through the mutation queue and lists current canonical breakpoints after
+earlier mutations finish. Missing entries emit removed events and are forgotten
+so an unchanged setBreakpoints request can recreate them.
+
+An injected-snapshot DAP regression first failed because a lost deletion left
+a stale breakpoint in the adapter. It now verifies removal, recreation with a
+new local ID, invalidation of an old frame handle, and the client refresh event.
+A separate test verifies reconciliation waits for in-flight creation, avoiding
+false removal based on a snapshot older than the operation result.
+
+This covers adapter behavior after receiving a replacement snapshot. It does
+not yet exercise SDK replay-gap recovery over a broken network connection.
+
+Validation for this checkpoint: 80 unit tests and six canonical integration
+tests pass with the patched DDB debug binary.

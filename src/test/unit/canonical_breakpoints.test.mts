@@ -84,4 +84,28 @@ suite("Canonical breakpoint updates", () => {
 		assert.equal(resources.size, 0);
 	});
 
+	test("snapshot reconciliation waits for in-flight creation before listing authoritative breakpoints", async () => {
+		let release!: () => void;
+		const admitted = new Promise<void>(resolve => { release = resolve; });
+		let installed = false;
+		const resource = { breakpointId: "new-breakpoint", verified: true };
+		const model = {
+			connection: {
+				state: { get: () => undefined, all: (kind: string) => kind === "group" ? [{ groupId: "group" }] : [] },
+				client: {
+					call: async () => ({}),
+					collect: async () => { assert.equal(installed, true, "must wait for creation completion"); return [resource]; },
+				},
+				complete: async () => { await admitted; installed = true; return { breakpoint: resource }; },
+			},
+		} as unknown as DdbInspection;
+		const breakpoints = new DdbBreakpoints(model);
+		const creation = breakpoints.set("main.c", [{ source: { path: "main.c", name: "main.c" }, line: 6 }]);
+		const synchronized = breakpoints.resynchronize();
+		release();
+		const created = await creation;
+		assert.deepEqual(await synchronized, []);
+		assert.deepEqual(breakpoints.all(), created);
+	});
+
 });

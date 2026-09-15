@@ -77,6 +77,19 @@ export class DdbBreakpoints {
 		return removed;
 	}
 
+	/** List after earlier mutations complete; a snapshot can predate their results. */
+	resynchronize(): Promise<DebugProtocol.Breakpoint[]> {
+		const task = this.queue.then(async () => {
+			const ids = [...this.bySource.values()].flatMap(entries => entries.map(entry => entry.resource.breakpointId!));
+			if (!ids.length) return [];
+			const current = await this.model.connection.client.collect("DebuggerService.ListBreakpoints", {});
+			const live = new Set(current.map(breakpoint => breakpoint.breakpointId));
+			return ids.filter(id => !live.has(id)).flatMap(id => this.forget(id));
+		});
+		this.queue = task.catch(() => undefined);
+		return task;
+	}
+
 	/** Update DAP verification when installed group members change. */
 	refresh(): DebugProtocol.Breakpoint[] {
 		const changed: DebugProtocol.Breakpoint[] = [];

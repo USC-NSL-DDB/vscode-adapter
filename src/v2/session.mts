@@ -50,13 +50,16 @@ export class CanonicalDebugSession extends DebugSession {
 	private outputTask?: Promise<void>;
 	private closing = false;
 	private terminated = false;
+	private snapshotSeen = false;
+	private supportsInvalidatedEvent = false;
 	private controlEpoch = 0;
 	private configured = false;
 	private distributed = false;
 	private readonly pendingStops = new Map<string, ExecutionState>();
 	private readonly stopRevisions = new Map<string, string>();
 
-	protected override initializeRequest(response: DebugProtocol.InitializeResponse): void {
+	protected override initializeRequest(response: DebugProtocol.InitializeResponse, args: DebugProtocol.InitializeRequestArguments): void {
+		this.supportsInvalidatedEvent = args.supportsInvalidatedEvent ?? false;
 		response.body = {
 			supportsConfigurationDoneRequest: true,
 			supportsConditionalBreakpoints: true,
@@ -134,6 +137,16 @@ export class CanonicalDebugSession extends DebugSession {
 
 	private stateChanged(_item: StateSyncItem): void {
 		const inspection = this.model;
+		if (_item.type === "snapshot" && this.snapshotSeen) {
+			inspection.invalidate();
+			if (this.supportsInvalidatedEvent) this.sendEvent(new dap.InvalidatedEvent(["stacks", "variables"]));
+			void this.breakpoints!.resynchronize().then(removed => {
+				if (this.closing) return;
+				for (const breakpoint of removed) this.sendEvent(new BreakpointEvent("removed", breakpoint));
+				if (removed.length) this.sendEvent(new Event("ddb.stateChanged"));
+			}).catch(error => { if (!this.closing) this.sendEvent(new OutputEvent(`DDB breakpoint resynchronization failed: ${String(error)}\n`, "stderr")); });
+		}
+		if (_item.type === "snapshot") this.snapshotSeen = true;
 		this.execution!.observe();
 		if (this.startupOptions) {
 			for (const session of this.connection!.state.all("session")) {
