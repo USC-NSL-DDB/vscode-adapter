@@ -143,7 +143,11 @@ export class DdbConnection {
 	async *states(): AsyncGenerator<StateSyncItem> {
 		while (!this.client.closed) {
 			try {
-				for await (const item of this.client.stateSync()) {
+				for await (const item of this.client.stateSync({ sections: [
+					"SNAPSHOT_SECTION_TOPOLOGY", "SNAPSHOT_SECTION_SELECTION", "SNAPSHOT_SECTION_EXECUTION",
+					"SNAPSHOT_SECTION_BREAKPOINTS", "SNAPSHOT_SECTION_PENDING_OPERATIONS",
+					"SNAPSHOT_SECTION_EXTENSIONS", "SNAPSHOT_SECTION_CAPABILITIES",
+				] })) {
 					if (item.type === "snapshot") {
 						if (item.snapshot.serverInstanceId !== this.handshake.serverInfo.serverInstanceId) {
 							throw new DdbProtocolError("DDB restarted; begin a new debug session to replace expired resource handles");

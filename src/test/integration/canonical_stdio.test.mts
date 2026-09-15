@@ -59,7 +59,7 @@ suite("Canonical adapter entrypoint", function () {
 			for (let attempt = 0; threads.body.threads.length === 0 && attempt < 100; attempt++) { await delay(20); threads = await request("threads"); }
 			assert.equal(threads.body.threads.length, 1);
 			for (let attempt = 0; !events.includes("stopped") && attempt < 100; attempt++) await delay(20);
-			assert.ok(events.includes("stopped"));
+			assert.ok(events.includes("stopped"), `Missing stop event; events=${events.join(",")}; output=${output.join("")}`);
 			const stack = await request("stackTrace", { threadId: threads.body.threads[0].id });
 			assert.equal(stack.success, true, stack.message);
 			assert.ok(stack.body.stackFrames.length > 0);

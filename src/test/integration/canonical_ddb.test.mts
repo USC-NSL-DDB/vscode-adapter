@@ -156,9 +156,14 @@ suite("Canonical DDB binary", function () {
 				seq = dap.nextSequence + 1;
 				assert.equal((await dap.request("setSessionBreakpoints", { seq, arguments: invalidSelection })).success, false);
 				assert.equal((await dap.request("setBreakpoints", invalidSelection)).success, false);
+				const beforeStepEvents = dap.events.length;
 				const beforeStep = BigInt(c.state.get("thread", thread.threadId!)?.revision ?? "0");
 				await c.complete(await c.client.call("DebuggerControlService.Execute", { target, action: "EXECUTION_ACTION_NEXT" }));
 				await until(() => (c.state.get("thread", thread.threadId!)?.state === "THREAD_STATE_STOPPED" && BigInt(c.state.get("thread", thread.threadId!)?.revision ?? "0") > beforeStep) || streamError !== undefined, "step stop");
+				const stoppedState = await c.client.call("DebuggerService.GetExecutionState", { target });
+				assert.equal(stoppedState.executionState?.stopReason?.kind, "STOP_REASON_KIND_STEP", "canonical API must preserve the step stop reason");
+				assert.equal(stoppedState.executionState?.stopReason?.threadId, thread.threadId);
+				await until(() => dap.events.slice(beforeStepEvents).some(event => event.event === "stopped" && event.body.threadId === dapThreadId && event.body.reason === "step"), "DAP step reason");
 				if (streamError) throw streamError;
 				if (backend === "gdb") {
 					const freshStack = await dap.request("stackTrace", { threadId: dapThreadId });
@@ -203,16 +208,36 @@ suite("Canonical DDB binary", function () {
 					assert.equal(element.success, true, element.message);
 					assert.equal(element.body.result, "202");
 				}
+				if (backend === "gdb") {
+					const hit = await c.complete(await c.client.call("DebuggerControlService.CreateBreakpoint", {
+						target: { session: { sessionId: thread.sessionId } }, breakpoint: { source: { source, line: 6 }, enabled: true },
+					}));
+					const beforeHit = dap.events.length;
+					await c.complete(await c.client.call("DebuggerControlService.Execute", { target, action: "EXECUTION_ACTION_CONTINUE" }));
+					await until(() => dap.events.slice(beforeHit).some(event => event.event === "stopped" && event.body.threadId === dapThreadId && event.body.reason === "breakpoint"), "real DAP breakpoint hit");
+					const hitState = (await c.client.call("DebuggerService.GetExecutionState", { target })).executionState;
+					assert.equal(hitState?.stopReason?.breakpointId, hit.breakpoint?.breakpointId);
+					assert.equal(hitState?.stopReason?.threadId, thread.threadId);
+					const hitEvent = dap.events.slice(beforeHit).find(event => event.event === "stopped" && event.body.reason === "breakpoint")!;
+					assert.equal(hitEvent.body.hitBreakpointIds.length, 1);
+					assert.ok(hitEvent.body.hitBreakpointIds[0] > 0);
+					await c.complete(await c.client.call("DebuggerControlService.DeleteBreakpoint", { target: { broadcast: {} }, breakpointId: hit.breakpoint?.breakpointId }));
+				}
 				const controlledThread = c.state.all("thread").find(item => item.threadId === thread.threadId)!;
 				const continued = await dap.request("continue", { sessionId: metadata.body.session_id });
 				assert.equal(continued.success, true, continued.message);
 				assert.equal(continued.body.allThreadsContinued, false);
 				await until(() => c.state.get("thread", controlledThread.threadId!)?.state === "THREAD_STATE_RUNNING", "session continue");
 				assert.ok(c.state.all("thread").some(item => item.threadId !== controlledThread.threadId && item.state === "THREAD_STATE_STOPPED"));
+				const beforePauseEvents = dap.events.length;
 				const paused = await dap.request("pause", { sessionId: metadata.body.session_id });
 				assert.equal(paused.success, true, paused.message);
 				await until(() => c.state.get("thread", controlledThread.threadId!)?.state === "THREAD_STATE_STOPPED", "session pause");
 				if (backend === "gdb") {
+					const signalState = (await c.client.call("DebuggerService.GetExecutionState", { target })).executionState;
+					assert.equal(signalState?.stopReason?.kind, "STOP_REASON_KIND_SIGNAL");
+					assert.equal(signalState?.stopReason?.signalName, "SIGINT");
+					await until(() => dap.events.slice(beforePauseEvents).some(event => event.event === "stopped" && event.body.text === "SIGINT"), "signal name in DAP stop");
 					const killed = await dap.request("send-signal", { sessionId: metadata.body.session_id, signal: "SIGKILL" });
 					assert.equal(killed.success, true, killed.message);
 					await until(() => !c.state.get("thread", controlledThread.threadId!), "killed session thread removal");

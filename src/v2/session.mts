@@ -1,6 +1,6 @@
 import dap from "vscode-debugadapter";
 import type { DebugProtocol } from "vscode-debugprotocol";
-import type { ExecuteRequest, Thread as DdbThread, StateSyncItem, OutputEvent as DdbOutput } from "@ddb-debugger/api-client";
+import type { ExecuteRequest, ExecutionState, Thread as DdbThread, StateSyncItem, OutputEvent as DdbOutput } from "@ddb-debugger/api-client";
 import { DdbConnection } from "./connection.mjs";
 import { DdbCommands } from "./commands.mjs";
 import { DdbSidebar } from "./sidebar.mjs";
@@ -46,7 +46,8 @@ export class CanonicalDebugSession extends DebugSession {
 	private closing = false;
 	private configured = false;
 	private distributed = false;
-	private pendingStops: DdbThread[] = [];
+	private readonly pendingStops = new Map<string, ExecutionState>();
+	private readonly stopRevisions = new Map<string, string>();
 
 	protected override initializeRequest(response: DebugProtocol.InitializeResponse): void {
 		response.body = {
@@ -135,6 +136,8 @@ export class CanonicalDebugSession extends DebugSession {
 			if (!live.has(id)) {
 				this.sendEvent(new ThreadEvent("exited", inspection.threadHandle(id)));
 				this.knownThreads.delete(id);
+				this.stopRevisions.delete(id);
+				this.pendingStops.delete(id);
 				inspection.invalidate();
 			}
 		}
@@ -143,13 +146,22 @@ export class CanonicalDebugSession extends DebugSession {
 			const previous = this.knownThreads.get(thread.threadId);
 			if (!previous) this.sendEvent(new ThreadEvent("started", inspection.threadHandle(thread.threadId)));
 			this.knownThreads.set(thread.threadId, thread);
-			if (previous?.state === thread.state) continue;
-			if (thread.state === "THREAD_STATE_RUNNING") {
+			if (thread.state === "THREAD_STATE_RUNNING" && previous?.state !== thread.state) {
+				this.pendingStops.delete(thread.threadId);
 				inspection.invalidate();
 				this.sendEvent(new ContinuedEvent(inspection.threadHandle(thread.threadId), false));
-			} else if (thread.state === "THREAD_STATE_STOPPED") {
-				if (this.configured) this.stopped(thread); else this.pendingStops.push(thread);
 			}
+		}
+		// Thread and execution resources arrive separately. Only execution revisions
+		// identify complete stops, including steps whose running update was coalesced.
+		for (const state of this.connection!.state.all("executionState")) {
+			const threadId = state.target?.thread?.threadId;
+			if (!threadId || state.running || this.knownThreads.get(threadId)?.state !== "THREAD_STATE_STOPPED") continue;
+			const revision = `${state.executionStateId}:${state.revision ?? "0"}`;
+			if (this.stopRevisions.get(threadId) === revision) continue;
+			if (this.stopRevisions.has(threadId)) inspection.invalidate();
+			this.stopRevisions.set(threadId, revision);
+			if (this.configured) this.stopped(threadId, state); else this.pendingStops.set(threadId, state);
 		}
 		this.sendEvent(new Event("ddb.stateChanged"));
 	}
@@ -164,13 +176,16 @@ export class CanonicalDebugSession extends DebugSession {
 		for (const command of options.autorun ?? []) await this.commands!.run(command, target);
 	}
 
-	private stopped(thread: DdbThread): void {
-		const states = this.connection!.state.all("executionState");
-		const reason = states.find(state => state.stopReason?.threadId === thread.threadId)?.stopReason;
-		const kind = reason?.kind ?? "";
-		const dapReason = kind.includes("BREAKPOINT") ? "breakpoint" : kind.includes("STEP") ? "step" : kind.includes("SIGNAL") ? "exception" : "pause";
-		const event = new StoppedEvent(dapReason, this.model.threadHandle(thread.threadId!), reason?.description);
+	private stopped(threadId: string, state: ExecutionState): void {
+		const reason = state.stopReason;
+		const kinds: Record<string, string> = {
+			STOP_REASON_KIND_BREAKPOINT: "breakpoint", STOP_REASON_KIND_WATCHPOINT: "data breakpoint",
+			STOP_REASON_KIND_STEP: "step", STOP_REASON_KIND_SIGNAL: "exception",
+			STOP_REASON_KIND_EXCEPTION: "exception", STOP_REASON_KIND_ENTRY: "entry",
+		};
+		const event = new StoppedEvent(kinds[reason?.kind ?? ""] ?? "pause", this.model.threadHandle(threadId), reason?.description ?? reason?.signalName);
 		(event as DebugProtocol.StoppedEvent).body.allThreadsStopped = this.connection!.state.all("thread").every(item => item.state !== "THREAD_STATE_RUNNING");
+		if (reason?.breakpointId) (event as DebugProtocol.StoppedEvent).body.hitBreakpointIds = [this.breakpoints!.handle(reason.breakpointId)];
 		this.sendEvent(event);
 	}
 
@@ -190,10 +205,10 @@ export class CanonicalDebugSession extends DebugSession {
 	protected override configurationDoneRequest(response: DebugProtocol.ConfigurationDoneResponse): void {
 		this.configured = true;
 		this.sendResponse(response);
-		for (const thread of this.pendingStops) {
-			if (this.connection?.state.get("thread", thread.threadId!)?.state === "THREAD_STATE_STOPPED") this.stopped(thread);
+		for (const [threadId, state] of this.pendingStops) {
+			if (this.connection?.state.get("thread", threadId)?.state === "THREAD_STATE_STOPPED") this.stopped(threadId, state);
 		}
-		this.pendingStops = [];
+		this.pendingStops.clear();
 	}
 
 	protected override async threadsRequest(response: DebugProtocol.ThreadsResponse): Promise<void> {

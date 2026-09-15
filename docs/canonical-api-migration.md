@@ -2,6 +2,8 @@
 
 Work branch: `codex/canonical-ddb-api`, based on compatibility commit `8e7317b`.
 DDB source: `7309720806cb455a7124bc2d42174754f637cd54`, release binary 0.1.15.
+Stop metadata requires DDB commit `45366462` on `codex/vscode-api-parity`, based on that
+commit. The baseline binary fails the new stop-reason regression.
 
 This migration is in progress. The extension now starts the canonical adapter and the sidebar uses DAP.
 Several parity items below remain incomplete; this branch is not a finished
@@ -46,7 +48,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Source/function breakpoints | Create/Update/DeleteBreakpoint operations | DAP source creation, condition replacement and deletion tested; function support pending |
 | Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Group selection and paired DAP/custom requests tested in both arrival orders |
 | Conditions, hit counts, enable/disable, logpoints | Typed fields where supported; logpoints need explicit implementation | Pending |
-| Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | Next and session-specific DAP continue/pause tested; all-stop coordination and other actions pending |
+| Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | Next, session-specific continue/pause and typed stop metadata tested with patched DDB; all-stop coordination and other actions pending |
 | Signals and session kill | ListSignals and v2 raw signal command | DAP list/validation tested on mock/GDB; SIGKILL tested on GDB |
 | Jump to line | Execute JUMP with source location | Pending |
 | Debug Console, autorun, path substitution | Canonical raw-command escape hatch where typed APIs do not cover the command | Implemented with focused-frame CLI/raw console and per-session setup; entrypoint tests cover autorun and substitution |
@@ -75,7 +77,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 62 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 63 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -92,7 +94,7 @@ These checks validate the new connection layer, not completed DAP/UI migration.
 inspection, basic execution, state/output forwarding, local handle invalidation,
 managed launch/external attach, source reads, memory reads and disconnect.
 They are now the extension entrypoint. Remaining breakpoint features,
-all-stop coordination, complete stop metadata, and the other
+all-stop coordination and the other
 unchecked items above remain required.
 
 The binary test dispatches actual DAP requests through `CanonicalHarness`.
@@ -203,3 +205,35 @@ Telemetry forwarding, entry-stop configuration,
 late-session setup ordering, source-path navigation, and remote configuration
 semantics remain part of the completion audit. The implemented startup behavior
 must not be treated as proof that those options already have parity.
+
+## Execution-state checkpoint and backend prerequisite
+
+The baseline binary's execution-state projection always sets `stop_reason` to
+`None`. Both a SDK integration assertion and DDB's HTTP integration assertion
+failed after stepping: the expected `STOP_REASON_KIND_STEP` was absent.
+The DDB branch `codex/vscode-api-parity` retains stop details in runtime thread
+state and converts internal identities to opaque API IDs during projection.
+It commits the stopped thread set and its reason together, and clears reasons
+on resume. Tests cover step and breakpoint reasons, signal names, principal
+thread identity in all-thread stops, missing stopped-thread lists, and cleanup.
+
+The adapter explicitly requests the EXECUTION snapshot section. DDB's default
+snapshot excludes it. Stop events follow per-thread execution-state revisions,
+so separately arriving thread resources cannot emit the previous stop reason.
+A newer stopped snapshot also emits a stop when a fast step or replay gap hid
+the intervening running state. Replayed revisions do not emit duplicate stops.
+DAP stop events include breakpoint handles and signal names.
+
+Validation uses the backend built from the patch branch. All four canonical
+integration tests pass with mock and real GDB, including actual stdio startup,
+a real breakpoint hit with its canonical ID, and a SIGINT stop with its signal
+name. The adapter unit suite has 63 passing tests. DDB's core suite has 312
+passing tests and one ignored test; all six API v1/v2 integration tests pass,
+including the stop-reason regression.
+The original release binary remains available for baseline comparisons.
+
+This checkpoint does not establish full execution or breakpoint parity.
+Explicit-pause versus external-signal presentation, entry-stop classification,
+all-stop coordination, group breakpoint verification, logpoints, function
+breakpoints and hit conditions still need work. No current VSIX has been
+packaged or GUI-tested.
