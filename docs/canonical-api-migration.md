@@ -581,3 +581,18 @@ clean at 73097208; existing backend migration changes remain isolated in
 Validation: 91 unit tests, six canonical integration tests, and the real VS Code
 extension-host scenario pass. The packaged VSIX still needs rebuilding after
 the remaining migration audit.
+
+
+## Debugger-supplied source navigation checkpoint
+
+The focused-frame command previously required a source path, so a frame with
+only sourceReference could not be opened. It also treated remote paths as local
+files even when the adapter supplied a source reference. The command now uses
+VS Code's asDebugSourceUri for referenced source and keeps existing file/URI
+behavior otherwise.
+
+An inline DAP fixture in the real extension host reproduces the missing editor
+navigation before the fix. It serves source text and verifies the registered
+command opens the debug editor at the requested line, with and without a remote
+path. The existing GDB scenario verifies local-file navigation. This fixture
+covers frontend navigation, not remote backend file resolution.

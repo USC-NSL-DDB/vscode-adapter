@@ -1,3 +1,4 @@
+import { testSourceNavigation } from "./source_navigation";
 import * as assert from "node:assert/strict";
 import * as vscode from "vscode";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -84,4 +85,6 @@ export async function run(): Promise<void> {
 		process.off("unhandledRejection", onUnhandled);
 		await rm(directory, { recursive: true, force: true });
 	}
+	await testSourceNavigation();
+
 }

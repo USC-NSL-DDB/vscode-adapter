@@ -1110,19 +1110,13 @@ export async function activate(context: vscode.ExtensionContext) {
             (f: { id: number }) => f.id === frameId
           );
 
-          if (frame && frame.source?.path) {
-            // await vscode.commands.executeCommand(
-            //   "workbench.action.debug.callStackDown"
-            // ).then(async () => {
-            //   await vscode.commands.executeCommand(
-            //     "workbench.action.debug.callStackUp"
-            //   );
-            // });
-
+          if (frame?.source && (frame.source.path || frame.source.sourceReference > 0)) {
             const sourcePath = frame.source.path;
-            const uri = sourcePath.includes("://")
-              ? vscode.Uri.parse(sourcePath)
-              : vscode.Uri.file(sourcePath);
+            const uri = frame.source.sourceReference > 0
+              ? vscode.debug.asDebugSourceUri(frame.source, activeSession)
+              : sourcePath.includes("://")
+                ? vscode.Uri.parse(sourcePath)
+                : vscode.Uri.file(sourcePath);
             const line = Math.max(0, (frame.line ?? 1) - 1); // VSCode uses 0-based lines
             const column = Math.max(0, (frame.column ?? 1) - 1);
 
@@ -1131,7 +1125,7 @@ export async function activate(context: vscode.ExtensionContext) {
             });
           } else {
             vscode.window.showWarningMessage(  
-              "Could not find the focused stack frame or has no source path to open"  
+              "Could not find source for the focused stack frame"
             ); 
           }
         } catch (error) {

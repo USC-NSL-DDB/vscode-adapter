@@ -28,5 +28,12 @@ archive SHA-256 was
 `4bd1f5219195dc165eda48d2764b7c4be4a1135110034ca228497ae6d34db49c`.
 
 This test is not a complete visual audit. It does not yet exercise breakpoint
-session-selection toggles, remote source editors, or inspect rendered
-decorations. The group-selection dialog and disable/re-enable actions are covered.
+session-selection toggles or inspect rendered decorations. The group-selection
+dialog and disable/re-enable actions are covered.
+
+A second session uses an inline DAP fixture to serve source content through a
+source reference. It tests the registered focused-frame command with a
+reference-only source and with a remote path plus reference. Both must open a
+VS Code debug editor with the supplied content and selected line. This tests
+frontend navigation and the editor content provider; it does not test a remote
+DDB deployment.
