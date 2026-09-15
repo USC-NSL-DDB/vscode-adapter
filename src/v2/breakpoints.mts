@@ -27,6 +27,22 @@ export class DdbBreakpoints {
 		return [...this.bySource].flatMap(([source, entries]) => entries.map(entry => this.present(source, entry)));
 	}
 
+	/** Update DAP verification when installed group members change. */
+	refresh(): DebugProtocol.Breakpoint[] {
+		const changed: DebugProtocol.Breakpoint[] = [];
+		for (const [source, entries] of this.bySource) {
+			for (const entry of entries) {
+				const current = this.model.connection.state.get("breakpoint", entry.resource.breakpointId!);
+				if (!current || BigInt(current.revision ?? "0") <= BigInt(entry.resource.revision ?? "0")) continue;
+				const before = this.present(source, entry);
+				entry.resource = current;
+				const after = this.present(source, entry);
+				if (JSON.stringify(before) !== JSON.stringify(after)) changed.push(after);
+			}
+		}
+		return changed;
+	}
+
 	private target(request: SourceBreakpoint): Target | undefined {
 		const state = this.model.connection.state;
 		const targets: Target[] = request.subbkpts === undefined

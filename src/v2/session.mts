@@ -7,7 +7,7 @@ import { DdbSidebar } from "./sidebar.mjs";
 import { DdbBreakpoints } from "./breakpoints.mjs";
 import { DdbInspection } from "./inspection.mjs";
 
-const { DebugSession, InitializedEvent, TerminatedEvent, OutputEvent, StoppedEvent, ContinuedEvent, ThreadEvent, Event } = dap;
+const { DebugSession, InitializedEvent, TerminatedEvent, OutputEvent, StoppedEvent, ContinuedEvent, ThreadEvent, BreakpointEvent, Event } = dap;
 
 export interface CanonicalLaunchArguments extends DebugProtocol.LaunchRequestArguments {
 	ddbpath?: string;
@@ -163,6 +163,7 @@ export class CanonicalDebugSession extends DebugSession {
 			this.stopRevisions.set(threadId, revision);
 			if (this.configured) this.stopped(threadId, state); else this.pendingStops.set(threadId, state);
 		}
+		for (const breakpoint of this.breakpoints!.refresh()) this.sendEvent(new BreakpointEvent("changed", breakpoint));
 		this.sendEvent(new Event("ddb.stateChanged"));
 	}
 

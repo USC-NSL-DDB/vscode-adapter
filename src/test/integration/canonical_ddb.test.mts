@@ -131,6 +131,7 @@ suite("Canonical DDB binary", function () {
 				const paired = await standardFirst;
 				assert.equal(paired.success, true, paired.message);
 				assert.ok(paired.body.breakpoints[0].id, paired.body.breakpoints[0].message);
+				assert.equal(paired.body.breakpoints[0].verified, true);
 				const selectedBreakpoints = await c.client.collect("DebuggerService.ListBreakpoints", {});
 				assert.equal(selectedBreakpoints.length, 1);
 				assert.equal(selectedBreakpoints[0].target?.group?.groupId, c.state.all("group")[0].groupId);
@@ -138,6 +139,7 @@ suite("Canonical DDB binary", function () {
 				const sidebarBreakpoints = await dap.request("ddb.getBreakpoints");
 				assert.equal(sidebarBreakpoints.success, true, sidebarBreakpoints.message);
 				assert.equal(sidebarBreakpoints.body.bkpts.length, 1);
+				assert.equal(sidebarBreakpoints.body.bkpts[0].verified, true);
 				assert.equal(sidebarBreakpoints.body.bkpts[0].id, paired.body.breakpoints[0].id);
 				assert.equal(sidebarBreakpoints.body.bkpts[0].subbkpts[0].target_group, uiGroups.body.groups[0].id);
 				seq = dap.nextSequence + 1;
@@ -210,8 +212,11 @@ suite("Canonical DDB binary", function () {
 				}
 				if (backend === "gdb") {
 					const hit = await c.complete(await c.client.call("DebuggerControlService.CreateBreakpoint", {
-						target: { session: { sessionId: thread.sessionId } }, breakpoint: { source: { source, line: 6 }, enabled: true },
+						target: { group: { groupId: thread.groupId } }, breakpoint: { source: { source, line: 6 }, enabled: true },
 					}));
+					assert.equal(hit.breakpoint?.verified, true, "installed group breakpoint must be verified");
+					assert.equal(hit.breakpoint?.subBreakpoints?.length, 1);
+					assert.equal(hit.breakpoint?.subBreakpoints?.[0].inheritedFromGroupId, thread.groupId);
 					const beforeHit = dap.events.length;
 					await c.complete(await c.client.call("DebuggerControlService.Execute", { target, action: "EXECUTION_ACTION_CONTINUE" }));
 					await until(() => dap.events.slice(beforeHit).some(event => event.event === "stopped" && event.body.threadId === dapThreadId && event.body.reason === "breakpoint"), "real DAP breakpoint hit");

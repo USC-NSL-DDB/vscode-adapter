@@ -46,7 +46,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Watch and hover | Evaluate with frame ID and evaluation context | Scalar and compound DAP watches, hover and watch-child assignment tested |
 | Variable assignment | Evaluate assignment if supported; backend escape hatch otherwise | Root and array-child DAP assignment tested with real GDB |
 | Source/function breakpoints | Create/Update/DeleteBreakpoint operations | DAP source creation, condition replacement and deletion tested; function support pending |
-| Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Group selection and paired DAP/custom requests tested in both arrival orders |
+| Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Group selection, verified member projection and paired requests tested; streamed verification refresh implemented |
 | Conditions, hit counts, enable/disable, logpoints | Typed fields where supported; logpoints need explicit implementation | Pending |
 | Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | Next, session-specific continue/pause and typed stop metadata tested with patched DDB; all-stop coordination and other actions pending |
 | Signals and session kill | ListSignals and v2 raw signal command | DAP list/validation tested on mock/GDB; SIGKILL tested on GDB |
@@ -77,7 +77,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 63 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 64 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -145,10 +145,9 @@ Full breakpoint parity remains unproven:
   runtime support.
 - Logpoints and hit conditions remain explicitly unimplemented in the canonical
   adapter. They must be implemented and exercised before declaring migration complete.
-- The backend reports group-only breakpoints as unverified even when their
-  installation operation succeeds. Its projection derives verified from direct
-  session sub-breakpoints only. The adapter preserves that flag; correcting the
-  status and testing an actual group breakpoint hit remain required.
+- DDB commit `ba512f18` corrects group-only breakpoint verification and projects
+  installed session members. Paired DAP, sidebar and real group-hit checks cover
+  the fix. The adapter forwards streamed verification changes with stable IDs.
 
 ## Session-control checkpoint
 
@@ -234,6 +233,31 @@ The original release binary remains available for baseline comparisons.
 
 This checkpoint does not establish full execution or breakpoint parity.
 Explicit-pause versus external-signal presentation, entry-stop classification,
-all-stop coordination, group breakpoint verification, logpoints, function
+all-stop coordination, logpoints, function
 breakpoints and hit conditions still need work. No current VSIX has been
 packaged or GUI-tested.
+
+## Group breakpoint projection and refresh
+
+DDB commit `ba512f18` on `codex/vscode-api-parity` adds installed session IDs to
+internal group-breakpoint snapshots and exposes each member as a canonical
+SubBreakpoint. Member IDs remain stable when another member joins or leaves,
+and each member carries its inheritedFromGroupId. The legacy snapshot encoding
+retains its existing shape. Empty groups awaiting installation remain pending.
+The runtime's existing removal of a logical breakpoint after deletion of its
+last installed member is preserved.
+
+The regression first failed against the prior backend with an absent verified
+flag. With this patch, paired DAP requests and sidebar snapshots report verified
+group breakpoints, and the real-GDB test hits a group-selected breakpoint and
+checks its canonical breakpoint/thread identities. The backend test checks
+pending-to-installed transitions, stable surviving member IDs, revision changes,
+and removal. DDB has 313 passing core tests, one ignored core test, and six passing
+API v1/v2 integration tests.
+
+The adapter refreshes cached breakpoint resources from newer streamed revisions.
+Verification changes emit DAP breakpoint-changed events; hit-count-only updates
+do not. The existing DAP handle survives verification changes, and unchanged
+setBreakpoints requests do not reinstall the breakpoint. The adapter unit suite
+has 64 passing tests. Transport recovery of externally deleted breakpoints and
+full dynamic-session GUI behavior remain part of the wider completion audit.
