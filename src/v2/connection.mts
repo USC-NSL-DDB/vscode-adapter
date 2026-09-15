@@ -17,7 +17,19 @@ export interface ManagedOptions {
 	cwd: string;
 	env?: Record<string, string | null>;
 	startupTimeoutMs?: number;
+	debuggerArgs?: string[];
 	onOutput?: (category: "stdout" | "stderr", text: string) => void;
+}
+
+/** Managed transport options belong to the adapter; all other flags reach DDB. */
+export function managedArguments(options: ManagedOptions, tokenFile: string, reportFile: string): string[] {
+	const extra = options.debuggerArgs ?? [];
+	if (!Array.isArray(extra) || extra.some(value => typeof value !== "string" || value.includes("\0"))) throw new Error("debugger_args must be an array of argument strings");
+	const reserved = new Set(["--api-bind", "--api-port", "--api-auth-token-file", "--startup-report", "--managed"]);
+	for (const argument of extra) {
+		if (reserved.has(argument.split("=", 1)[0])) throw new Error(`${argument.split("=", 1)[0]} is managed by the adapter; use apiEndpoint for an existing server`);
+	}
+	return ["serve", resolve(options.cwd, options.configFilePath), ...extra, "--managed", "--api-auth-token-file", tokenFile, "--startup-report", reportFile];
 }
 
 interface StartupReport {
@@ -77,10 +89,7 @@ export class DdbConnection {
 			for (const [key, value] of Object.entries(options.env ?? {})) {
 				if (value === null) delete env[key]; else env[key] = value;
 			}
-			child = spawn(options.binary, [
-				"serve", resolve(options.cwd, options.configFilePath), "--managed",
-				"--api-auth-token-file", tokenFile, "--startup-report", reportFile,
-			], { cwd: options.cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+			child = spawn(options.binary, managedArguments(options, tokenFile, reportFile), { cwd: options.cwd, env, stdio: ["ignore", "pipe", "pipe"] });
 			let launchError: Error | undefined;
 			child.on("error", error => { launchError = error; });
 			child.stdout?.on("data", chunk => options.onOutput?.("stdout", chunk.toString()));

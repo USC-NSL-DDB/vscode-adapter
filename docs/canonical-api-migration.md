@@ -75,7 +75,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 60 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 62 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -92,7 +92,7 @@ These checks validate the new connection layer, not completed DAP/UI migration.
 inspection, basic execution, state/output forwarding, local handle invalidation,
 managed launch/external attach, source reads, memory reads and disconnect.
 They are now the extension entrypoint. Remaining breakpoint features,
-all-stop coordination, complete stop metadata, console commands, and the other
+all-stop coordination, complete stop metadata, and the other
 unchecked items above remain required.
 
 The binary test dispatches actual DAP requests through `CanonicalHarness`.
@@ -142,7 +142,7 @@ Full breakpoint parity remains unproven:
   typed breakpoint implementation. A schema field alone does not establish
   runtime support.
 - Logpoints and hit conditions remain explicitly unimplemented in the canonical
-  adapter. They must be implemented and exercised before switching entrypoints.
+  adapter. They must be implemented and exercised before declaring migration complete.
 - The backend reports group-only breakpoints as unverified even when their
   installation operation succeeds. Its projection derives verified from direct
   session sub-breakpoints only. The adapter preserves that flag; correcting the
@@ -194,7 +194,12 @@ subsequent console queries. Direct DAP tests also check focused CLI assignment
 and raw expression commands. Disabled values formatting avoids expandable value
 handles; broader formatting and C++ pretty-printer coverage remains required.
 
-Additional debugger arguments, telemetry forwarding, entry-stop configuration,
+Managed startup forwards `debugger_args` as separate process arguments. Overrides
+of managed endpoint, authentication and startup-report arguments fail explicitly.
+Unit tests cover argument boundaries and override rejection; the stdio test
+launches DDB with an additional console-level argument.
+
+Telemetry forwarding, entry-stop configuration,
 late-session setup ordering, source-path navigation, and remote configuration
 semantics remain part of the completion audit. The implemented startup behavior
 must not be treated as proof that those options already have parity.

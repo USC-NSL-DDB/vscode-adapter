@@ -51,7 +51,7 @@ suite("Canonical adapter entrypoint", function () {
 		});
 		try {
 			assert.equal((await request("initialize", { adapterID: "ddb", pathFormat: "path", linesStartAt1: true, columnsStartAt1: true })).success, true);
-			const launched = await request("launch", { ddbpath: process.env.DDB_TEST_BINARY, configFilePath: config, cwd: directory, autorun: backend === "gdb" ? ["set print elements 33"] : [], pathSubstitutions: backend === "gdb" ? { "/old build path": "/new source path" } : {} });
+			const launched = await request("launch", { ddbpath: process.env.DDB_TEST_BINARY, configFilePath: config, cwd: directory, debugger_args: ["--console-level", "warn"], autorun: backend === "gdb" ? ["set print elements 33"] : [], pathSubstitutions: backend === "gdb" ? { "/old build path": "/new source path" } : {} });
 			assert.equal(launched.success, true, launched.message);
 			assert.ok(events.includes("initialized"));
 			assert.equal((await request("configurationDone")).success, true);

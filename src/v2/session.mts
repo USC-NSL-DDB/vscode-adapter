@@ -20,11 +20,12 @@ export interface CanonicalLaunchArguments extends DebugProtocol.LaunchRequestArg
 	showDevDebugOutput?: boolean;
 	pairedBreakpointRequests?: boolean;
 	autorun?: string[];
+	debugger_args?: string[];
 	valuesFormatting?: "disabled" | "parseText" | "prettyPrinters";
 	pathSubstitutions?: Record<string, string>;
 }
 
-/** Canonical DAP implementation. Activated once the remaining parity handlers land. */
+/** DAP session backed by the canonical DDB SDK. */
 export class CanonicalDebugSession extends DebugSession {
 	private connection?: DdbConnection;
 	private inspection?: DdbInspection;
@@ -66,7 +67,7 @@ export class CanonicalDebugSession extends DebugSession {
 			if (!args.apiEndpoint && !args.configFilePath) throw new Error("Set configFilePath for managed DDB, or apiEndpoint for an existing server");
 			const connection = args.apiEndpoint
 				? await DdbConnection.connect({ endpoint: args.apiEndpoint, bearerToken: args.apiToken ?? process.env.DDB_API_TOKEN })
-				: await DdbConnection.launch({ binary: args.ddbpath ?? "ddb", configFilePath: args.configFilePath!, cwd: args.cwd ?? process.cwd(), env: args.env,
+				: await DdbConnection.launch({ binary: args.ddbpath ?? "ddb", configFilePath: args.configFilePath!, cwd: args.cwd ?? process.cwd(), env: args.env, debuggerArgs: args.debugger_args,
 					onOutput: (category, text) => { if (category === "stderr" || args.showDevDebugOutput) this.sendEvent(new OutputEvent(text, category)); },
 				});
 			try {
