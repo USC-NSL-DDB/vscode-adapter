@@ -14,7 +14,7 @@ suite("Canonical adapter entrypoint", function () {
 		const config = join(directory, "ddb.yaml");
 		const executable = join(directory, "main");
 		if (backend === "gdb") {
-			await writeFile(join(directory, "main.c"), "int main(void) { int value = 1; return value; }\n");
+			await writeFile(join(directory, "main.c"), "int entry_target(void) { return 1; }\nint main(void) { int value = entry_target(); return value; }\n");
 			execFileSync("cc", ["-g", "-O0", join(directory, "main.c"), "-o", executable]);
 		}
 		await writeFile(config, `Framework: unspecified\nConf:\n  auto_shutdown: false\n  on_exit: kill\n  base_dir: ${JSON.stringify(join(directory, "base"))}\n  log_dir: ${JSON.stringify(join(directory, "logs"))}\n  Debugger:\n    backend: ${backend}\nStaticSessions:\n  - tag: stdio\n    alias: stdio\n    hash: stdio-group\n    pid: 4501\n${backend === "gdb" ? `    start_mode: binary\n    binary_path: ${JSON.stringify(executable)}\n    stop_at_entry: true\n` : ""}`);
@@ -51,10 +51,11 @@ suite("Canonical adapter entrypoint", function () {
 		});
 		try {
 			assert.equal((await request("initialize", { adapterID: "ddb", pathFormat: "path", linesStartAt1: true, columnsStartAt1: true })).success, true);
-			const launched = await request("launch", { ddbpath: process.env.DDB_TEST_BINARY, configFilePath: config, cwd: directory, debugger_args: ["--console-level", "warn"], autorun: backend === "gdb" ? ["set print elements 33"] : [], pathSubstitutions: backend === "gdb" ? { "/old build path": "/new source path" } : {} });
+			const launched = await request("launch", { ddbpath: process.env.DDB_TEST_BINARY, configFilePath: config, cwd: directory, stopAtEntry: backend === "gdb" ? "entry_target" : false, debugger_args: ["--console-level", "warn"], autorun: backend === "gdb" ? ["set print elements 33"] : [], pathSubstitutions: backend === "gdb" ? { "/old build path": "/new source path" } : {} });
 			assert.equal(launched.success, true, launched.message);
 			assert.ok(events.includes("initialized"));
-			assert.equal((await request("configurationDone")).success, true);
+			const configured = await request("configurationDone");
+			assert.equal(configured.success, true, configured.message);
 			let threads = await request("threads");
 			for (let attempt = 0; threads.body.threads.length === 0 && attempt < 100; attempt++) { await delay(20); threads = await request("threads"); }
 			assert.equal(threads.body.threads.length, 1);
@@ -66,6 +67,14 @@ suite("Canonical adapter entrypoint", function () {
 			const groups = await request("ddb.getGroups");
 			assert.equal(groups.success, true, groups.message);
 			assert.equal(groups.body.groups.length, 1);
+			if (backend === "gdb") {
+				let breakpoints = await request("ddb.getBreakpoints");
+				for (let attempt = 0; breakpoints.body.bkpts.length === 0 && attempt < 100; attempt++) { await delay(20); breakpoints = await request("ddb.getBreakpoints"); }
+				assert.equal(breakpoints.body.bkpts.length, 1, "stopAtEntry must install its temporary function breakpoint");
+				assert.equal(breakpoints.body.bkpts[0].location.src, "entry_target");
+				assert.equal((await request("configurationDone")).success, true);
+				assert.equal((await request("ddb.getBreakpoints")).body.bkpts.length, 1, "configurationDone must not duplicate entry breakpoints");
+			}
 			assert.equal((await request("ddb.status")).body.status, "up");
 			if (backend === "gdb") {
 				const shown = await request("evaluate", { expression: "show print elements", context: "repl", frameId: stack.body.stackFrames[0].id });
@@ -76,6 +85,17 @@ suite("Canonical adapter entrypoint", function () {
 				assert.equal(substitutions.success, true, substitutions.message);
 				for (let attempt = 0; !output.some(line => line.includes("/old build path")) && attempt < 100; attempt++) await delay(20);
 				assert.ok(output.some(line => line.includes("/old build path") && line.includes("/new source path")), output.join(""));
+			}
+			if (backend === "gdb") {
+				const before = events.filter(event => event === "stopped").length;
+				assert.equal((await request("continue", { threadId: threads.body.threads[0].id })).success, true);
+				for (let attempt = 0; events.filter(event => event === "stopped").length === before && attempt < 100; attempt++) await delay(20);
+				assert.ok(events.filter(event => event === "stopped").length > before, "entry breakpoint must stop execution");
+				const entryStack = await request("stackTrace", { threadId: threads.body.threads[0].id });
+				assert.ok(entryStack.body.stackFrames[0].name.includes("entry_target"));
+				let consumed = await request("ddb.getBreakpoints");
+				for (let attempt = 0; consumed.body.bkpts.length && attempt < 100; attempt++) { await delay(20); consumed = await request("ddb.getBreakpoints"); }
+				assert.equal(consumed.body.bkpts.length, 0, "entry breakpoint must be temporary");
 			}
 			const disconnected = await request("disconnect");
 			assert.equal(disconnected.success, true, disconnected.message);

@@ -1,6 +1,7 @@
+import { setTimeout as delay } from "node:timers/promises";
 import dap from "vscode-debugadapter";
 import type { DebugProtocol } from "vscode-debugprotocol";
-import type { ExecuteRequest, ExecutionState, Thread as DdbThread, StateSyncItem, OutputEvent as DdbOutput } from "@ddb-debugger/api-client";
+import type { Target, ExecuteRequest, ExecutionState, Thread as DdbThread, StateSyncItem, OutputEvent as DdbOutput } from "@ddb-debugger/api-client";
 import { DdbConnection } from "./connection.mjs";
 import { DdbJump } from "./jump.mjs";
 import { DdbExecution } from "./execution.mjs";
@@ -20,6 +21,7 @@ export interface CanonicalLaunchArguments extends DebugProtocol.LaunchRequestArg
 	apiEndpoint?: string;
 	apiToken?: string;
 	distributedStack?: boolean;
+	stopAtEntry?: boolean | string;
 	showDevDebugOutput?: boolean;
 	pairedBreakpointRequests?: boolean;
 	autorun?: string[];
@@ -54,6 +56,7 @@ export class CanonicalDebugSession extends DebugSession {
 	private supportsInvalidatedEvent = false;
 	private controlEpoch = 0;
 	private configured = false;
+	private entrySetup?: Promise<void>;
 	private distributed = false;
 	private readonly pendingStops = new Map<string, ExecutionState>();
 	private readonly stopRevisions = new Map<string, string>();
@@ -268,13 +271,39 @@ export class CanonicalDebugSession extends DebugSession {
 		return this.inspection;
 	}
 
-	protected override configurationDoneRequest(response: DebugProtocol.ConfigurationDoneResponse): void {
-		this.configured = true;
-		this.sendResponse(response);
-		for (const [threadId, state] of this.pendingStops) {
-			if (this.connection?.state.get("thread", threadId)?.state === "THREAD_STATE_STOPPED") this.stopped(threadId, state);
+	protected override async configurationDoneRequest(response: DebugProtocol.ConfigurationDoneResponse): Promise<void> {
+		try {
+			const entry = this.startupOptions?.stopAtEntry;
+			const functionName = entry === true ? "main" : typeof entry === "string" ? entry : undefined;
+			if (functionName) await (this.entrySetup ??= this.installEntryBreakpoint(functionName));
+			this.configured = true;
+			this.sendResponse(response);
+			for (const [threadId, state] of this.pendingStops) {
+				if (this.connection?.state.get("thread", threadId)?.state === "THREAD_STATE_STOPPED") this.stopped(threadId, state);
+			}
+			this.pendingStops.clear();
+		} catch (error) { this.sendErrorResponse(response, 1, `Could not configure entry breakpoint: ${String(error)}`); }
+	}
+
+	private async installEntryBreakpoint(functionName: string): Promise<void> {
+		const connection = this.model.connection;
+		const deadline = Date.now() + 30000;
+		for (;;) {
+			if (this.closing) throw new Error("DDB disconnected during entry setup");
+			const sessions = connection.state.all("session");
+			if (sessions.length && sessions.every(session => ["SESSION_STATUS_READY", "SESSION_STATUS_STOPPED", "SESSION_STATUS_RUNNING"].includes(session.status ?? ""))) break;
+			if (Date.now() >= deadline) throw new Error("Timed out waiting for DDB sessions before entry setup");
+			await delay(25);
 		}
-		this.pendingStops.clear();
+		await Promise.all(this.sessionSetup.values());
+		const targets: Target[] = [
+			...connection.state.all("group").map(group => ({ group: { groupId: group.groupId } })),
+			...connection.state.all("session").filter(session => !session.groupId).map(session => ({ session: { sessionId: session.sessionId } })),
+		];
+		if (!targets.length) throw new Error("No DDB sessions or groups are available");
+		await connection.complete(await connection.client.call("DebuggerControlService.CreateBreakpoint", {
+			target: { multiple: { targets } }, breakpoint: { function: { functionName }, temporary: true, enabled: true },
+		}));
 	}
 
 	protected override async setFunctionBreakPointsRequest(response: DebugProtocol.SetFunctionBreakpointsResponse, args: DebugProtocol.SetFunctionBreakpointsArguments): Promise<void> {

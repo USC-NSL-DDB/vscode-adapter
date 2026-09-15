@@ -511,3 +511,29 @@ thread, as required by the current numeric memory-reference convention.
 Neither code nor xvfb-run is on PATH in the current environment. The memory-view
 UI and broader extension-host checks remain unverified and need test setup.
 The previously built development VSIX predates this memory change.
+
+## Entry-stop configuration checkpoint
+
+The legacy DDB launcher selected RunCommand.NONE, but configurationDone still
+installed a temporary function breakpoint for stopAtEntry. The canonical
+adapter now does the same: true selects main, and a string selects that
+function. It waits for the initial sessions and their startup commands, uses
+explicit group/session targets, and does not automatically resume execution.
+Repeated configurationDone requests share the same setup operation. Initial
+process stopping remains controlled by DDB YAML.
+
+The stdio regression first showed that no entry breakpoint was installed.
+Adding insertion exposed a startup race with GDB readiness, which the wait
+resolves. The real GDB test checks the named entry breakpoint appears once,
+stops at the function after continue, and is consumed on that hit.
+
+The configuration audit also traced target, arguments and terminal through
+legacy_gdb.ts into MI2.load: that DDB implementation accepted but did not use
+those arguments. The launcher set isSSH to false and never used args.ssh.
+The manifest now deprecates those inherited launch settings in favor of DDB
+YAML. This finding does not remove any formerly active DDB behavior from the
+migration scope. Diagnostic printCalls and telemetry remain to be audited.
+
+Validation for entry setup: 86 unit tests and six canonical integration tests
+pass with the patched DDB debug binary. The development VSIX must be rebuilt
+before it includes this change.

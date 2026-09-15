@@ -247,15 +247,18 @@
             "properties": {
               "target": {
                 "type": "string",
-                "description": "Path of executable"
+                "description": "Path of executable",
+                "deprecationMessage": "The DDB YAML launcher does not use this inherited GDB setting. Configure target processes and remote execution in the DDB YAML configuration."
               },
               "arguments": {
                 "type": "string",
-                "description": "Arguments to append after the executable. You can also use pipes."
+                "description": "Arguments to append after the executable. You can also use pipes.",
+                "deprecationMessage": "The DDB YAML launcher does not use this inherited GDB setting. Configure target processes and remote execution in the DDB YAML configuration."
               },
               "terminal": {
                 "type": "string",
-                "description": "Leave this field undefined to keep program output in the vscode console at the bottom. If this is set to empty string the program will spawn in a new console using x-terminal-emulator on linux, otherwise with the specified terminal. On windows setting this to an empty string spawns the program in a console, but no other console is supported."
+                "description": "Leave this field undefined to keep program output in the vscode console at the bottom. If this is set to empty string the program will spawn in a new console using x-terminal-emulator on linux, otherwise with the specified terminal. On windows setting this to an empty string spawns the program in a console, but no other console is supported.",
+                "deprecationMessage": "The DDB YAML launcher does not use this inherited GDB setting. Configure target processes and remote execution in the DDB YAML configuration."
               },
               "cwd": {
                 "type": "string",
@@ -327,7 +330,7 @@
                   "boolean",
                   "string"
                 ],
-                "description": "Whether debugger should stop at application entry point",
+                "description": "Install a temporary breakpoint at main (true) or the named function after initial DDB sessions are ready. Does not resume execution; initial process stopping is configured in DDB YAML.",
                 "default": false
               },
               "ssh": {
@@ -406,7 +409,8 @@
                     "type": "string",
                     "description": "Content will be executed on the SSH host before the debugger call."
                   }
-                }
+                },
+                "deprecationMessage": "The DDB YAML launcher does not use this inherited GDB setting. Configure target processes and remote execution in the DDB YAML configuration."
               },
               "apiEndpoint": {
                 "type": "string",
@@ -503,7 +507,7 @@
                   "boolean",
                   "string"
                 ],
-                "description": "Whether debugger should stop at application entry point",
+                "description": "Install a temporary breakpoint at main (true) or the named function after initial DDB sessions are ready. Does not resume execution; initial process stopping is configured in DDB YAML.",
                 "default": false
               },
               "ssh": {
