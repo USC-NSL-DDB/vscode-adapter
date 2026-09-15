@@ -732,3 +732,25 @@ failure item remains open.
 
 Validation: 105 unit tests, eight canonical integration tests, and the real
 VS Code scenarios pass at this checkpoint.
+
+
+## Breakpoint lifecycle checkpoint
+
+The real VS Code test now starts with unrelated disabled source and function
+breakpoints and checks they survive DDB disconnect. DDB's selected source
+breakpoints still receive the existing session-end cleanup. The termination
+handler previously removed every breakpoint in VS Code; it now limits removal
+to source entries with a DDB target selection.
+
+The test also exposed startup pairing through activeDebugSession before that
+property was available. Trackers now retain their owning DebugSession and send
+paired requests through it. Breakpoint callbacks handle shutdown rejection and
+skip cache/decorations updates when a response arrives after shutdown begins.
+
+The test removes unrelated fixtures during Enable All Breakpoints and restores
+them before disconnect, so that command does not turn the fixtures into new DDB
+breakpoint-selection prompts. No adapter empty-set bypass was retained.
+
+Validation: 105 unit tests and the real VS Code extension-host scenarios pass.
+VS Code can report cancellation of the overlapping breakpoint request during
+disconnect; no unhandled rejection or late sidebar-refresh error is accepted.

@@ -573,7 +573,7 @@ function convertToVSCodeBreakpoint(bp: any, source: any): vscode.Breakpoint {
   );
 }
 
-async function handleSetBreakpoints(message: any) {
+async function handleSetBreakpoints(message: any, session: vscode.DebugSession, isClosing: () => boolean) {
   console.log("Handling setBreakpoints message: ", message);
   console.log("debug0", message.arguments);
   const messageArguments =
@@ -646,12 +646,9 @@ async function handleSetBreakpoints(message: any) {
 
   // Send the modified setBreakpoints request to the debug adapter
   message.arguments.breakpoints = breakpointsToSend;
-  const session = vscode.debug.activeDebugSession;
-  if (!session) {
-    return;
-  }
   const response: DebugProtocol.SetBreakpointsResponse =
     await session.customRequest("setSessionBreakpoints", message);
+  if (isClosing()) return;
   console.log("debug5", response);
   // add sessionids to vscode breakpoints
   for (const vscodebp of vscode.debug.breakpoints) {
@@ -674,7 +671,7 @@ async function handleSetBreakpoints(message: any) {
     }
   }
   // Refresh BreakpointManager to update the breakpoints panel
-  await BreakpointManager.getInstance().immediateUpdateAll();
+  if (vscode.debug.activeDebugSession?.id === session.id) await BreakpointManager.getInstance().immediateUpdateAll();
   updateInlineDecorations();
 }
 
@@ -683,14 +680,20 @@ class MyDebugAdapterTrackerFactory
   createDebugAdapterTracker(
     session: vscode.DebugSession
   ): vscode.ProviderResult<vscode.DebugAdapterTracker> {
-    return new MyDebugAdapterTracker();
+    return new MyDebugAdapterTracker(session);
   }
 }
 class MyDebugAdapterTracker implements vscode.DebugAdapterTracker {
+  private closing = false;
+  constructor(private readonly session: vscode.DebugSession) {}
+  onWillStopSession() { this.closing = true; }
   async onWillReceiveMessage(message: any) {
+    if (message.command === "disconnect" || message.command === "terminate") this.closing = true;
     if (message.command === "setBreakpoints") {
-      // Intercept the setBreakpoints request
-      await handleSetBreakpoints(message);
+      try { await handleSetBreakpoints(message, this.session, () => this.closing); }
+      catch (error) {
+        if (!this.closing) vscode.window.showErrorMessage(`Could not update DDB breakpoints: ${String(error)}`);
+      }
     }
     if (message.command === "variables") {
       const varRef = message.arguments?.variablesReference;
@@ -1031,9 +1034,12 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.debug.onDidTerminateDebugSession((session) => {
       if (session.type === "ddb") {
-        // Remove all breakpoints from the UI
-        const allBreakpoints = vscode.debug.breakpoints;
-        vscode.debug.removeBreakpoints(allBreakpoints);
+        // Only remove source breakpoints configured with this DDB session's targets.
+        const selectedBreakpoints = vscode.debug.breakpoints.filter(bp =>
+          bp instanceof vscode.SourceBreakpoint &&
+          (breakpointSelectionsMap.get(getBreakpointId(bp))?.subbkpts.length ?? 0) > 0
+        );
+        vscode.debug.removeBreakpoints(selectedBreakpoints);
 
         // Clear the maps
         breakpointSelectionsMap.clear();

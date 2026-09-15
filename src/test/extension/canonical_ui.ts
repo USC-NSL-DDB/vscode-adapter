@@ -28,6 +28,7 @@ export async function run(): Promise<void> {
 		createDebugAdapterTracker: () => ({ onDidSendMessage: message => { messages.push(message); } }),
 	});
 	let session: vscode.DebugSession | undefined;
+	const unrelated: vscode.Breakpoint[] = [];
 	try {
 		const extension = vscode.extensions.getExtension("ddb.ddb-debugger");
 		assert.ok(extension, "DDB extension must be installed in the test host");
@@ -37,6 +38,9 @@ export async function run(): Promise<void> {
 		for (const command of ["ddbSessionsExplorer.refresh", "ddbSessionsExplorer.toggleGrouping", "ddbBreakpointsExplorer.refresh", "ddb.jumpToFocusedFrame"]) assert.ok(commands.includes(command), command);
 		const source = join(directory, "main.c");
 		const executable = join(directory, "main");
+		unrelated.push(new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(join(directory, "unrelated.c")), new vscode.Position(0, 0)), false));
+		unrelated.push(new vscode.FunctionBreakpoint("unrelated_function", false));
+		vscode.debug.addBreakpoints(unrelated);
 		await writeFile(source, "#include <unistd.h>\nint main(void) {\n int counter = 1;\n while (counter) {\n  counter++;\n  sleep(1);\n }\n return 0;\n}\n");
 		execFileSync("cc", ["-g", "-O0", source, "-o", executable]);
 		const config = join(directory, "ddb.yaml");
@@ -72,15 +76,20 @@ export async function run(): Promise<void> {
 		await until(async () => !(await hasBreakpoint()), "disabling must remove the backend breakpoint");
 		await delay(500);
 		assert.ok(vscode.debug.breakpoints.some(bp => bp instanceof vscode.SourceBreakpoint && bp.location.uri.fsPath === source && !bp.enabled), "disabled source breakpoint must remain in VS Code");
+		vscode.debug.removeBreakpoints(unrelated);
 		await vscode.commands.executeCommand("workbench.debug.viewlet.action.enableAllBreakpoints");
 		await until(hasBreakpoint, "re-enabling must retain the selected group and reinstall the breakpoint");
+		vscode.debug.addBreakpoints(unrelated);
 		await vscode.debug.stopDebugging(session);
 		await until(() => !vscode.debug.activeDebugSession, "disconnect must remove the debug session");
 		await delay(1200);
 		assert.deepEqual(unhandled, [], "UI refreshes must not produce unhandled rejections");
+		for (const breakpoint of unrelated) assert.ok(vscode.debug.breakpoints.some(item => item.id === breakpoint.id), "DDB disconnect must preserve unrelated breakpoints");
+		assert.ok(!vscode.debug.breakpoints.some(item => item.id === sourceBreakpoint.id), "session-targeted DDB source breakpoints must still be cleaned up");
 		console.log("Canonical extension-host activation, sidebar, navigation, stepping, breakpoint selection/disable/re-enable and disconnect passed");
 	} finally {
 		if (session) await vscode.debug.stopDebugging(session);
+		vscode.debug.removeBreakpoints(unrelated);
 		tracker.dispose();
 		process.off("unhandledRejection", onUnhandled);
 		await rm(directory, { recursive: true, force: true });
