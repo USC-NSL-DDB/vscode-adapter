@@ -51,9 +51,10 @@ suite("Canonical adapter entrypoint", function () {
 		});
 		try {
 			assert.equal((await request("initialize", { adapterID: "ddb", pathFormat: "path", linesStartAt1: true, columnsStartAt1: true })).success, true);
-			const launched = await request("launch", { ddbpath: process.env.DDB_TEST_BINARY, configFilePath: config, cwd: directory, stopAtEntry: backend === "gdb" ? "entry_target" : false, debugger_args: ["--console-level", "warn"], autorun: backend === "gdb" ? ["set print elements 33"] : [], pathSubstitutions: backend === "gdb" ? { "/old build path": "/new source path" } : {} });
+			const launched = await request("launch", { printCalls: true, ddbpath: process.env.DDB_TEST_BINARY, configFilePath: config, cwd: directory, stopAtEntry: backend === "gdb" ? "entry_target" : false, debugger_args: ["--console-level", "warn"], autorun: backend === "gdb" ? ["set print elements 33"] : [], pathSubstitutions: backend === "gdb" ? { "/old build path": "/new source path" } : {} });
 			assert.equal(launched.success, true, launched.message);
 			assert.ok(events.includes("initialized"));
+			assert.ok(output.some(line => line.startsWith("[DDB API] ")), "printCalls must emit canonical request diagnostics");
 			const configured = await request("configurationDone");
 			assert.equal(configured.success, true, configured.message);
 			let threads = await request("threads");

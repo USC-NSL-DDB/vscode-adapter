@@ -2,6 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import dap from "vscode-debugadapter";
 import type { DebugProtocol } from "vscode-debugprotocol";
 import type { Target, ExecuteRequest, ExecutionState, Thread as DdbThread, StateSyncItem, OutputEvent as DdbOutput } from "@ddb-debugger/api-client";
+import { diagnosticFetch } from "./diagnostics.mjs";
 import { DdbConnection } from "./connection.mjs";
 import { DdbJump } from "./jump.mjs";
 import { DdbExecution } from "./execution.mjs";
@@ -23,6 +24,7 @@ export interface CanonicalLaunchArguments extends DebugProtocol.LaunchRequestArg
 	distributedStack?: boolean;
 	stopAtEntry?: boolean | string;
 	showDevDebugOutput?: boolean;
+	printCalls?: boolean;
 	pairedBreakpointRequests?: boolean;
 	autorun?: string[];
 	debugger_args?: string[];
@@ -83,9 +85,10 @@ export class CanonicalDebugSession extends DebugSession {
 			this.distributed = args.distributedStack ?? true;
 			this.pairedBreakpoints = args.pairedBreakpointRequests ?? false;
 			if (!args.apiEndpoint && !args.configFilePath) throw new Error("Set configFilePath for managed DDB, or apiEndpoint for an existing server");
+			const fetch = args.printCalls ? diagnosticFetch(text => this.sendEvent(new OutputEvent(text, "console"))) : undefined;
 			const connection = args.apiEndpoint
-				? await DdbConnection.connect({ endpoint: args.apiEndpoint, bearerToken: args.apiToken ?? process.env.DDB_API_TOKEN })
-				: await DdbConnection.launch({ binary: args.ddbpath ?? "ddb", configFilePath: args.configFilePath!, cwd: args.cwd ?? process.cwd(), env: args.env, debuggerArgs: args.debugger_args,
+				? await DdbConnection.connect({ endpoint: args.apiEndpoint, bearerToken: args.apiToken ?? process.env.DDB_API_TOKEN, fetch })
+				: await DdbConnection.launch({ binary: args.ddbpath ?? "ddb", configFilePath: args.configFilePath!, cwd: args.cwd ?? process.cwd(), env: args.env, debuggerArgs: args.debugger_args, fetch,
 					onOutput: (category, text) => { if (category === "stderr" || args.showDevDebugOutput) this.sendEvent(new OutputEvent(text, category)); },
 				});
 			try {

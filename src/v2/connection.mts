@@ -18,6 +18,7 @@ export interface ManagedOptions {
 	env?: Record<string, string | null>;
 	startupTimeoutMs?: number;
 	debuggerArgs?: string[];
+	fetch?: typeof globalThis.fetch;
 	onOutput?: (category: "stdout" | "stderr", text: string) => void;
 }
 
@@ -130,7 +131,7 @@ export class DdbConnection {
 			if (endpoint.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(endpoint.hostname) || !endpoint.port || endpoint.port === "0") {
 				throw new Error("Managed DDB did not report a loopback endpoint with an allocated port");
 			}
-			client = new DdbClient({ endpoint: report.endpoint, bearerToken });
+			client = new DdbClient({ endpoint: report.endpoint, bearerToken, fetch: options.fetch });
 			const handshake = await client.handshake();
 			if (handshake.serverInfo.serverInstanceId !== report.server_instance_id) throw new Error("DDB handshake does not match startup report identity");
 			return new DdbConnection(client, handshake, { child, directory });

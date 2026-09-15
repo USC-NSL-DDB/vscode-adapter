@@ -312,7 +312,7 @@
               },
               "printCalls": {
                 "type": "boolean",
-                "description": "Prints all GDB calls to the console",
+                "description": "Print canonical DDB API request methods, operation paths and HTTP status to the Debug Console. Excludes headers and payloads.",
                 "default": false
               },
               "showDevDebugOutput": {
@@ -453,7 +453,7 @@
               },
               "printCalls": {
                 "type": "boolean",
-                "description": "Prints all GDB calls to the console",
+                "description": "Print canonical DDB API request methods, operation paths and HTTP status to the Debug Console. Excludes headers and payloads.",
                 "default": false
               },
               "showDevDebugOutput": {

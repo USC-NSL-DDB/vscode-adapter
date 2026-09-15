@@ -619,3 +619,21 @@ peer frame and scope handles across an actual DDB step and reads them afterward.
 Validation: 98 unit tests, six canonical integration tests with GDB and mock,
 and the real VS Code extension-host scenarios pass. No backend change was
 needed for this checkpoint.
+
+
+## Request diagnostics checkpoint
+
+The inherited printCalls setting was advertised but ignored by the canonical
+adapter. It now wraps the SDK fetch transport for both managed launch and
+external attach. The Debug Console receives numbered request methods, API
+operation paths, and HTTP response status. Headers, query strings, payloads,
+and transport error text are excluded. Streaming response bodies pass through
+untouched. showDevDebugOutput continues to control managed process stdout;
+managed process stderr is always shown.
+
+Both mock and GDB stdio tests reproduced missing diagnostics before the fix.
+Transport unit tests verify request identity, unread response bodies, and
+credential/payload exclusion. This setting now describes canonical API calls
+rather than obsolete MI command transport.
+
+Validation: 100 unit tests and six canonical integration tests pass.
