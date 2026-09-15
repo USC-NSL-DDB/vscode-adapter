@@ -45,8 +45,8 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Source/function breakpoints | Create/Update/DeleteBreakpoint operations | DAP source creation, condition replacement and deletion tested; function support pending |
 | Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Group selection and paired DAP/custom requests tested in both arrival orders |
 | Conditions, hit counts, enable/disable, logpoints | Typed fields where supported; logpoints need explicit implementation | Pending |
-| Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | Next tested; remaining actions and DAP handlers pending |
-| Signals and session kill | ListSignals and Execute SIGNAL | Pending |
+| Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | Next and session-specific DAP continue/pause tested; all-stop coordination and other actions pending |
+| Signals and session kill | ListSignals and v2 raw signal command | DAP list/validation tested on mock/GDB; SIGKILL tested on GDB |
 | Jump to line | Execute JUMP with source location | Pending |
 | Debug Console, autorun, path substitution | Canonical raw-command escape hatch where typed APIs do not cover the command | Pending |
 | Memory reads | ReadMemory | Pending |
@@ -146,3 +146,18 @@ Full breakpoint parity remains unproven:
   installation operation succeeds. Its projection derives verified from direct
   session sub-breakpoints only. The adapter preserves that flag; correcting the
   status and testing an actual group breakpoint hit remain required.
+
+## Session-control checkpoint
+
+The canonical adapter now exposes session/group lists, frame metadata and thread
+selection through DAP custom requests. Session-specific continue/pause preserve
+the other session's stopped state. The binary test verifies that behavior,
+signal listing, invalid signal rejection, and SIGKILL followed by thread removal
+while the other session remains alive. The frontend still needs to consume these
+endpoints and replace its bit-packed frame decoding.
+
+The typed SIGNAL implementation quotes the signal name before passing it to the
+GDB CLI `signal` command. Real GDB rejects the resulting quoted name. Signal
+sending therefore uses one canonical ExecuteRawCommand mutation with a validated
+signal token. It does not retry the failed typed mutation or use a legacy route.
+This backend encoding defect should be corrected before removing the escape hatch.

@@ -70,6 +70,20 @@ suite("Canonical DDB binary", function () {
 				assert.equal(dapStack.success, true, dapStack.message);
 				const dapFrame = dapStack.body.stackFrames[0];
 				assert.equal(dapFrame.source.path, source);
+				const metadata = await dap.request("ddb.frameMetadata", { frameId: dapFrame.id });
+				assert.equal(metadata.success, true, metadata.message);
+				assert.equal(metadata.body.thread_id, dapThreadId);
+				assert.equal(metadata.body.file, source);
+				const uiSessions = await dap.request("ddb.getSessions");
+				assert.equal(uiSessions.success, true, uiSessions.message);
+				assert.equal(uiSessions.body.sessions.length, 2);
+				assert.ok(uiSessions.body.sessions.some((session: {sid: number}) => session.sid === metadata.body.session_id));
+				const selectedThread = await dap.request("ddb.selectThread", { threadId: dapThreadId });
+				assert.equal(selectedThread.success, true, selectedThread.message);
+				const signals = await dap.request("list-signals", { sessionId: metadata.body.session_id });
+				assert.equal(signals.success, true, signals.message);
+				assert.ok(signals.body.signals.some((signal: {name: string}) => signal.name === "SIGINT"));
+				assert.equal((await dap.request("send-signal", { sessionId: metadata.body.session_id, signal: "" })).success, false);
 				const dapScopes = await dap.request("scopes", { frameId: dapFrame.id });
 				assert.equal(dapScopes.success, true, dapScopes.message);
 				for (const scope of dapScopes.body.scopes) {
@@ -169,6 +183,22 @@ suite("Canonical DDB binary", function () {
 					assert.equal(element.success, true, element.message);
 					assert.equal(element.body.result, "202");
 				}
+				const controlledThread = c.state.all("thread").find(item => item.threadId === thread.threadId)!;
+				const continued = await dap.request("continue", { sessionId: metadata.body.session_id });
+				assert.equal(continued.success, true, continued.message);
+				assert.equal(continued.body.allThreadsContinued, false);
+				await until(() => c.state.get("thread", controlledThread.threadId!)?.state === "THREAD_STATE_RUNNING", "session continue");
+				assert.ok(c.state.all("thread").some(item => item.threadId !== controlledThread.threadId && item.state === "THREAD_STATE_STOPPED"));
+				const paused = await dap.request("pause", { sessionId: metadata.body.session_id });
+				assert.equal(paused.success, true, paused.message);
+				await until(() => c.state.get("thread", controlledThread.threadId!)?.state === "THREAD_STATE_STOPPED", "session pause");
+				if (backend === "gdb") {
+					const killed = await dap.request("send-signal", { sessionId: metadata.body.session_id, signal: "SIGKILL" });
+					assert.equal(killed.success, true, killed.message);
+					await until(() => !c.state.get("thread", controlledThread.threadId!), "killed session thread removal");
+					assert.equal(c.state.all("thread").length, 1);
+				}
+
 			} catch (error) {
 				console.error(output.join(""));
 				if (error && typeof error === "object" && "operation" in error) console.error(JSON.stringify(error.operation, null, 2));

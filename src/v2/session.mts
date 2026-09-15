@@ -207,6 +207,50 @@ export class CanonicalDebugSession extends DebugSession {
 	}
 
 	protected override async customRequest(command: string, response: DebugProtocol.Response, args: any): Promise<void> {
+		if (command === "ddb.getSessions") {
+			await this.reply(response, async () => ({ sessions: this.model.connection.state.all("session").map(session => ({
+				sid: this.model.sessionHandle(session.sessionId!), tag: session.displayName ?? "Session", alias: session.displayName ?? "Session",
+				status: (session.status ?? "SESSION_STATUS_UNSPECIFIED").replace("SESSION_STATUS_", "").toLowerCase(),
+				group: session.groupId ? { valid: true, id: this.model.groupHandles.put(session.groupId, session.groupId), hash: session.groupId } : undefined,
+			})) }));
+			return;
+		}
+		if (command === "ddb.frameMetadata") {
+			await this.reply(response, async () => {
+				const context = this.model.frames.get(args.frameId);
+				return { session_id: this.model.sessionHandle(context.sessionId), thread_id: this.model.threadHandle(context.threadId),
+					level: context.frame.level ?? 0, file: context.frame.location?.path, line: context.frame.location?.line,
+					afterBoundary: !!context.boundary && context.boundary !== "DISTRIBUTED_BOUNDARY_KIND_UNSPECIFIED", boundaryLabel: context.boundaryLabel };
+			});
+			return;
+		}
+		if (command === "ddb.selectThread") {
+			await this.reply(response, async () => {
+				const target = this.model.threadTarget(args.threadId);
+				await this.model.connection.complete(await this.model.connection.client.call("DebuggerControlService.SelectThread", { target }));
+			});
+			return;
+		}
+		if (command === "list-signals") {
+			await this.reply(response, async () => ({ signals: (await this.model.connection.client.collect("DebuggerService.ListSignals", {
+				target: this.model.sessionTarget(args.sessionId),
+			})).map(signal => ({ ...signal, desc: signal.description })) }));
+			return;
+		}
+		if (command === "send-signal") {
+			await this.reply(response, async () => {
+				if (typeof args.signal !== "string" || !/^(?:SIG[A-Z0-9]+|[0-9]+)$/.test(args.signal)) throw new Error("A valid signal name or number is required");
+				const connection = this.model.connection;
+				if (!connection.handshake.capabilities.supportedOperations?.includes("OPERATION_KIND_RAW_COMMAND")) throw new Error("DDB does not support signal commands");
+				// The current typed SIGNAL path quotes its argument before the CLI
+				// signal command, which GDB rejects. Use one v2 mutation, never retry.
+				await connection.complete(await connection.client.call("DebuggerControlService.ExecuteRawCommand", {
+					target: this.model.sessionTarget(args.sessionId), dialect: "RAW_COMMAND_DIALECT_GDB_MI", command: `-send-signal ${args.signal}`,
+				}));
+			});
+			return;
+		}
+
 		if (command === "ddb.getGroups") {
 			await this.reply(response, async () => ({ groups: this.model.connection.state.all("group").map(group => ({
 				id: this.model.groupHandles.put(group.groupId!, group.groupId!), alias: group.displayName ?? "Group",
@@ -237,11 +281,11 @@ export class CanonicalDebugSession extends DebugSession {
 	protected override async stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments): Promise<void> {
 		await this.execute(response, () => ({ target: this.model.threadTarget(args.threadId), action: "EXECUTION_ACTION_STEP_OUT" }));
 	}
-	protected override async continueRequest(response: DebugProtocol.ContinueResponse, _args: DebugProtocol.ContinueArguments): Promise<void> {
-		await this.execute(response, () => ({ target: { broadcast: {} }, action: "EXECUTION_ACTION_CONTINUE" }), { allThreadsContinued: true });
+	protected override async continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments & { sessionId?: number; session_id?: number }): Promise<void> {
+		await this.execute(response, () => ({ target: args.sessionId !== undefined || args.session_id !== undefined ? this.model.sessionTarget((args.sessionId ?? args.session_id)!) : { broadcast: {} }, action: "EXECUTION_ACTION_CONTINUE" }), { allThreadsContinued: args.sessionId === undefined && args.session_id === undefined });
 	}
-	protected override async pauseRequest(response: DebugProtocol.PauseResponse, _args: DebugProtocol.PauseArguments): Promise<void> {
-		await this.execute(response, () => ({ target: { broadcast: {} }, action: "EXECUTION_ACTION_INTERRUPT" }));
+	protected override async pauseRequest(response: DebugProtocol.PauseResponse, args: DebugProtocol.PauseArguments & { sessionId?: number; session_id?: number }): Promise<void> {
+		await this.execute(response, () => ({ target: args.sessionId !== undefined || args.session_id !== undefined ? this.model.sessionTarget((args.sessionId ?? args.session_id)!) : { broadcast: {} }, action: "EXECUTION_ACTION_INTERRUPT" }));
 	}
 	private async execute(response: DebugProtocol.Response, makeRequest: () => ExecuteRequest, body?: object): Promise<void> {
 		await this.reply(response, async () => {
