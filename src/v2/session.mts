@@ -330,6 +330,7 @@ export class CanonicalDebugSession extends DebugSession {
 			if (args.context !== "repl") return this.model.evaluate(args);
 			this.controlEpoch++;
 			const frame = args.frameId === undefined ? undefined : this.model.frames.get(args.frameId);
+			if (frame && !frame.frame.frameId) throw new Error("Select an executable stack frame to run a console command");
 			const target = frame ? { thread: { threadId: frame.threadId } } : { currentThread: {} };
 			return { result: await this.commands!.run(args.expression, target, frame), variablesReference: 0 };
 		});

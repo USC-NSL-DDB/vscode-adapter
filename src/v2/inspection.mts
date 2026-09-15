@@ -100,12 +100,13 @@ export class DdbInspection {
 		const result = {
 			totalFrames: frames.length,
 			stackFrames: await Promise.all(frames.slice(start, args.levels ? start + args.levels : undefined).map(async entry => {
-				const frame = entry.frame;
-				if (!frame?.frameId || !entry.threadId || !entry.sessionId) throw new Error("DDB omitted a stack frame's identity");
+				const boundaryOnly = !entry.frame && !!entry.boundary && entry.boundary !== "DISTRIBUTED_BOUNDARY_KIND_UNSPECIFIED";
+				const frame: Frame = entry.frame ?? { synthetic: true };
+				if ((!frame.frameId && !boundaryOnly) || !entry.threadId || !entry.sessionId) throw new Error("DDB omitted a stack frame's identity");
 				check(entry.threadId);
 				const context: FrameContext = { frame, threadId: entry.threadId, sessionId: entry.sessionId, boundary: entry.boundary, boundaryLabel: entry.boundaryLabel };
 				this.frameChecks.set(context, () => check(context.threadId));
-				const key = JSON.stringify([frame.frameId, entry.index, entry.boundary, entry.boundaryLabel]);
+				const key = JSON.stringify([frame.frameId, entry.sessionId, entry.threadId, entry.index, entry.boundary, entry.boundaryLabel]);
 				const sourceKey = JSON.stringify([entry.sessionId, frame.location?.path, frame.location?.sourceReference]);
 				let source = sourceRequests.get(sourceKey);
 				if (!source) { source = this.stackSource(frame.location, entry.sessionId); sourceRequests.set(sourceKey, source); }
@@ -113,7 +114,9 @@ export class DdbInspection {
 				const resolvedSource = await source;
 				check(entry.threadId);
 				return {
-					id: this.frames.put(context, key), name: `${entry.boundaryLabel ? `${entry.boundaryLabel} · ` : ""}${frame.functionName ?? "<unknown>"}`,
+					id: this.frames.put(context, key),
+					name: boundaryOnly ? entry.boundaryLabel ?? "distributed call boundary" : `${entry.boundaryLabel ? `${entry.boundaryLabel} · ` : ""}${frame.functionName ?? "<unknown>"}`,
+					presentationHint: boundaryOnly ? "label" as const : undefined,
 					source: resolvedSource, line: frame.location?.line ?? 0, column: frame.location?.column ?? 0,
 					instructionPointerReference: frame.location?.address,
 				};
@@ -127,6 +130,7 @@ export class DdbInspection {
 	async scopes(frameId: number): Promise<DebugProtocol.ScopesResponse["body"]> {
 		const frame = this.frames.get(frameId);
 		const check = this.checkFrame(frame);
+		if (!frame.frame.frameId) return { scopes: [] };
 		const scopes = await this.connection.client.collect("DebuggerService.ListScopes", { frameId: frame.frame.frameId });
 		check();
 		return { scopes: [
@@ -193,6 +197,7 @@ export class DdbInspection {
 
 	async evaluate(args: DebugProtocol.EvaluateArguments): Promise<DebugProtocol.EvaluateResponse["body"]> {
 		const frame = args.frameId === undefined ? undefined : this.frames.get(args.frameId);
+		if (frame && !frame.frame.frameId) throw new Error("Select an executable stack frame to evaluate an expression");
 		const check = frame ? this.checkFrame(frame) : () => {};
 		if (frame && args.context !== "repl" && this.valuesFormatting !== "disabled") {
 			const expression: ExpressionContext = { frame, expression: args.expression, path: [] };

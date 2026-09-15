@@ -40,7 +40,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Session/group/thread discovery | Snapshot and replayed resource upserts/tombstones | Connection, DAP view models and frontend facade tested |
 | Thread selection | SelectThread operation | Connection tested |
 | Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging, multi-page source reads and inaccessible-path source-reference fallback tested; local-file and debugger-source GUI navigation tested; remote path mapping remains unverified |
-| Distributed stack and boundary labels | RunDistributedBacktrace typed frames | Pending |
+| Distributed stack and boundary labels | RunDistributedBacktrace typed frames | Actual DDB two-session mock topology tests boundary labels, paging, parent ownership, thread selection and inspection; live framework deployment unverified |
 | Locals and expansion | ListScopes, ListVariables, ExpandVariable | Root/array expansion, C++ vectors, nested and empty dynamic containers, scopes and caller-frame watches tested with real GDB |
 | Registers | ListRegisters | DAP handler tested with mock and GDB |
 | Watch and hover | Evaluate with frame ID and evaluation context | Scalar and compound DAP watches, hover and watch-child assignment tested |
@@ -674,3 +674,27 @@ The fixture uses the ordinary launch/configurationDone path, so it covers
 pretty-printer setup as well as inspection. No backend change was needed.
 
 Validation: 103 unit tests and seven canonical integration tests pass.
+
+
+## Distributed boundary checkpoint
+
+A two-session DDB mock topology now produces a child stack, a distributed call
+boundary, and a parent stack through RunDistributedBacktrace. The adapter had
+required frame.frameId on every row, but canonical boundary rows intentionally
+have no frame. That caused the entire stackTrace request to fail.
+
+Boundary rows now receive local label handles with no scopes. Watch and console
+evaluation reject them with a request to select an executable frame. Executable
+parent rows keep their own canonical thread/session/frame identities. The binary
+integration test verifies paging, parent metadata, thread selection, and scope
+reads in addition to the label. No backend modification was needed.
+
+This validates the distributed protocol with DDB's real mock-backend topology;
+it does not claim a live gRPC or other framework deployment was tested.
+
+Validation: 103 unit tests and the focused distributed binary test pass. Two
+full-suite runs exposed execution-state timeouts in the existing broad tests:
+mock session continue, then GDB peer-running setup. The isolated mock rerun
+passed. These intermittent failures remain unresolved; the full suite must not
+be described as reliably green at this checkpoint. Logs are in
+/tmp/ddb-distributed-final.log and /tmp/ddb-distributed-suite-recheck.log.
