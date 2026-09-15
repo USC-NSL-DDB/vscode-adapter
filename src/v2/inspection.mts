@@ -1,3 +1,6 @@
+import { access } from "node:fs/promises";
+import { constants } from "node:fs";
+import { isAbsolute } from "node:path";
 import type { DebugProtocol } from "vscode-debugprotocol";
 import type { Frame, Variable, Target, DistributedFrame, SourceLocation } from "@ddb-debugger/api-client";
 import { DdbConnection } from "./connection.mjs";
@@ -62,19 +65,24 @@ export class DdbInspection {
 			frames = (await this.connection.client.collect("DebuggerService.ListFrames", { threadId })).map(frame => ({ frame, threadId, sessionId: thread.sessionId }));
 		}
 		const start = args.startFrame ?? 0;
+		const sourceRequests = new Map<string, Promise<DebugProtocol.Source | undefined>>();
 		return {
 			totalFrames: frames.length,
-			stackFrames: frames.slice(start, args.levels ? start + args.levels : undefined).map(entry => {
+			stackFrames: await Promise.all(frames.slice(start, args.levels ? start + args.levels : undefined).map(async entry => {
 				const frame = entry.frame;
 				if (!frame?.frameId || !entry.threadId || !entry.sessionId) throw new Error("DDB omitted a stack frame's identity");
 				const context: FrameContext = { frame, threadId: entry.threadId, sessionId: entry.sessionId, boundary: entry.boundary, boundaryLabel: entry.boundaryLabel };
 				const key = JSON.stringify([frame.frameId, entry.index, entry.boundary, entry.boundaryLabel]);
+				const sourceKey = JSON.stringify([entry.sessionId, frame.location?.path, frame.location?.sourceReference]);
+				let source = sourceRequests.get(sourceKey);
+				if (!source) { source = this.stackSource(frame.location, entry.sessionId); sourceRequests.set(sourceKey, source); }
+
 				return {
 					id: this.frames.put(context, key), name: `${entry.boundaryLabel ? `${entry.boundaryLabel} · ` : ""}${frame.functionName ?? "<unknown>"}`,
-					source: this.source(frame.location), line: frame.location?.line ?? 0, column: frame.location?.column ?? 0,
+					source: await source, line: frame.location?.line ?? 0, column: frame.location?.column ?? 0,
 					instructionPointerReference: frame.location?.address,
 				};
-			}),
+			})),
 		};
 	}
 
@@ -175,6 +183,20 @@ export class DdbInspection {
 		context.children = undefined;
 		this.childHints.clear();
 		return { value: result.evaluation.value ?? args.value, type: result.evaluation.typeName, variablesReference: 0 };
+	}
+
+	private async stackSource(location: SourceLocation | undefined, sessionId: string): Promise<DebugProtocol.Source | undefined> {
+		const local = this.source(location);
+		if (!location?.path || location.sourceReference) return local;
+		if (isAbsolute(location.path)) {
+			try { await access(location.path, constants.R_OK); return local; }
+			catch { /* Ask DDB for source content unavailable on the adapter host. */ }
+		}
+		try {
+			const { source } = await this.connection.client.call("DebuggerService.ResolveSource", { target: { session: { sessionId } }, location });
+			if (source?.sourceReference) return this.source({ ...location, sourceReference: source.sourceReference });
+		} catch { /* Missing source must not hide an otherwise valid stack frame. */ }
+		return local;
 	}
 
 	source(location?: SourceLocation): DebugProtocol.Source | undefined {

@@ -21,4 +21,46 @@ suite("Canonical source content", () => {
 		const model = new DdbInspection(connection);
 		await assert.rejects(model.readSource(model.source({ sourceReference: "source" })!.sourceReference!), /changed while reading/);
 	});
+	test("stack frames resolve inaccessible paths and expose readable source references", async () => {
+		const calls: any[] = [];
+		const path = "/ddb-remote-source-fixture/main.c";
+		const connection = {
+			state: { get: () => ({ sessionId: "session" }) },
+			client: {
+				collect: async () => [0, 1].map(level => ({ frameId: `frame-${level}`, functionName: "main", location: { path, line: 2 } })),
+				call: async (method: string, args: any) => {
+					calls.push({ method, args });
+					if (method === "DebuggerService.ResolveSource") return { source: { sourceReference: "remote-source", path } };
+					assert.equal(method, "DebuggerService.ReadSource");
+					return { source: { startLine: 1, lineCount: 2, content: "first\nsecond", hasMore: false } };
+				},
+			},
+		} as unknown as DdbConnection;
+		const model = new DdbInspection(connection);
+		const stack = await model.stack({ threadId: model.threadHandle("thread") });
+		const source = stack!.stackFrames[0].source!;
+		assert.ok(source.sourceReference! > 0, "remote stack source must be retrievable");
+		assert.equal(source.path, path);
+		assert.equal(stack!.stackFrames[1].source!.sourceReference, source.sourceReference);
+		assert.deepEqual(calls, [{ method: "DebuggerService.ResolveSource", args: { target: { session: { sessionId: "session" } }, location: { path, line: 2 } } }]);
+		assert.equal((await model.readSource(source.sourceReference!))!.content, "first\nsecond");
+	});
+
+	test("keeps local navigation and retains frames when remote source is unavailable", async () => {
+		for (const local of [true, false]) {
+			const path = local ? `${process.cwd()}/package.json` : "/ddb-unavailable-source-fixture/main.c";
+			let calls = 0;
+			const connection = { state: { get: () => ({ sessionId: "session" }) }, client: {
+				collect: async () => [{ frameId: "frame", functionName: "main", location: { path, line: 2 } }],
+				call: async () => { calls++; throw new Error("source unavailable"); },
+			} } as unknown as DdbConnection;
+			const model = new DdbInspection(connection);
+			const stack = await model.stack({ threadId: model.threadHandle("thread") });
+			assert.equal(stack!.stackFrames.length, 1);
+			assert.equal(stack!.stackFrames[0].source!.path, path);
+			assert.equal(stack!.stackFrames[0].source!.sourceReference, 0);
+			assert.equal(calls, local ? 0 : 1);
+		}
+	});
+
 });

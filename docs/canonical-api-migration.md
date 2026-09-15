@@ -39,7 +39,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | External endpoint | SDK endpoint and bearer token, disconnect without shutdown | Real DAP attach/disconnect leaves the existing server responsive; owner shutdown removes process and private startup directory |
 | Session/group/thread discovery | Snapshot and replayed resource upserts/tombstones | Connection, DAP view models and frontend facade tested |
 | Thread selection | SelectThread operation | Connection tested |
-| Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging and canonical multi-page source reads tested; remote path/reference exposure in stacks still pending |
+| Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging, multi-page source reads and inaccessible-path source-reference fallback tested; remote mapping and GUI navigation pending |
 | Distributed stack and boundary labels | RunDistributedBacktrace typed frames | Pending |
 | Locals and expansion | ListScopes, ListVariables, ExpandVariable | DAP handlers implemented; root/array expansion and compound-watch expansion tested with real GDB |
 | Registers | ListRegisters | DAP handler tested with mock and GDB |
@@ -78,7 +78,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 84 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 86 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -459,3 +459,20 @@ Validation: 84 unit tests and six canonical integration tests pass. This proves
 retrieval using a resolved source reference. Stack frames still need to expose
 references for paths unavailable to VS Code; remote path mapping and GUI
 source navigation remain incomplete. No backend source changes were needed.
+
+## Stack source references checkpoint
+
+Stack frames now check whether their reported absolute path is readable on the
+adapter host. Inaccessible or relative paths are resolved through canonical
+ResolveSource with the frame's owning session. The resulting opaque reference
+becomes a local DAP source handle, which the existing source request can read.
+Repeated references to a file within one stack request share the lookup.
+Local readable paths keep local navigation. Missing source content does not
+remove the stack frame or fail the stack request.
+
+The new regression failed before the change because inaccessible paths had
+sourceReference zero. Tests now verify reference resolution and reading, lookup
+deduplication, local-file behavior and missing-source fallback. Validation:
+86 unit tests and six canonical integration tests pass. The fallback tests
+use a controlled service; actual VS Code navigation between different hosts
+and remote path mappings remain unverified.
