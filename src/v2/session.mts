@@ -452,8 +452,17 @@ export class CanonicalDebugSession extends DebugSession {
 
 	protected override async readMemoryRequest(response: DebugProtocol.ReadMemoryResponse, args: DebugProtocol.ReadMemoryArguments): Promise<void> {
 		await this.reply(response, async () => {
-			const address = `0x${(BigInt(args.memoryReference) + BigInt(args.offset ?? 0)).toString(16)}`;
-			const { memory } = await this.model.connection.client.call("DebuggerService.ReadMemory", { target: { currentThread: {} }, address, byteCount: String(args.count) });
+			const connection = this.model.connection;
+			if (!Number.isSafeInteger(args.count) || args.count < 0) throw new Error("Memory count must be a nonnegative safe integer");
+			if (!Number.isSafeInteger(args.offset ?? 0)) throw new Error("Memory offset must be a safe integer");
+			if (!/^(?:0[xX][0-9a-fA-F]+|[0-9]+)$/.test(args.memoryReference)) throw new Error("Memory reference must be a hexadecimal or decimal address");
+			const numericAddress = BigInt(args.memoryReference) + BigInt(args.offset ?? 0);
+			if (numericAddress < 0n) throw new Error("Memory offset produces a negative address");
+			const address = `0x${numericAddress.toString(16)}`;
+			if (args.count === 0) return { address, data: "", unreadableBytes: 0 };
+			const limit = connection.handshake.capabilities.limits?.maxMemoryReadBytes;
+			if (limit !== undefined && BigInt(args.count) > BigInt(limit)) throw new Error(`Memory read exceeds DDB's ${limit}-byte limit`);
+			const { memory } = await connection.client.call("DebuggerService.ReadMemory", { target: { currentThread: {} }, address, byteCount: String(args.count) });
 			if (!memory) throw new Error("DDB omitted memory result");
 			return { address: memory.address ?? address, data: memory.data, unreadableBytes: Number(memory.unreadableBytes ?? "0") };
 		});

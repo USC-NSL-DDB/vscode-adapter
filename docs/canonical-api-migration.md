@@ -52,7 +52,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Signals and session kill | ListSignals and v2 raw signal command | DAP list/validation tested on mock/GDB; SIGKILL tested on GDB |
 | Jump to line | Temporary canonical breakpoint followed by Execute JUMP | Local GDB destination stop, consumed breakpoint and invalid targets tested; remote source mapping remains unverified |
 | Debug Console, autorun, path substitution | Canonical raw-command escape hatch where typed APIs do not cover the command | Implemented with focused-frame CLI/raw console and per-session setup; entrypoint tests cover autorun and substitution |
-| Memory reads | ReadMemory | Pending |
+| Memory reads | ReadMemory | Real GDB bytes, positive/negative offsets, empty reads and limits tested; memory-view UI still unverified |
 | Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Frontend facade and events wired; GUI/decorations verification pending |
 | Focused frame navigation | Frame metadata lookup through DAP, no bit decoding | Frame status wiring complete; GUI verification pending |
 | Reconnect, replay gap, output gap, restart | SDK recovery, projection rehydration, explicit loss/restart handling | Real HTTP socket interruption tests cover cursor resume, output gaps, state replay-gap rehydration and changed-instance rejection; managed-child crash termination tested |
@@ -494,3 +494,20 @@ including sidebar queries, distributed stack, autorun/substitution and shutdown.
 The test runner accepts DDB_TEST_ADAPTER to repeat these checks on a packaged
 entrypoint. This development artifact is not a completed migration release,
 and a real VS Code extension-host/UI run is still required.
+
+## Memory-read checkpoint
+
+DAP zero-length reads now return an empty result without sending a request that
+DDB rejects. The adapter validates counts, offsets and numeric addresses,
+rejects offsets producing negative addresses, and checks the server's advertised
+maxMemoryReadBytes before making a read.
+
+The real GDB regression first failed on the zero-length request. It now verifies
+the bytes of an assigned two-integer array, positive and negative offsets, empty
+reads, invalid counts and the advertised read limit. Validation: 86 unit tests
+and six canonical integration tests pass. The request still uses DDB's selected
+thread, as required by the current numeric memory-reference convention.
+
+Neither code nor xvfb-run is on PATH in the current environment. The memory-view
+UI and broader extension-host checks remain unverified and need test setup.
+The previously built development VSIX predates this memory change.

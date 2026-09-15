@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, endianness } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
@@ -246,6 +246,33 @@ suite("Canonical DDB binary", function () {
 					const element = await dap.request("evaluate", { frameId: freshFrame.id, expression: "values[1]", context: "hover" });
 					assert.equal(element.success, true, element.message);
 					assert.equal(element.body.result, "202");
+					const pointer = await dap.request("evaluate", { frameId: freshFrame.id, expression: "&values[0]", context: "watch" });
+					assert.equal(pointer.success, true, pointer.message);
+					const memoryReference = /^0x[0-9a-f]+/i.exec(pointer.body.result)?.[0];
+					assert.ok(memoryReference, pointer.body.result);
+					const emptyMemory = await dap.request("readMemory", { memoryReference, count: 0 });
+					assert.equal(emptyMemory.success, true, emptyMemory.message);
+					assert.equal(emptyMemory.body.data, "");
+					const memory = await dap.request("readMemory", { memoryReference, count: 8 });
+					assert.equal(memory.success, true, memory.message);
+					const bytes = Buffer.from(memory.body.data, "base64");
+					assert.equal(bytes.length, 8);
+					const readInt = (offset: number) => endianness() === "LE" ? bytes.readInt32LE(offset) : bytes.readInt32BE(offset);
+					assert.deepEqual([readInt(0), readInt(4)], [101, 202]);
+					const offsetMemory = await dap.request("readMemory", { memoryReference, offset: 4, count: 4 });
+					assert.equal(offsetMemory.success, true, offsetMemory.message);
+					assert.deepEqual(Buffer.from(offsetMemory.body.data, "base64"), bytes.subarray(4));
+					const backwardMemory = await dap.request("readMemory", { memoryReference: `0x${(BigInt(memoryReference) + 4n).toString(16)}`, offset: -4, count: 4 });
+					assert.equal(backwardMemory.success, true, backwardMemory.message);
+					assert.deepEqual(Buffer.from(backwardMemory.body.data, "base64"), bytes.subarray(0, 4));
+					const invalidCount = await dap.request("readMemory", { memoryReference, count: -1 });
+					assert.equal(invalidCount.success, false);
+					assert.match(invalidCount.message ?? "", /nonnegative safe integer/);
+					const overLimit = await dap.request("readMemory", { memoryReference, count: Number(c.handshake.capabilities.limits!.maxMemoryReadBytes!) + 1 });
+					assert.equal(overLimit.success, false);
+					assert.match(overLimit.message ?? "", /exceeds DDB's/);
+					assert.equal((await dap.request("readMemory", { memoryReference: "0", offset: -1, count: 1 })).success, false);
+
 				}
 				if (backend === "gdb") {
 					const hit = await c.complete(await c.client.call("DebuggerControlService.CreateBreakpoint", {
