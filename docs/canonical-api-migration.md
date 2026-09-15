@@ -45,7 +45,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Registers | ListRegisters | DAP handler tested with mock and GDB |
 | Watch and hover | Evaluate with frame ID and evaluation context | Scalar and compound DAP watches, hover and watch-child assignment tested |
 | Variable assignment | Evaluate assignment if supported; backend escape hatch otherwise | Root and array-child DAP assignment tested with real GDB |
-| Source/function breakpoints | Create/Update/DeleteBreakpoint operations | DAP source creation, condition replacement and deletion tested; function support pending |
+| Source/function breakpoints | Create/Update/DeleteBreakpoint operations | Source and function creation, conditions, real hits, replacement and deletion tested with patched DDB |
 | Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Group selection, verified member projection and paired requests tested; streamed verification refresh implemented |
 | Conditions, hit counts, enable/disable, logpoints | Typed fields where supported; logpoints need explicit implementation | Pending |
 | Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | Next, session-specific continue/pause and typed stop metadata tested with patched DDB; all-stop coordination and other actions pending |
@@ -77,7 +77,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 64 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 65 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -140,9 +140,9 @@ can use setBreakpoints directly.
 
 Full breakpoint parity remains unproven:
 
-- Function breakpoints and ignore counts are rejected by the current backend's
-  typed breakpoint implementation. A schema field alone does not establish
-  runtime support.
+- DDB commit `7390297a` implements typed function locations. Function creation,
+  real hits, conditions, replacement and deletion are covered. Ignore counts
+  remain unsupported and function hit-condition parity is still pending.
 - Logpoints and hit conditions remain explicitly unimplemented in the canonical
   adapter. They must be implemented and exercised before declaring migration complete.
 - DDB commit `ba512f18` corrects group-only breakpoint verification and projects
@@ -233,8 +233,7 @@ The original release binary remains available for baseline comparisons.
 
 This checkpoint does not establish full execution or breakpoint parity.
 Explicit-pause versus external-signal presentation, entry-stop classification,
-all-stop coordination, logpoints, function
-breakpoints and hit conditions still need work. No current VSIX has been
+all-stop coordination, logpoints and hit conditions still need work. No current VSIX has been
 packaged or GUI-tested.
 
 ## Group breakpoint projection and refresh
@@ -261,3 +260,30 @@ do not. The existing DAP handle survives verification changes, and unchanged
 setBreakpoints requests do not reinstall the breakpoint. The adapter unit suite
 has 64 passing tests. Transport recovery of externally deleted breakpoints and
 full dynamic-session GUI behavior remain part of the wider completion audit.
+
+## Function breakpoints and SDK empty lists
+
+DDB commit `7390297a` on `codex/vscode-api-parity` implements typed function
+locations through breakpoint storage, command generation, group inheritance and
+canonical projection. The API advertises the function breakpoint capability.
+The adapter advertises and handles setFunctionBreakpoints, preserves unchanged
+IDs, reconciles condition changes and deletions, and keeps the function set
+independent of each source breakpoint set. Function names appear in sidebar DTOs.
+
+The original function request failed with `function breakpoints are not currently
+supported`. The canonical integration test now creates typed function breakpoints
+against mock and GDB. With real GDB it installs a conditional function breakpoint,
+continues to a hit, checks the function frame and DAP breakpoint ID, replaces its
+condition and deletes it. The command round-trip test preserves a C++-style name
+with colons and spaces. Two LLDB bridge option tests pass using mocked LLDB objects;
+real LLDB execution remains unverified because no executable is installed here.
+
+Deletion exposed an SDK defect: collect rejected omitted empty ProtoJSON arrays.
+DDB SDK commit `25e4a354` fixes that behavior while still rejecting malformed
+present fields. Its seven TypeScript tests pass. The adapter vendors the rebuilt
+SDK using a revision-qualified tarball name and a pinned integrity digest.
+
+Current checks pass: 65 adapter unit tests; four canonical integration tests;
+314 DDB core tests with one ignored; six API v1/v2 integration tests; seven SDK
+tests; and two LLDB bridge option tests. Function hit conditions remain pending,
+as do the other incomplete items in the parity checklist.

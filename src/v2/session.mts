@@ -53,6 +53,7 @@ export class CanonicalDebugSession extends DebugSession {
 		response.body = {
 			supportsConfigurationDoneRequest: true,
 			supportsConditionalBreakpoints: true,
+			supportsFunctionBreakpoints: true,
 			supportsEvaluateForHovers: true,
 			supportsSetVariable: true,
 			supportsReadMemoryRequest: true,
@@ -210,6 +211,10 @@ export class CanonicalDebugSession extends DebugSession {
 			if (this.connection?.state.get("thread", threadId)?.state === "THREAD_STATE_STOPPED") this.stopped(threadId, state);
 		}
 		this.pendingStops.clear();
+	}
+
+	protected override async setFunctionBreakPointsRequest(response: DebugProtocol.SetFunctionBreakpointsResponse, args: DebugProtocol.SetFunctionBreakpointsArguments): Promise<void> {
+		await this.reply(response, async () => ({ breakpoints: await this.breakpoints!.setFunctions(args.breakpoints) }));
 	}
 
 	protected override async threadsRequest(response: DebugProtocol.ThreadsResponse): Promise<void> {

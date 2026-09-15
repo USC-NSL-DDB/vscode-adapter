@@ -39,7 +39,7 @@ export class DdbSidebar {
 			if (breakpoint.target) visit(breakpoint.target);
 			return {
 				id: this.breakpoints.handle(breakpoint.breakpointId!),
-				location: { src: breakpoint.spec?.source?.source ?? "", line: breakpoint.spec?.source?.line ?? 0 },
+				location: { src: breakpoint.spec?.source?.source ?? breakpoint.spec?.function?.functionName ?? "", line: breakpoint.spec?.source?.line ?? 0 },
 				enabled: breakpoint.spec?.enabled ?? true, times: breakpoint.hitCount ?? "0", subbkpts: targets,
 				verified: breakpoint.verified ?? false, pending: breakpoint.pending ?? false, message: breakpoint.message,
 			};

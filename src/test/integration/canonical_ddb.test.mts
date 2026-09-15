@@ -28,7 +28,7 @@ suite("Canonical DDB binary", function () {
 			try {
 				const source = join(dir, "main.c");
 				const executable = join(dir, "main");
-				await writeFile(source, '#include <unistd.h>\nint main(void) {\n int counter = 42; int values[2] = {3, 5};\n while (counter) {\n  sleep(1);\n  counter--;\n }\n return 0;\n}\n');
+				await writeFile(source, '#include <unistd.h>\nint tick(int); int main(void) {\n int counter = 42; int values[2] = {3, 5};\n while (counter) {\n  sleep(1);\n  counter = tick(counter);\n }\n return 0;\n}\nint tick(int counter) { return counter - 1; }\n');
 				if (backend === "gdb") execFileSync("cc", ["-g", "-O0", source, "-o", executable]);
 				const config = join(dir, "ddb.yaml");
 				const sessions = [1, 2].map(id => `  - tag: session-${id}\n    alias: session-${id}\n    hash: group-${id}\n    pid: ${4400 + id}\n` + (backend === "mock"
@@ -55,6 +55,10 @@ suite("Canonical DDB binary", function () {
 				const evaluation = await c.complete(await c.client.call("DebuggerControlService.Evaluate", { target, frameId: frames[0].frameId, expression: "1 + 2", evaluationContext: "EVALUATION_CONTEXT_WATCH" }));
 				assert.ok(evaluation.evaluation?.value !== undefined);
 				if (backend === "gdb") assert.equal(evaluation.evaluation.value, "3");
+				const functionBreakpoint = await c.complete(await c.client.call("DebuggerControlService.CreateBreakpoint", { target: { session: { sessionId: thread.sessionId } }, breakpoint: { function: { functionName: "main" }, enabled: true } }));
+				assert.equal(functionBreakpoint.breakpoint?.spec?.function?.functionName, "main");
+				assert.equal(functionBreakpoint.breakpoint?.verified, true);
+				await c.complete(await c.client.call("DebuggerControlService.DeleteBreakpoint", { target: { broadcast: {} }, breakpointId: functionBreakpoint.breakpoint?.breakpointId }));
 				const breakpoint = await c.complete(await c.client.call("DebuggerControlService.CreateBreakpoint", { target: { multiple: { targets: c.state.all("group").map(group => ({ group: { groupId: group.groupId } })) } }, breakpoint: { source: { source, line: 5 }, enabled: true } }));
 				assert.ok(breakpoint.breakpoint?.breakpointId);
 				await until(() => c.state.all("breakpoint").length === 1 || streamError !== undefined, "breakpoint stream upsert");
@@ -227,6 +231,30 @@ suite("Canonical DDB binary", function () {
 					assert.equal(hitEvent.body.hitBreakpointIds.length, 1);
 					assert.ok(hitEvent.body.hitBreakpointIds[0] > 0);
 					await c.complete(await c.client.call("DebuggerControlService.DeleteBreakpoint", { target: { broadcast: {} }, breakpointId: hit.breakpoint?.breakpointId }));
+				}
+				if (backend === "gdb") {
+					const functions = await dap.request("setFunctionBreakpoints", { breakpoints: [{ name: "tick", condition: "counter > 0" }] });
+					assert.equal(functions.success, true, functions.message);
+					assert.equal(functions.body.breakpoints[0].verified, true, functions.body.breakpoints[0].message);
+					const beforeFunctionHit = dap.events.length;
+					await c.complete(await c.client.call("DebuggerControlService.Execute", { target, action: "EXECUTION_ACTION_CONTINUE" }));
+					await until(() => dap.events.slice(beforeFunctionHit).some(event => event.event === "stopped" && event.body.hitBreakpointIds?.includes(functions.body.breakpoints[0].id)), "DAP function breakpoint hit");
+					const functionStack = await dap.request("stackTrace", { threadId: dapThreadId });
+					assert.ok(functionStack.body.stackFrames[0].name.includes("tick"));
+					const unchangedFunctions = await dap.request("setFunctionBreakpoints", { breakpoints: [{ name: "tick", condition: "counter > 0" }] });
+					assert.equal(unchangedFunctions.body.breakpoints[0].id, functions.body.breakpoints[0].id);
+					const replacedFunctions = await dap.request("setFunctionBreakpoints", { breakpoints: [{ name: "tick", condition: "counter < 0" }] });
+					assert.equal(replacedFunctions.success, true, replacedFunctions.message);
+					assert.equal(replacedFunctions.body.breakpoints[0].verified, true);
+					assert.notEqual(replacedFunctions.body.breakpoints[0].id, functions.body.breakpoints[0].id);
+					const resources = await c.client.collect("DebuggerService.ListBreakpoints", {});
+					assert.equal(resources.length, 1);
+					assert.equal(resources[0].spec?.function?.functionName, "tick");
+					assert.equal(resources[0].spec?.condition, "counter < 0");
+					const clearFunctions = await dap.request("setFunctionBreakpoints", { breakpoints: [] });
+					assert.equal(clearFunctions.success, true, clearFunctions.message);
+					assert.deepEqual(clearFunctions.body.breakpoints, []);
+					assert.deepEqual(await c.client.collect("DebuggerService.ListBreakpoints", {}), []);
 				}
 				const controlledThread = c.state.all("thread").find(item => item.threadId === thread.threadId)!;
 				const continued = await dap.request("continue", { sessionId: metadata.body.session_id });
