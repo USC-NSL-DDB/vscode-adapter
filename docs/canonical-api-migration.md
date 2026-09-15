@@ -55,7 +55,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Memory reads | ReadMemory | Pending |
 | Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Frontend facade and events wired; GUI/decorations verification pending |
 | Focused frame navigation | Frame metadata lookup through DAP, no bit decoding | Frame status wiring complete; GUI verification pending |
-| Reconnect, replay gap, output gap, restart | SDK recovery, projection rehydration, explicit loss/restart handling | Projection and replacement-snapshot DAP tests, plus managed-child crash termination, pass; transport replay/output gaps and external restart tests pending |
+| Reconnect, replay gap, output gap, restart | SDK recovery, projection rehydration, explicit loss/restart handling | Real HTTP socket interruption tests cover cursor resume, output gaps, state replay-gap rehydration and changed-instance rejection; managed-child crash termination tested |
 
 ## Confirmed contract limits
 
@@ -78,7 +78,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 80 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 82 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -423,3 +423,22 @@ not yet exercise SDK replay-gap recovery over a broken network connection.
 
 Validation for this checkpoint: 80 unit tests and six canonical integration
 tests pass with the patched DDB debug binary.
+
+## HTTP recovery verification
+
+Two loopback HTTP tests exercise the production SDK, connection and DAP session
+against a scripted canonical server. The tests destroy live state/output
+sockets after initial delivery. They verify output reconnects with its last
+cursor, reports a gap once, and delivers later output without duplicating the
+first message. A state replay-gap response causes a fresh snapshot, removes
+old resources, and resumes from the new snapshot cursor.
+
+The second scenario returns a different server instance in the recovery
+snapshot. The adapter reports the restart, closes its client and terminates
+the session without applying the replacement server's resources. These are
+real HTTP transport tests with scripted server responses, not a live DDB
+journal-retention stress test. They required no production-code change.
+
+Validation: 82 tests pass in npm test, including both HTTP recovery scenarios.
+The six real-binary integration tests last passed at the preceding checkpoint;
+production code has not changed since that run.
