@@ -21,6 +21,8 @@ export class DdbBreakpoints {
 		return task;
 	}
 
+	handle(id: string): number { return this.handles.put(id, id); }
+
 	all(): DebugProtocol.Breakpoint[] {
 		return [...this.bySource].flatMap(([source, entries]) => entries.map(entry => this.present(source, entry)));
 	}
@@ -84,7 +86,7 @@ export class DdbBreakpoints {
 
 	private present(source: string, entry: Entry): DebugProtocol.Breakpoint {
 		return {
-			id: this.handles.put(entry.resource.breakpointId!, entry.resource.breakpointId!),
+			id: this.handle(entry.resource.breakpointId!),
 			verified: entry.resource.verified ?? false, line: entry.request.line,
 			source: { path: source }, message: entry.resource.message,
 			...{ subbkpts: entry.request.subbkpts ?? [] },

@@ -38,12 +38,13 @@
         "ddb.serviceUrl": {
           "type": "string",
           "default": "http://localhost:5000",
-          "description": "DDB backend service URL (e.g., http://localhost:5000). Used for both HTTP API and WebSocket notifications."
+          "description": "DDB backend service URL (e.g., http://localhost:5000). Used for both HTTP API and WebSocket notifications.",
+          "deprecationMessage": "Use apiEndpoint in launch.json for an existing DDB server. Managed launches discover their endpoint automatically."
         },
         "ddb.notifications.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable WebSocket notifications for real-time updates"
+          "description": "Use adapter state events for real-time sidebar updates."
         },
         "ddb.pollMaxAttempts": {
           "type": "number",
@@ -397,6 +398,19 @@
                     "description": "Content will be executed on the SSH host before the debugger call."
                   }
                 }
+              },
+              "apiEndpoint": {
+                "type": "string",
+                "description": "Connect to an existing DDB API v2 server instead of starting a managed DDB process."
+              },
+              "apiToken": {
+                "type": "string",
+                "description": "Bearer token for apiEndpoint. Defaults to the DDB_API_TOKEN environment variable."
+              },
+              "distributedStack": {
+                "type": "boolean",
+                "default": true,
+                "description": "Show the distributed backtrace across DDB sessions."
               }
             }
           },
@@ -762,7 +776,7 @@
     "prettier-write-docs": "prettier --write **/*.md",
     "prettier-check-docs": "prettier --check **/*.md",
     "test:integration": "tsc -p ./ && node -e \"if (!process.env.DDB_TEST_BINARY) throw new Error('Set DDB_TEST_BINARY to the current DDB executable')\" && mocha --no-config --ui tdd out/src/test/integration/**/*.test.js",
-    "test:canonical": "tsc -p ./ && node -e \"if (!process.env.DDB_TEST_BINARY) throw new Error('Set DDB_TEST_BINARY to the current DDB executable')\" && mocha --no-config --ui tdd out/src/test/integration/canonical_ddb.test.mjs"
+    "test:canonical": "tsc -p ./ && node -e \"if (!process.env.DDB_TEST_BINARY) throw new Error('Set DDB_TEST_BINARY to the current DDB executable')\" && mocha --no-config --ui tdd \"out/src/test/integration/canonical*.test.mjs\""
   },
   "dependencies": {
     "@ddb-debugger/api-client": "file:vendor/ddb-debugger-api-client-0.1.0.tgz",

@@ -2,11 +2,11 @@ import * as vscode from "vscode";
 import * as path from "path";
 import { Breakpoint } from "vscode-debugadapter";
 import { logger } from "./logger";
-import * as ddb_api from "./common/ddb_api";
+import * as ddb_api from "./common/ddb_dap_api";
 import { SessionManager } from "./common/ddb_session_mgr";
 import { BreakpointManager } from "./common/ddb_breakpoint_mgr";
-import { NotificationService, BreakpointChangedPayload } from "./common/ddb_notification_service";
-import { LogicalGroup, DDBBreakpoint, SubBreakpoint } from "./common/ddb_api";
+import { NotificationService } from "./common/ddb_notification_service";
+import { LogicalGroup, DDBBreakpoint, SubBreakpoint } from "./common/ddb_dap_api";
 import { showDisclaimerIfNeeded } from "./common/disclaimer_service";
 import { OTelService } from "./common/otel";
 
@@ -690,7 +690,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Get BreakpointManager instance
   const breakpointManager = BreakpointManager.getInstance();
 
-  // Get NotificationService instance for WebSocket notifications
+  // Get NotificationService instance for EventStream notifications
   const notificationService = NotificationService.getInstance();
 
   // Subscribe to SessionManager updates for automatic tree refresh
@@ -715,130 +715,44 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push({ dispose: breakpointManagerUnsubscribe });
 
-  // Subscribe to SessionListChanged notifications from backend
-  const sessionNotificationUnsubscribe = notificationService.onNotification(
-    "SessionListChanged",
-    async () => {
-      if (sessionsProvider.isDebugSessionActive) {
-        logger.debug(
-          "[DDBViewProvider] SessionListChanged notification received, updating data"
-        );
-        await sessionManager.updateAll(); // Fetch fresh data
-        // View auto-refreshes via SessionManager.onDataUpdated listener
+  const snapshotUnsubscribe = notificationService.onNotification("SnapshotChanged", async () => {
+    if (!sessionsProvider.isDebugSessionActive) return;
+    try {
+      const previous = breakpointManager.getAllBreakpoints();
+      await Promise.all([sessionManager.updateAll(), breakpointManager.immediateUpdateAll()]);
+      const current = breakpointManager.getAllBreakpoints();
+      const paths = new Set(current.map(bp => `${path.normalize(bp.location.src)}:${bp.location.line}`));
+      for (const removed of previous) {
+        const key = `${path.normalize(removed.location.src)}:${removed.location.line}`;
+        if (!paths.has(key)) await vscode.commands.executeCommand("ddb.internal.removeBreakpointSelection", key);
       }
-    }
-  );
-  context.subscriptions.push({ dispose: sessionNotificationUnsubscribe });
-  
-  // Subscribe to BreakpointChanged notifications from backend
-  const bkptNotificationUnsubscribe = notificationService.onNotification(
-    "BreakpointChanged",
-    async (data: BreakpointChangedPayload) => {
-      if (sessionsProvider.isDebugSessionActive) {
-        logger.debug(
-          `[DDBViewProvider] BreakpointChanged notification received, type: ${data.type}`
-        );
+      await vscode.commands.executeCommand("ddb.internal.syncBreakpointSelections", current);
+      await vscode.commands.executeCommand("ddb.internal.updateDecorations");
+    } catch (error) { logger.error(`DDB view refresh failed: ${String(error)}`); }
+  });
+  context.subscriptions.push({ dispose: snapshotUnsubscribe });
 
-        if (data.type === "TargetChanged") {
-          // Session was added to or removed from a group - group membership changed
-          // The breakpoint targets haven't changed, just the underlying group composition
-          logger.debug(
-            `[DDBViewProvider] TargetChanged: refreshing session data`
-          );
-          await sessionManager.updateAll();
-          breakpointManager.notifyDataChange(); // Notify breakpoint view to refresh as well
-        }
-
-        if (data.type === "Removed") {
-          const breakpointId = data.data as number;
-          logger.debug(
-            `[DDBViewProvider] Breakpoint ${breakpointId} removed from backend`
-          );
-
-          // Get the breakpoint info before it's removed from cache (for cleanup)
-          const removedBp = breakpointManager.getBreakpoint(breakpointId);
-
-          // Refresh the cache
-          await breakpointManager.immediateUpdateAll();
-
-          // If we had the breakpoint info, clean up VSCode breakpoint and decorations
-          if (removedBp) {
-            const bpId = `${path.normalize(removedBp.location.src)}:${removedBp.location.line}`;
-            // Remove from selections map via command
-            await vscode.commands.executeCommand(
-              "ddb.internal.removeBreakpointSelection",
-              bpId
-            );
-          }
-          // Update editor decorations
-          await vscode.commands.executeCommand("ddb.internal.updateDecorations");
-        }
-
-        if (data.type === "Added") {
-          const newBreakpoint = data.data as DDBBreakpoint;
-          logger.debug(
-            `[DDBViewProvider] Breakpoint ${newBreakpoint.id} added on backend`
-          );
-
-          // Refresh cache to include the new breakpoint
-          await breakpointManager.immediateUpdateAll();
-
-          // Sync selections map with all breakpoints
-          const allBreakpoints = breakpointManager.getAllBreakpoints();
-          await vscode.commands.executeCommand(
-            "ddb.internal.syncBreakpointSelections",
-            allBreakpoints
-          );
-
-          // Update editor decorations
-          await vscode.commands.executeCommand("ddb.internal.updateDecorations");
-        }
-
-        if (data.type === "Updated") {
-          const updatedBreakpoint = data.data as DDBBreakpoint;
-          logger.debug(
-            `[DDBViewProvider] Breakpoint ${updatedBreakpoint.id} updated`
-          );
-
-          // Refresh all breakpoints
-          await breakpointManager.immediateUpdateAll();
-
-          // Sync selections map with all breakpoints
-          const allBreakpoints = breakpointManager.getAllBreakpoints();
-          await vscode.commands.executeCommand(
-            "ddb.internal.syncBreakpointSelections",
-            allBreakpoints
-          );
-
-          // Update editor decorations
-          await vscode.commands.executeCommand("ddb.internal.updateDecorations");
-        }
-      }
-    }
-  );
-  context.subscriptions.push({ dispose: bkptNotificationUnsubscribe });
-
-  // Subscribe to WebSocket connection state changes
+  // Subscribe to EventStream connection state changes
   const wsStateUnsubscribe = notificationService.onConnectionStateChange(
     (connected) => {
       if (sessionsProvider.isDebugSessionActive) {
         if (connected) {
           logger.debug(
-            "[DDBViewProvider] WebSocket connected, disabling polling"
+            "[DDBViewProvider] EventStream connected, disabling polling"
           );
-          sessionManager.setWebSocketActive(true);
+          sessionManager.setEventStreamActive(true);
           sessionManager.stopAutoRefresh(); // Stop polling
-          breakpointManager.setWebSocketActive(true);
+          breakpointManager.setEventStreamActive(true);
           breakpointManager.stopAutoRefresh(); // Stop polling
           Promise.all([sessionManager.updateAll(), breakpointManager.updateAll()])
             .catch(error => logger.error("Failed to refresh DDB state after reconnect:", error));
         } else {
           logger.debug(
-            "[DDBViewProvider] WebSocket disconnected, enabling polling fallback"
+            "[DDBViewProvider] EventStream disconnected, enabling polling fallback"
           );
-          sessionManager.setWebSocketActive(false);
+          sessionManager.setEventStreamActive(false);
           sessionManager.startAutoRefresh(); // Resume polling as fallback
-          breakpointManager.setWebSocketActive(false);
+          breakpointManager.setEventStreamActive(false);
           breakpointManager.startAutoRefresh(); // Resume polling as fallback
         }
       }
@@ -850,6 +764,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Debug session START listener
   const debugStartListener = vscode.debug.onDidStartDebugSession(
     async (debugSession) => {
+      if (debugSession.type !== "ddb") return;
       // Mark debug sessions as active in both providers
       sessionsProvider.isDebugSessionActive = true;
       breakpointsProvider.isDebugSessionActive = true;
@@ -867,34 +782,22 @@ export function activate(context: vscode.ExtensionContext) {
         // Ensure all DDB services are ready.
         await ddb_api.waitForServiceReady();
 
-        // Start WebSocket notification service
+        // Start EventStream notification service
         notificationService.start();
 
-        // Wait a moment for WebSocket to connect, then decide on polling
-        setTimeout(() => {
-          if (notificationService.isConnected()) {
-            logger.debug(
-              "[DDBViewProvider] WebSocket connected, disabling polling"
-            );
-            sessionManager.setWebSocketActive(true);
-            breakpointManager.setWebSocketActive(true);
-            // Don't start polling - WebSocket will handle updates
-          } else {
-            logger.debug(
-              "[DDBViewProvider] WebSocket not connected, using polling"
-            );
-            sessionManager.setWebSocketActive(false);
-            sessionManager.startAutoRefresh(); // Start polling as fallback
-            breakpointManager.setWebSocketActive(false);
-            breakpointManager.startAutoRefresh(); // Start polling as fallback
-          }
-        }, 5000); // Wait 5 second for WebSocket connection
+        const eventUpdates = notificationService.isConnected();
+        sessionManager.setEventStreamActive(eventUpdates);
+        breakpointManager.setEventStreamActive(eventUpdates);
+        if (!eventUpdates) {
+          sessionManager.startAutoRefresh();
+          breakpointManager.startAutoRefresh();
+        }
 
         // Trigger immediate update - fetch both sessions AND groups
         // Tree will auto-refresh via onDataUpdated event when data is ready
         await sessionManager.updateAll();
 
-        // Fetch initial breakpoint data (auto-refresh controlled by WebSocket state above)
+        // Fetch initial breakpoint data (auto-refresh controlled by EventStream state above)
         await breakpointManager.updateAll();
       } catch (error) {
         logger.error(
@@ -909,11 +812,12 @@ export function activate(context: vscode.ExtensionContext) {
   // Debug session STOP listener
   const debugStopListener = vscode.debug.onDidTerminateDebugSession(
     (debugSession) => {
+      if (debugSession.type !== "ddb") return;
       OTelService.log_info(`[activity] debug_session_stopped`);
 
-      // Stop WebSocket notification service
+      // Stop EventStream notification service
       notificationService.stop();
-      sessionManager.setWebSocketActive(false);
+      sessionManager.setEventStreamActive(false);
 
       // Stop SessionManager auto-refresh
       sessionManager.stopAutoRefresh();

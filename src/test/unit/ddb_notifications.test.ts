@@ -1,5 +1,5 @@
 import * as assert from "assert";
-import { NotificationService } from "../../common/ddb_notification_service";
+import { NotificationService } from "../../common/legacy_ddb_notification_service";
 
 suite("DDB notifications", () => {
   teardown(() => NotificationService.resetInstance());

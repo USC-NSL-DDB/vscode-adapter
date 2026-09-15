@@ -6,7 +6,7 @@ import {
   getGroup,
   resolveSrcToGroups,
   resolveSrcToGroupIds,
-} from "./ddb_api";
+} from "./ddb_dap_api";
 
 let vscode: any;
 try {
@@ -119,7 +119,7 @@ export class SessionManager {
   private pendingUpdates: Set<string>;
   private readonly DEBOUNCE_MS = 100; // Debounce interval in milliseconds
   private readonly AUTO_REFRESH_MS = 15000; // Default 15 seconds
-  private wsActive: boolean = false; // Flag to control polling when WebSocket is active
+  private wsActive: boolean = false; // Flag to control polling when EventStream is active
 
   // ============================================================================
   // Constructor (Private - Singleton Pattern)
@@ -869,17 +869,17 @@ export class SessionManager {
 
   /**
    * Start automatic periodic refresh of data.
-   * Will not start polling if WebSocket is active.
+   * Will not start polling if EventStream is active.
    *
    * @param intervalMs Optional custom interval in milliseconds (default: 5000)
    */
   public startAutoRefresh(intervalMs?: number): void {
     this.stopAutoRefresh();
 
-    // Don't start polling if WebSocket is handling updates
+    // Don't start polling if EventStream is handling updates
     if (this.wsActive) {
       console.debug(
-        "[SessionManager] WebSocket active, skipping auto-refresh polling"
+        "[SessionManager] EventStream active, skipping auto-refresh polling"
       );
       return;
     }
@@ -918,15 +918,15 @@ export class SessionManager {
   }
 
   /**
-   * Set whether WebSocket notifications are active.
-   * When WebSocket is active, auto-refresh polling is disabled.
-   * When WebSocket is inactive, auto-refresh polling can resume.
+   * Set whether EventStream notifications are active.
+   * When EventStream is active, auto-refresh polling is disabled.
+   * When EventStream is inactive, auto-refresh polling can resume.
    *
-   * @param active - true if WebSocket is connected and handling updates
+   * @param active - true if EventStream is connected and handling updates
    */
-  public setWebSocketActive(active: boolean): void {
+  public setEventStreamActive(active: boolean): void {
     this.wsActive = active;
-    console.log(`[SessionManager] WebSocket active: ${active}`);
+    console.log(`[SessionManager] EventStream active: ${active}`);
   }
 
   /**

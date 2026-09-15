@@ -2,6 +2,7 @@ import dap from "vscode-debugadapter";
 import type { DebugProtocol } from "vscode-debugprotocol";
 import type { ExecuteRequest, Thread as DdbThread, StateSyncItem, OutputEvent as DdbOutput } from "@ddb-debugger/api-client";
 import { DdbConnection } from "./connection.mjs";
+import { DdbSidebar } from "./sidebar.mjs";
 import { DdbBreakpoints } from "./breakpoints.mjs";
 import { DdbInspection } from "./inspection.mjs";
 
@@ -24,6 +25,7 @@ export class CanonicalDebugSession extends DebugSession {
 	private connection?: DdbConnection;
 	private inspection?: DdbInspection;
 	private breakpoints?: DdbBreakpoints;
+	private sidebar?: DdbSidebar;
 	protected pairedBreakpoints = false;
 	private readonly breakpointRequests = new Map<number, {
 		promise: Promise<DebugProtocol.Breakpoint[]>;
@@ -51,7 +53,7 @@ export class CanonicalDebugSession extends DebugSession {
 
 	protected override async launchRequest(response: DebugProtocol.LaunchResponse, args: CanonicalLaunchArguments): Promise<void> {
 		await this.reply(response, async () => {
-			this.distributed = args.distributedStack ?? false;
+			this.distributed = args.distributedStack ?? true;
 			this.pairedBreakpoints = args.pairedBreakpointRequests ?? false;
 			if (!args.apiEndpoint && !args.configFilePath) throw new Error("Set configFilePath for managed DDB, or apiEndpoint for an existing server");
 			const connection = args.apiEndpoint
@@ -76,6 +78,7 @@ export class CanonicalDebugSession extends DebugSession {
 		this.connection = connection;
 		this.inspection = new DdbInspection(connection);
 		this.breakpoints = new DdbBreakpoints(this.inspection);
+		this.sidebar = new DdbSidebar(this.inspection, this.breakpoints);
 		let readyResolve!: () => void;
 		let readyReject!: (error: unknown) => void;
 		const ready = new Promise<void>((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
@@ -251,13 +254,20 @@ export class CanonicalDebugSession extends DebugSession {
 			return;
 		}
 
-		if (command === "ddb.getGroups") {
-			await this.reply(response, async () => ({ groups: this.model.connection.state.all("group").map(group => ({
-				id: this.model.groupHandles.put(group.groupId!, group.groupId!), alias: group.displayName ?? "Group",
-				hash: group.groupId!, sids: (group.sessionIds ?? []).map(id => this.model.sessionHandle(id)),
-			})) }));
+		if (["ddb.getGroups", "ddb.getBreakpoints", "ddb.resolveSourceGroups", "ddb.status"].includes(command)) {
+			await this.reply(response, async () => {
+				void this.model;
+				if (!this.sidebar) throw new Error("DDB sidebar is not ready");
+				switch (command) {
+					case "ddb.getGroups": return { groups: this.sidebar.groups() };
+					case "ddb.getBreakpoints": return { bkpts: this.sidebar.breakpointSnapshot() };
+					case "ddb.resolveSourceGroups": return { grps: await this.sidebar.sourceGroups(args.src) };
+					default: return { status: this.connection!.state.cursor ? "up" : "starting" };
+				}
+			});
 			return;
 		}
+
 		if (command !== "setSessionBreakpoints") { super.customRequest(command, response, args); return; }
 		await this.reply(response, async () => {
 			if (!Number.isInteger(args.seq)) throw new Error("Original breakpoint request sequence is required");

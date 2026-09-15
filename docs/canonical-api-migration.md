@@ -3,8 +3,9 @@
 Work branch: `codex/canonical-ddb-api`, based on compatibility commit `8e7317b`.
 DDB source: `7309720806cb455a7124bc2d42174754f637cd54`, release binary 0.1.15.
 
-This migration is in progress. The extension still starts the compatibility
-adapter until the canonical DAP session and frontend integration are complete.
+This migration is in progress. The extension now starts the canonical adapter and the sidebar uses DAP.
+Several parity items below remain incomplete; this branch is not a finished
+release. The compatibility implementation remains available on its own branch.
 
 ## Protocol
 
@@ -33,8 +34,8 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Existing behavior | Canonical workflow | Status |
 | --- | --- | --- |
 | Local YAML launch, cwd/environment, bounded shutdown | Managed startup report, authenticated handshake, admin shutdown | Connection tested with mock and GDB |
-| External endpoint | SDK endpoint and bearer token, disconnect without shutdown | Connection implemented; DAP configuration pending |
-| Session/group/thread discovery | Snapshot and replayed resource upserts/tombstones | Connection tested; UI mapping pending |
+| External endpoint | SDK endpoint and bearer token, disconnect without shutdown | DAP launch configuration implemented; external ownership tests pending |
+| Session/group/thread discovery | Snapshot and replayed resource upserts/tombstones | Connection, DAP view models and frontend facade tested |
 | Thread selection | SelectThread operation | Connection tested |
 | Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging implemented and exercised; remote source reads pending verification |
 | Distributed stack and boundary labels | RunDistributedBacktrace typed frames | Pending |
@@ -50,8 +51,8 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Jump to line | Execute JUMP with source location | Pending |
 | Debug Console, autorun, path substitution | Canonical raw-command escape hatch where typed APIs do not cover the command | Pending |
 | Memory reads | ReadMemory | Pending |
-| Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Pending |
-| Focused frame navigation | Frame metadata lookup through DAP, no bit decoding | Pending |
+| Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Frontend facade and events wired; GUI/decorations verification pending |
+| Focused frame navigation | Frame metadata lookup through DAP, no bit decoding | Frame status wiring complete; GUI verification pending |
 | Reconnect, replay gap, output gap, restart | SDK recovery, projection rehydration, explicit loss/restart handling | Projection unit tests; transport fault tests pending |
 
 ## Confirmed contract limits
@@ -74,7 +75,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 56 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 58 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -90,7 +91,7 @@ These checks validate the new connection layer, not completed DAP/UI migration.
 `src/v2/session.mts` and `src/v2/inspection.mts` now implement canonical DAP
 inspection, basic execution, state/output forwarding, local handle invalidation,
 managed launch/external attach, source reads, memory reads and disconnect.
-They are not yet the extension entrypoint. Breakpoints, sidebar custom requests,
+They are now the extension entrypoint. Remaining breakpoint features,
 all-stop coordination, complete stop metadata, console commands, and the other
 unchecked items above remain required.
 
@@ -131,7 +132,7 @@ for both paired requests. Unmatched requests are bounded and rejected at
 session disconnect.
 
 The sidebar's group query now has a DAP endpoint that allocates local handles.
-The old frontend has not yet been switched to it. Launch must explicitly enable
+The frontend now uses this endpoint. Launch must explicitly enable
 pairedBreakpointRequests when using that frontend workflow; standard clients
 can use setBreakpoints directly.
 
@@ -153,11 +154,27 @@ The canonical adapter now exposes session/group lists, frame metadata and thread
 selection through DAP custom requests. Session-specific continue/pause preserve
 the other session's stopped state. The binary test verifies that behavior,
 signal listing, invalid signal rejection, and SIGKILL followed by thread removal
-while the other session remains alive. The frontend still needs to consume these
-endpoints and replace its bit-packed frame decoding.
+while the other session remains alive. The frontend consumes these endpoints and uses frame metadata instead of
+bit-packed frame decoding.
 
 The typed SIGNAL implementation quotes the signal name before passing it to the
 GDB CLI `signal` command. Real GDB rejects the resulting quoted name. Signal
 sending therefore uses one canonical ExecuteRawCommand mutation with a validated
 signal token. It does not retry the failed typed mutation or use a legacy route.
 This backend encoding defect should be corrected before removing the escape hatch.
+
+## Frontend and entrypoint checkpoint
+
+The extension entrypoint now runs CanonicalDebugSession. Sidebar caches fetch
+sessions, groups, source-group membership and breakpoint snapshots through custom
+DAP requests. The notification service consumes `ddb.stateChanged` events and
+coalesces refreshes; it opens no HTTP or WebSocket connection. Frame status reads
+explicit DAP metadata instead of decoding bits from frame IDs. The frontend opts
+into paired breakpoint requests during configuration resolution.
+
+A new stdio integration test launches the actual compiled entrypoint and checks
+initialize/launch/configurationDone, thread discovery, distributed stack capture,
+sidebar group/readiness requests, and disconnect. This complements direct DAP
+handler tests. No VS Code GUI run has been completed. Legacy transport tests keep
+using the compatibility implementation explicitly; its launcher and notification
+service are retained temporarily for comparison and will need cleanup.

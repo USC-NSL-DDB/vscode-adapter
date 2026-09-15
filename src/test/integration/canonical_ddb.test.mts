@@ -116,6 +116,13 @@ suite("Canonical DDB binary", function () {
 				dap.enablePairedBreakpoints();
 				const uiGroups = await dap.request("ddb.getGroups");
 				assert.equal(uiGroups.success, true, uiGroups.message);
+				assert.equal((await dap.request("ddb.status")).body.status, "up");
+				const sourceGroups = await dap.request("ddb.resolveSourceGroups", { src: source });
+				assert.equal(sourceGroups.success, true, sourceGroups.message);
+				assert.equal(sourceGroups.body.grps.length, 2);
+				const missingSource = await dap.request("ddb.resolveSourceGroups", { src: join(dir, "missing.c") });
+				assert.equal(missingSource.success, true, missingSource.message);
+				assert.deepEqual(missingSource.body.grps, []);
 				const selected = { source: { path: source }, breakpoints: [{ line: 5, subbkpts: [{ type: "group", target: uiGroups.body.groups[0].id }] }] };
 				let seq = dap.nextSequence;
 				const standardFirst = dap.request("setBreakpoints", selected);
@@ -127,6 +134,12 @@ suite("Canonical DDB binary", function () {
 				const selectedBreakpoints = await c.client.collect("DebuggerService.ListBreakpoints", {});
 				assert.equal(selectedBreakpoints.length, 1);
 				assert.equal(selectedBreakpoints[0].target?.group?.groupId, c.state.all("group")[0].groupId);
+				await until(() => c.state.all("breakpoint").some(item => item.breakpointId === selectedBreakpoints[0].breakpointId), "sidebar breakpoint projection");
+				const sidebarBreakpoints = await dap.request("ddb.getBreakpoints");
+				assert.equal(sidebarBreakpoints.success, true, sidebarBreakpoints.message);
+				assert.equal(sidebarBreakpoints.body.bkpts.length, 1);
+				assert.equal(sidebarBreakpoints.body.bkpts[0].id, paired.body.breakpoints[0].id);
+				assert.equal(sidebarBreakpoints.body.bkpts[0].subbkpts[0].target_group, uiGroups.body.groups[0].id);
 				seq = dap.nextSequence + 1;
 				const empty = { source: { path: source }, breakpoints: [] };
 				const customFirst = await dap.request("setSessionBreakpoints", { seq, arguments: empty });

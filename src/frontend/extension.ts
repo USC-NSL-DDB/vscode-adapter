@@ -10,8 +10,8 @@ import { get } from "http";
 import { logger } from "../logger";
 import { SessionManager } from "../common/ddb_session_mgr";
 import { BreakpointManager } from "../common/ddb_breakpoint_mgr";
-import * as ddb_api from "../common/ddb_api";
-import { Session, SubBreakpoint } from "../common/ddb_api";
+import * as ddb_api from "../common/ddb_dap_api";
+import { Session, SubBreakpoint } from "../common/ddb_dap_api";
 import { SubBkpt, SubBkptType } from "../backend/backend";
 import { OTelService } from "../common/otel";
 import {
@@ -1061,14 +1061,13 @@ export async function activate(context: vscode.ExtensionContext) {
       }
       if (stackItem instanceof vscode.DebugStackFrame) {
         const frameId = stackItem.frameId;
-        const sessionId = frameId >>> 24;
-        const afterBoundary = ((frameId >> 23) & 0x1) === 1;
-        const level = (frameId >> 16) & 0x7f;
-        const threadId = stackItem.threadId;
-        OTelService.log_trace(`[activity] select_frame session=${sessionId} thread=${threadId} level=${level} after_boundary=${afterBoundary}`);
-        stackFrameStatusBar.text = `$(debug-stackframe) Session ${sessionId} | Thread ${threadId}, Frame ${level}`;
-        stackFrameStatusBar.tooltip = `Session: ${sessionId}\nThread: ${threadId}\nFrame Level: ${level}`;
-        stackFrameStatusBar.show();
+        const activeSession = vscode.debug.activeDebugSession!;
+        void activeSession.customRequest("ddb.frameMetadata", { frameId }).then(metadata => {
+          if (vscode.debug.activeDebugSession?.id !== activeSession.id || vscode.debug.activeStackItem !== stackItem) return;
+          stackFrameStatusBar.text = `$(debug-stackframe) Session ${metadata.session_id} | Thread ${metadata.thread_id}, Frame ${metadata.level}`;
+          stackFrameStatusBar.tooltip = `Session: ${metadata.session_id}\nThread: ${metadata.thread_id}\nFrame Level: ${metadata.level}`;
+          stackFrameStatusBar.show();
+        }, () => stackFrameStatusBar.hide());
       } else if (stackItem instanceof vscode.DebugThread) {
         stackFrameStatusBar.text = `$(debug-stackframe) Thread ${stackItem.threadId}`;
         stackFrameStatusBar.tooltip = `Thread ${stackItem.threadId}`;
@@ -1194,7 +1193,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider("ddb", {
     resolveDebugConfiguration(_folder, config) {
       // The adapter runs in a separate Node process without the vscode module.
-      config.serviceUrl = ddb_api.getServiceUrl();
+      config.pairedBreakpointRequests = true;
       return config;
     },
   }));
