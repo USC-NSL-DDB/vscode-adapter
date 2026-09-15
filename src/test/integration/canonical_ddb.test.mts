@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { CanonicalHarness } from "./helpers/canonical_session.mjs";
 import { DdbConnection } from "../../v2/connection.mjs";
 
 async function until(predicate: () => boolean, detail: string) {
@@ -21,13 +22,13 @@ suite("Canonical DDB binary", function () {
 		test(`${backend}: authenticated managed startup, snapshots, typed inspection and operations`, async () => {
 			const dir = await mkdtemp(join(tmpdir(), "ddb-v2-test-"));
 			let connection: DdbConnection | undefined;
-			let pump: Promise<void> | undefined;
+			const dap = new CanonicalHarness();
 			let streamError: unknown;
 			const output: string[] = [];
 			try {
 				const source = join(dir, "main.c");
 				const executable = join(dir, "main");
-				await writeFile(source, '#include <unistd.h>\nint main(void) {\n int counter = 42;\n while (counter) {\n  sleep(1);\n  counter--;\n }\n return 0;\n}\n');
+				await writeFile(source, '#include <unistd.h>\nint main(void) {\n int counter = 42; int values[2] = {3, 5};\n while (counter) {\n  sleep(1);\n  counter--;\n }\n return 0;\n}\n');
 				if (backend === "gdb") execFileSync("cc", ["-g", "-O0", source, "-o", executable]);
 				const config = join(dir, "ddb.yaml");
 				const sessions = [1, 2].map(id => `  - tag: session-${id}\n    alias: session-${id}\n    hash: group-${id}\n    pid: ${4400 + id}\n` + (backend === "mock"
@@ -37,7 +38,7 @@ suite("Canonical DDB binary", function () {
 				connection = await DdbConnection.launch({ binary: process.env.DDB_TEST_BINARY!, configFilePath: config, cwd: dir, onOutput: (_category, text) => output.push(text) });
 				const c = connection;
 				assert.equal(c.handshake.capabilities.apiVersion, "v2");
-				pump = (async () => { for await (const _item of c.states()) { /* Apply all changes in the connection. */ } })().catch(error => { if (!c.client.closed) streamError = error; });
+				await dap.begin(c);
 				await until(() => c.state.all("thread").filter(thread => thread.state === "THREAD_STATE_STOPPED").length === 2 || streamError !== undefined, "both stopped threads from canonical state");
 				if (streamError) throw streamError;
 				assert.equal(c.state.all("session").length, 2);
@@ -61,17 +62,59 @@ suite("Canonical DDB binary", function () {
 				await c.complete(await c.client.call("DebuggerControlService.DeleteBreakpoint", { target: { broadcast: {} }, breakpointId: breakpoint.breakpoint.breakpointId }));
 				await until(() => c.state.all("breakpoint").length === 0 || streamError !== undefined, "breakpoint stream deletion");
 				if (streamError) throw streamError;
+				const dapThreads = await dap.request("threads");
+				assert.equal(dapThreads.success, true, dapThreads.message);
+				assert.equal(dapThreads.body.threads.length, 2);
+				const dapThreadId = dapThreads.body.threads[0].id;
+				const dapStack = await dap.request("stackTrace", { threadId: dapThreadId });
+				assert.equal(dapStack.success, true, dapStack.message);
+				const dapFrame = dapStack.body.stackFrames[0];
+				assert.equal(dapFrame.source.path, source);
+				const dapScopes = await dap.request("scopes", { frameId: dapFrame.id });
+				assert.equal(dapScopes.success, true, dapScopes.message);
+				for (const scope of dapScopes.body.scopes) {
+					const variables = await dap.request("variables", { variablesReference: scope.variablesReference });
+					assert.equal(variables.success, true, variables.message);
+					assert.ok(Array.isArray(variables.body.variables));
+				}
+				const watch = await dap.request("evaluate", { expression: "1 + 2", frameId: dapFrame.id, context: "watch" });
+				assert.equal(watch.success, true, watch.message);
+				if (backend === "gdb") assert.equal(watch.body.result, "3");
+				const invalid = await dap.request("next", { threadId: 2147483647 });
+				assert.equal(invalid.success, false);
 				const beforeStep = BigInt(c.state.get("thread", thread.threadId!)?.revision ?? "0");
 				await c.complete(await c.client.call("DebuggerControlService.Execute", { target, action: "EXECUTION_ACTION_NEXT" }));
 				await until(() => (c.state.get("thread", thread.threadId!)?.state === "THREAD_STATE_STOPPED" && BigInt(c.state.get("thread", thread.threadId!)?.revision ?? "0") > beforeStep) || streamError !== undefined, "step stop");
 				if (streamError) throw streamError;
+				if (backend === "gdb") {
+					const freshStack = await dap.request("stackTrace", { threadId: dapThreadId });
+					assert.equal(freshStack.success, true, freshStack.message);
+					const freshFrame = freshStack.body.stackFrames[0];
+					const freshScopes = await dap.request("scopes", { frameId: freshFrame.id });
+					assert.equal(freshScopes.success, true, freshScopes.message);
+					const locals = freshScopes.body.scopes.find((scope: {name: string}) => scope.name !== "Registers");
+					assert.ok(locals);
+					const localValues = await dap.request("variables", { variablesReference: locals.variablesReference });
+					assert.equal(localValues.success, true, localValues.message);
+					const compound = localValues.body.variables.find((variable: {name: string}) => variable.name === "values");
+					assert.ok(compound?.variablesReference > 0, JSON.stringify(localValues.body));
+					const children = await dap.request("variables", { variablesReference: compound.variablesReference });
+					assert.equal(children.success, true, children.message);
+					assert.equal(children.body.variables.length, 2);
+					const assignment = await dap.request("setVariable", { variablesReference: locals.variablesReference, name: "counter", value: "7" });
+					assert.equal(assignment.success, true, assignment.message);
+					const assigned = await dap.request("evaluate", { frameId: freshFrame.id, expression: "counter", context: "watch" });
+					assert.equal(assigned.success, true, assigned.message);
+					assert.equal(assigned.body.result, "7");
+				}
 			} catch (error) {
 				console.error(output.join(""));
 				if (error && typeof error === "object" && "operation" in error) console.error(JSON.stringify(error.operation, null, 2));
 				throw error;
 			} finally {
+				if (connection) await dap.request("disconnect");
 				await connection?.close();
-				await pump;
+
 				await rm(dir, { recursive: true, force: true });
 			}
 		});

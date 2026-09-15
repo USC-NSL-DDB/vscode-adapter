@@ -36,12 +36,12 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | External endpoint | SDK endpoint and bearer token, disconnect without shutdown | Connection implemented; DAP configuration pending |
 | Session/group/thread discovery | Snapshot and replayed resource upserts/tombstones | Connection tested; UI mapping pending |
 | Thread selection | SelectThread operation | Connection tested |
-| Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | ListFrames tested; DAP handlers pending |
+| Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging implemented and exercised; remote source reads pending verification |
 | Distributed stack and boundary labels | RunDistributedBacktrace typed frames | Pending |
-| Locals and expansion | ListScopes, ListVariables, ExpandVariable | Lists tested; expansion and DAP handlers pending |
-| Registers | ListRegisters | Pending |
-| Watch and hover | Evaluate with frame ID and evaluation context | Evaluation tested; DAP handlers pending |
-| Variable assignment | Evaluate assignment if supported; backend escape hatch otherwise | Pending |
+| Locals and expansion | ListScopes, ListVariables, ExpandVariable | DAP handlers implemented; real GDB expansion exposes backend scalar-child error |
+| Registers | ListRegisters | DAP handler tested with mock and GDB |
+| Watch and hover | Evaluate with frame ID and evaluation context | Scalar DAP watch evaluation tested; compound watches pending |
+| Variable assignment | Evaluate assignment if supported; backend escape hatch otherwise | DAP assignment implemented; verification awaits variable-child fix |
 | Source/function breakpoints | Create/Update/DeleteBreakpoint operations | Source insertion/deletion tested; function and DAP handlers pending |
 | Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Multiple-group creation tested; frontend pairing pending |
 | Conditions, hit counts, enable/disable, logpoints | Typed fields where supported; logpoints need explicit implementation | Pending |
@@ -84,3 +84,32 @@ thread selection, frames, scopes, variables, evaluation, explicit group-targeted
 breakpoints and their streamed deletion, stepping, and cleanup.
 
 These checks validate the new connection layer, not completed DAP/UI migration.
+
+## DAP implementation checkpoint
+
+`src/v2/session.mts` and `src/v2/inspection.mts` now implement canonical DAP
+inspection, basic execution, state/output forwarding, local handle invalidation,
+managed launch/external attach, source reads, memory reads and disconnect.
+They are not yet the extension entrypoint. Breakpoints, sidebar custom requests,
+all-stop coordination, complete stop metadata, console commands, and the other
+unchecked items above remain required.
+
+The binary test dispatches actual DAP requests through `CanonicalHarness`.
+Threads, stackTrace, scopes, register reads, scalar watch evaluation and invalid
+thread error responses passed against both mock and GDB before extending the
+variable-expansion check. The expanded test currently passes mock and fails GDB
+with `debugger variable-child response is missing its collection`.
+
+The failure is reproducible with `npm run test:canonical` and the release DDB
+binary. GDB's ListVariables resources omit childCount and report no children
+for arrays. Probing unknown child counts through ExpandVariable encounters a
+second backend issue: a scalar's valid empty child response omits `children`,
+and DDB's `decode_variable_children` rejects it. Do not suppress that error for
+all variables or silently hide array children. A narrow v2 raw-command bridge
+for variable objects is a possible way to preserve existing pretty-printer and
+compound-watch behavior with this binary, without parsing MI records or using
+legacy routes.
+
+Additional confirmed variable gaps: Evaluate currently always returns no
+variableId, and expanded children have no evaluateName. Compound watch expansion
+and nested assignment must be handled before the migration can be complete.
