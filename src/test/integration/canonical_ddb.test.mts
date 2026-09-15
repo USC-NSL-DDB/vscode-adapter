@@ -8,9 +8,9 @@ import { CanonicalHarness } from "./helpers/canonical_session.mjs";
 import { DdbInspection } from "../../v2/inspection.mjs";
 import { DdbConnection } from "../../v2/connection.mjs";
 
-async function until(predicate: () => boolean, detail: string) {
+async function until(predicate: () => boolean | Promise<boolean>, detail: string) {
 	const deadline = Date.now() + 10000;
-	while (!predicate()) {
+	while (!(await predicate())) {
 		if (Date.now() > deadline) throw new Error(`Timed out waiting for ${detail}`);
 		await delay(20);
 	}
@@ -26,7 +26,7 @@ suite("Canonical DDB binary", function () {
 			const dap = new CanonicalHarness();
 			let streamError: unknown;
 			const output: string[] = [];
-			const executionTrace: unknown[] = [];
+			const executionTrace: { action: string; target: unknown; signalName?: string }[] = [];
 			try {
 				const source = join(dir, "main.c");
 				const executable = join(dir, "main");
@@ -43,12 +43,19 @@ suite("Canonical DDB binary", function () {
 				const originalCall = c.client.call.bind(c.client);
 				c.client.call = ((method: any, args: any, options: any) => {
 					if (method === "DebuggerControlService.Execute") {
-						executionTrace.push({ action: args.action, target: args.target });
+						executionTrace.push({ action: args.action, target: args.target, ...(args.signalName === undefined ? {} : { signalName: args.signalName }) });
 						if (executionTrace.length > 64) executionTrace.shift();
 					}
 					return originalCall(method, args, options);
 				}) as typeof c.client.call;
 				assert.equal(c.handshake.capabilities.apiVersion, "v2");
+				// Both inferiors must reach their startup breakpoint before attaching
+				// the all-stop adapter. Otherwise the first entry stop can pause its
+				// peer in the loader, leaving a pending main breakpoint for later.
+				if (backend === "gdb") await until(async () => {
+					const threads = await c.client.collect("DebuggerService.ListThreads", { target: { broadcast: {} } });
+					return threads.length === 2 && threads.every(thread => thread.state === "THREAD_STATE_STOPPED" && thread.location?.path === source && thread.location?.functionName === "main");
+				}, "both GDB inferiors at main before adapter attachment");
 				await dap.begin(c);
 				await until(() => c.state.all("thread").filter(thread => thread.state === "THREAD_STATE_STOPPED").length === 2 || streamError !== undefined, "both stopped threads from canonical state");
 				if (streamError) throw streamError;
@@ -418,6 +425,7 @@ suite("Canonical DDB binary", function () {
 					await until(() => dap.events.slice(beforePauseEvents).some(event => event.event === "stopped" && event.body.text === "SIGINT"), "signal name in DAP stop");
 					const killed = await dap.request("send-signal", { sessionId: metadata.body.session_id, signal: "SIGKILL" });
 					assert.equal(killed.success, true, killed.message);
+					assert.ok(executionTrace.some(call => call.action === "EXECUTION_ACTION_SIGNAL" && call.signalName === "SIGKILL"), "signal delivery must use the typed Execute operation");
 					await until(() => !c.state.get("thread", controlledThread.threadId!), "killed session thread removal");
 					assert.equal(c.state.all("thread").length, 1);
 				}

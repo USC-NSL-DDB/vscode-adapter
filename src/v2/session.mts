@@ -400,13 +400,9 @@ export class CanonicalDebugSession extends DebugSession {
 			this.controlEpoch++;
 			await this.reply(response, async () => {
 				if (typeof args.signal !== "string" || !/^(?:SIG[A-Z0-9]+|[0-9]+)$/.test(args.signal)) throw new Error("A valid signal name or number is required");
-				const connection = this.model.connection;
-				if (!connection.handshake.capabilities.supportedOperations?.includes("OPERATION_KIND_RAW_COMMAND")) throw new Error("DDB does not support signal commands");
-				// The current typed SIGNAL path quotes its argument before the CLI
-				// signal command, which GDB rejects. Use one v2 mutation, never retry.
-				await connection.complete(await connection.client.call("DebuggerControlService.ExecuteRawCommand", {
-					target: this.model.sessionTarget(args.sessionId), dialect: "RAW_COMMAND_DIALECT_GDB_MI", command: `-send-signal ${args.signal}`,
-				}));
+				await this.runExecution({
+					target: this.model.sessionTarget(args.sessionId), action: "EXECUTION_ACTION_SIGNAL", signalName: args.signal,
+				});
 			});
 			return;
 		}

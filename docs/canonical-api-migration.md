@@ -49,10 +49,10 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Group selection, verified member projection and paired requests tested; streamed verification refresh implemented |
 | Conditions, hit counts, enable/disable, logpoints | Typed conditions/counts; adapter evaluates and continues logpoint stops | Conditions, hit conditions and logpoints tested; real VS Code disable/re-enable preserves editor entries and group selection |
 | Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | DAP next/step-in/step-out, session-specific continue/pause, peer all-stop coordination and stopped-frame metadata tested with patched GDB |
-| Signals and session kill | ListSignals and v2 raw signal command | DAP list/validation tested on mock/GDB; SIGKILL tested on GDB |
+| Signals and session kill | ListSignals and typed Execute SIGNAL | DAP list/validation tested on mock/GDB; real VS Code pause/continue and signal selection tested; confirmed kill, cancellation and failure handling tested |
 | Jump to line | Temporary canonical breakpoint followed by Execute JUMP | Local and substituted-source GDB destination stops, consumed breakpoint and invalid targets tested |
 | Debug Console, autorun, path substitution | Canonical raw-command escape hatch where typed APIs do not cover the command | Implemented with focused-frame CLI/raw console and per-session setup; entrypoint tests cover autorun and substitution |
-| Memory reads | ReadMemory | Real GDB bytes, positive/negative offsets, empty reads and limits tested; memory-view UI still unverified |
+| Memory reads | ReadMemory | Real GDB bytes, positive/negative offsets, empty reads and limits tested; the legacy memory-view command was disabled in frontend/extension.ts and absent from package.json |
 | Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Real VS Code activation, sidebar refresh/grouping and disconnect tested; group/session selection, toggle retention, disable/re-enable and rendered breakpoint/execution labels tested |
 | Focused frame navigation | Frame metadata lookup through DAP, no bit decoding | Focused-frame source navigation, status-bar metadata and rendered execution labels pass in a real VS Code host |
 | Reconnect, replay gap, output gap, restart | SDK recovery, projection rehydration, explicit loss/restart handling | Real HTTP socket interruption tests cover cursor resume, output gaps, state replay-gap rehydration and changed-instance rejection; managed-child crash termination tested |
@@ -837,3 +837,26 @@ resumes and pauses through sidebar commands, loads the signal list, selects
 SIGKILL, and verifies that no inferior threads remain. Modal confirmation uses
 callback tests because VS Code refuses modal dialogs in extension-test mode.
 This change does not modify the DDB backend.
+
+## Typed signal delivery
+
+Backend commit `00adc459` on the isolated `codex/vscode-api-parity` worktree
+fixes quoted signal arguments. The typed API emits a quoted string, but the
+execution handler passed those quotes into GDB's console command. The real
+VS Code signal-picker test reproduced the failure with Execute SIGNAL, then
+passed after the handler decoded the argument. Unquoted commands still work;
+malformed or multiple arguments fail before interrupting the inferior.
+
+The adapter now sends signals through typed Execute and checks the advertised
+execution action. The GDB integration test asserts that SIGKILL uses that typed
+operation. Backend tests: 317 passed, one ignored. Adapter unit tests: 114 passed.
+
+The broader GDB test also exposed a fixture assumption: when its adapter attached
+before both inferiors reached main, all-stop coordination could interrupt the
+second inferior in the loader. Its next continue then hit the pending main
+breakpoint. The fixture now queries ListThreads until both inferiors reach main
+before attaching the all-stop adapter. This explains the captured GDB timeout;
+it does not establish the cause of the earlier mock timeout.
+
+After the readiness correction, all 10 canonical binary integration tests pass.
+The real extension-host scenario also passes with typed signal delivery.
