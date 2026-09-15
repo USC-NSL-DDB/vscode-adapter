@@ -1,11 +1,13 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
+    "module": "Node16",
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "outDir": "out",
     "skipLibCheck": true,
-    "moduleResolution": "node",
+    "moduleResolution": "Node16",
     "sourceMap": true,
     "rootDir": ".",
     "strict": true,
@@ -15,6 +17,13 @@
     "declaration": true,
     "declarationMap": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", ".vscode-test", "sampleWorkSpace", "out"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    ".vscode-test",
+    "sampleWorkSpace",
+    "out"
+  ]
 }
