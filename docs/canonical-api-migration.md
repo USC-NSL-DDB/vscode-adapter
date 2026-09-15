@@ -712,3 +712,23 @@ and four isolated GDB runs. Neither earlier timeout reproduced. This is not a
 causal fix and does not close the intermittent-failure item. Failure traces are
 retained in the integration test for subsequent runs. Stress logs are under
 /tmp/ddb-execution-stress-*.log and /tmp/ddb-execution-gdb-stress-*.log.
+
+
+## Delayed-stop ordering checkpoint
+
+A deterministic test holds stop publication behind breakpoint synchronization,
+resumes a peer through DAP, then releases the old stop. It reproduced the
+adapter immediately interrupting the newly resumed peer.
+
+Stop publication now compares the captured control generation with the latest
+user control. A superseded stop remains visible, preserves focus, and does not
+interrupt peers. A stop without newer control still coordinates all-stop. Both
+paths are covered by the regression.
+
+This establishes and fixes one adapter ordering bug. It does not prove that the
+earlier intermittent integration timeouts had this cause, particularly where
+the test sends execution directly through an external SDK client. That broader
+failure item remains open.
+
+Validation: 105 unit tests, eight canonical integration tests, and the real
+VS Code scenarios pass at this checkpoint.

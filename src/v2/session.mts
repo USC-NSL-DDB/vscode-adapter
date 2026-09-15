@@ -228,15 +228,15 @@ export class CanonicalDebugSession extends DebugSession {
 				const continued = await new DdbLogpoints(this.connection!).run(threadId, state, parts, () => sameStop() && epoch === this.controlEpoch, text => this.sendEvent(new OutputEvent(text, "console")));
 				if (continued || !sameStop()) return;
 			}
-			this.publishStopped(threadId, state);
+			this.publishStopped(threadId, state, epoch === this.controlEpoch);
 		})().catch(error => {
 			if (!sameStop()) return;
 			this.sendEvent(new OutputEvent(`DDB logpoint failed: ${error instanceof Error ? error.message : String(error)}\n`, "stderr"));
-			this.publishStopped(threadId, state);
+			this.publishStopped(threadId, state, epoch === this.controlEpoch);
 		});
 	}
 
-	private publishStopped(threadId: string, state: ExecutionState): void {
+	private publishStopped(threadId: string, state: ExecutionState, currentControl: boolean): void {
 		const reason = state.stopReason;
 		const kinds: Record<string, string> = {
 			STOP_REASON_KIND_BREAKPOINT: "breakpoint", STOP_REASON_KIND_WATCHPOINT: "data breakpoint",
@@ -248,7 +248,7 @@ export class CanonicalDebugSession extends DebugSession {
 		const event = new StoppedEvent(pause ? "pause" : kinds[reason?.kind ?? ""] ?? "pause", this.model.threadHandle(threadId), reason?.description ?? reason?.signalName);
 		const body = (event as DebugProtocol.StoppedEvent).body;
 		const secondary = !!reason?.threadId && reason.threadId !== threadId;
-		body.preserveFocusHint = secondary || !!pause || (reason?.kind === "STOP_REASON_KIND_SIGNAL" && !["SIGABRT", "SIGSEGV"].includes(reason.signalName ?? ""));
+		body.preserveFocusHint = !currentControl || secondary || !!pause || (reason?.kind === "STOP_REASON_KIND_SIGNAL" && !["SIGABRT", "SIGSEGV"].includes(reason.signalName ?? ""));
 		body.allThreadsStopped = this.connection!.state.all("thread").every(item => item.state === "THREAD_STATE_STOPPED");
 		const location = state.location ?? thread.location;
 		if (thread.sessionId && location?.path && location.line) {
@@ -256,7 +256,7 @@ export class CanonicalDebugSession extends DebugSession {
 			Object.assign(body, { stoppedFrameInfo: metadata });
 			if (reason?.kind === "STOP_REASON_KIND_BREAKPOINT" && !secondary) Object.assign(event, { breakpointInfo: metadata });
 		}
-		if (thread.sessionId && pause !== "automatic" && !secondary) this.execution!.interruptOthers(thread.sessionId);
+		if (currentControl && thread.sessionId && pause !== "automatic" && !secondary) this.execution!.interruptOthers(thread.sessionId);
 		if (reason?.breakpointId) (event as DebugProtocol.StoppedEvent).body.hitBreakpointIds = [this.breakpoints!.handle(reason.breakpointId)];
 		this.sendEvent(event);
 	}
