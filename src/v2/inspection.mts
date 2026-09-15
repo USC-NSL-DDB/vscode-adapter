@@ -1,6 +1,7 @@
 import type { DebugProtocol } from "vscode-debugprotocol";
 import type { Frame, Variable, Target, DistributedFrame, SourceLocation } from "@ddb-debugger/api-client";
 import { DdbConnection } from "./connection.mjs";
+import { RawVariables, type ExpressionContext } from "./raw_variables.mjs";
 import { Handles } from "./handles.mjs";
 
 export interface FrameContext {
@@ -12,7 +13,8 @@ export interface FrameContext {
 }
 interface VariableContext {
 	frame: FrameContext;
-	kind: "scope" | "variable" | "registers";
+	kind: "scope" | "variable" | "registers" | "expression";
+	expression?: ExpressionContext;
 	id: string;
 	children?: Variable[];
 }
@@ -27,7 +29,8 @@ export class DdbInspection {
 	private readonly childHints = new Map<string, boolean>();
 	private readonly sources = new Handles<string>();
 
-	constructor(readonly connection: DdbConnection) {}
+	private readonly raw: RawVariables;
+	constructor(readonly connection: DdbConnection) { this.raw = new RawVariables(connection); }
 
 	threadHandle(id: string): number { return this.threadHandles.put(id, id); }
 	sessionHandle(id: string): number { return this.sessionHandles.put(id, id); }
@@ -90,6 +93,14 @@ export class DdbInspection {
 	async listVariables(args: DebugProtocol.VariablesArguments): Promise<DebugProtocol.VariablesResponse["body"]> {
 		const context = this.variables.get(args.variablesReference);
 		const client = this.connection.client;
+		if (context.kind === "expression") {
+			const expression = context.expression!;
+			const start = args.start ?? 0;
+			const children = await this.raw.expand(expression, start, args.count || 1000);
+			context.children = children.map((child, index) => ({ name: child.name, value: child.value, variableId: String(start + index) }));
+			return { variables: children.map((child, index) => ({ name: child.name, value: child.value, type: child.type,
+				variablesReference: child.children > 0 ? this.variables.put({ frame: context.frame, kind: "expression", id: "", expression: { ...expression, path: [...expression.path, start + index] } }) : 0 })) };
+		}
 		if (context.kind === "registers") {
 			const registers = await client.collect("DebuggerService.ListRegisters", { frameId: context.id, format: "REGISTER_FORMAT_HEXADECIMAL" });
 			return { variables: registers.map(register => ({ name: register.name ?? "?", value: register.unavailable ? "<unavailable>" : register.formattedValue ?? register.value ?? "", variablesReference: 0 })) };
@@ -97,15 +108,15 @@ export class DdbInspection {
 		const variables = context.kind === "scope"
 			? await client.collect("DebuggerService.ListVariables", { scopeId: context.id })
 			: await client.collect("DebuggerService.ExpandVariable", { variableId: context.id });
-		// GDB stack-list-variables supplies no numchild. Probe unknown child counts
-		// through the canonical expansion method, with bounded concurrency.
+		// Canonical local-variable queries omit child counts on GDB. Ask only for
+		// object metadata; scalar ExpandVariable currently rejects empty children.
 		for (let offset = 0; offset < variables.length; offset += 4) {
 			await Promise.all(variables.slice(offset, offset + 4).map(async variable => {
-				if (variable.childCount !== undefined || variable.hasChildren || !variable.variableId) return;
+				if (variable.childCount !== undefined || variable.hasChildren || !variable.variableId || !variable.evaluateName) return;
 				let hasChildren = this.childHints.get(variable.variableId);
 				if (hasChildren === undefined) {
-					const probe = await client.call("DebuggerService.ExpandVariable", { variableId: variable.variableId, page: { pageSize: 1 } });
-					hasChildren = (probe.variables?.length ?? 0) > 0;
+					const metadata = await this.raw.inspect({ frame: context.frame, expression: variable.evaluateName, path: [] });
+					hasChildren = metadata.children > 0;
 					this.childHints.set(variable.variableId, hasChildren);
 				}
 				variable.hasChildren = hasChildren;
@@ -119,13 +130,20 @@ export class DdbInspection {
 	private variable(variable: Variable, frame: FrameContext): DebugProtocol.Variable {
 		return {
 			name: variable.name ?? "?", value: variable.value ?? "", type: variable.typeName, evaluateName: variable.evaluateName,
-			variablesReference: variable.hasChildren && variable.variableId ? this.variables.put({ frame, kind: "variable", id: variable.variableId }, variable.variableId) : 0,
+			variablesReference: variable.hasChildren && variable.variableId ? this.variables.put(variable.evaluateName
+				? { frame, kind: "expression", id: variable.variableId, expression: { frame, expression: variable.evaluateName, path: [] } }
+				: { frame, kind: "variable", id: variable.variableId }, variable.variableId) : 0,
 			memoryReference: variable.address,
 		};
 	}
 
 	async evaluate(args: DebugProtocol.EvaluateArguments): Promise<DebugProtocol.EvaluateResponse["body"]> {
 		const frame = args.frameId === undefined ? undefined : this.frames.get(args.frameId);
+		if (frame && args.context !== "repl") {
+			const expression: ExpressionContext = { frame, expression: args.expression, path: [] };
+			const value = await this.raw.inspect(expression);
+			return { result: value.value, type: value.type, variablesReference: value.children > 0 ? this.variables.put({ frame, kind: "expression", id: "", expression }) : 0 };
+		}
 		const result = await this.connection.complete(await this.connection.client.call("DebuggerControlService.Evaluate", {
 			target: frame ? { thread: { threadId: frame.threadId } } : { currentThread: {} },
 			frameId: frame?.frame.frameId, expression: args.expression,
@@ -141,6 +159,12 @@ export class DdbInspection {
 		const context = this.variables.get(args.variablesReference);
 		if (!context.children && context.kind !== "registers") await this.listVariables({ variablesReference: args.variablesReference });
 		const child = context.children?.find(variable => variable.name === args.name);
+		if (context.kind === "expression") {
+			if (!child?.variableId) throw new Error(`Unknown child ${args.name}`);
+			const value = await this.raw.assign({ ...context.expression!, path: [...context.expression!.path, Number(child.variableId)] }, args.value);
+			this.childHints.clear();
+			return { value, variablesReference: 0 };
+		}
 		const expression = context.kind === "registers" ? `$${args.name.replace(/^\$/, "")}` : child?.evaluateName;
 		if (!expression) throw new Error(`DDB did not provide an assignable expression for ${args.name}`);
 		const result = await this.connection.complete(await this.connection.client.call("DebuggerControlService.Evaluate", {

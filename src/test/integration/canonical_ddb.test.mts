@@ -106,6 +106,21 @@ suite("Canonical DDB binary", function () {
 					const assigned = await dap.request("evaluate", { frameId: freshFrame.id, expression: "counter", context: "watch" });
 					assert.equal(assigned.success, true, assigned.message);
 					assert.equal(assigned.body.result, "7");
+					const childAssignment = await dap.request("setVariable", { variablesReference: compound.variablesReference, name: children.body.variables[0].name, value: "101" });
+					assert.equal(childAssignment.success, true, childAssignment.message);
+					assert.equal(childAssignment.body.value, "101");
+					const compoundWatch = await dap.request("evaluate", { frameId: freshFrame.id, expression: "*(&values)", context: "watch" });
+					assert.equal(compoundWatch.success, true, compoundWatch.message);
+					assert.ok(compoundWatch.body.variablesReference > 0);
+					const watchChildren = await dap.request("variables", { variablesReference: compoundWatch.body.variablesReference });
+					assert.equal(watchChildren.success, true, watchChildren.message);
+					assert.equal(watchChildren.body.variables.length, 2);
+					assert.equal(watchChildren.body.variables[0].value, "101");
+					const watchAssignment = await dap.request("setVariable", { variablesReference: compoundWatch.body.variablesReference, name: watchChildren.body.variables[1].name, value: "202" });
+					assert.equal(watchAssignment.success, true, watchAssignment.message);
+					const element = await dap.request("evaluate", { frameId: freshFrame.id, expression: "values[1]", context: "hover" });
+					assert.equal(element.success, true, element.message);
+					assert.equal(element.body.result, "202");
 				}
 			} catch (error) {
 				console.error(output.join(""));

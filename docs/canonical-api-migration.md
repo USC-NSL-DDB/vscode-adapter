@@ -38,10 +38,10 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Thread selection | SelectThread operation | Connection tested |
 | Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging implemented and exercised; remote source reads pending verification |
 | Distributed stack and boundary labels | RunDistributedBacktrace typed frames | Pending |
-| Locals and expansion | ListScopes, ListVariables, ExpandVariable | DAP handlers implemented; real GDB expansion exposes backend scalar-child error |
+| Locals and expansion | ListScopes, ListVariables, ExpandVariable | DAP handlers implemented; root/array expansion and compound-watch expansion tested with real GDB |
 | Registers | ListRegisters | DAP handler tested with mock and GDB |
-| Watch and hover | Evaluate with frame ID and evaluation context | Scalar DAP watch evaluation tested; compound watches pending |
-| Variable assignment | Evaluate assignment if supported; backend escape hatch otherwise | DAP assignment implemented; verification awaits variable-child fix |
+| Watch and hover | Evaluate with frame ID and evaluation context | Scalar and compound DAP watches, hover and watch-child assignment tested |
+| Variable assignment | Evaluate assignment if supported; backend escape hatch otherwise | Root and array-child DAP assignment tested with real GDB |
 | Source/function breakpoints | Create/Update/DeleteBreakpoint operations | Source insertion/deletion tested; function and DAP handlers pending |
 | Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Multiple-group creation tested; frontend pairing pending |
 | Conditions, hit counts, enable/disable, logpoints | Typed fields where supported; logpoints need explicit implementation | Pending |
@@ -74,7 +74,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 54 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 56 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -97,19 +97,25 @@ unchecked items above remain required.
 The binary test dispatches actual DAP requests through `CanonicalHarness`.
 Threads, stackTrace, scopes, register reads, scalar watch evaluation and invalid
 thread error responses passed against both mock and GDB before extending the
-variable-expansion check. The expanded test currently passes mock and fails GDB
-with `debugger variable-child response is missing its collection`.
+variable-expansion check. The expanded test initially failed GDB with
+`debugger variable-child response is missing its collection`; see the resolution
+below.
 
-The failure is reproducible with `npm run test:canonical` and the release DDB
-binary. GDB's ListVariables resources omit childCount and report no children
-for arrays. Probing unknown child counts through ExpandVariable encounters a
-second backend issue: a scalar's valid empty child response omits `children`,
-and DDB's `decode_variable_children` rejects it. Do not suppress that error for
-all variables or silently hide array children. A narrow v2 raw-command bridge
-for variable objects is a possible way to preserve existing pretty-printer and
-compound-watch behavior with this binary, without parsing MI records or using
-legacy routes.
+The scalar-child decoder failure was reproduced on the release DDB binary.
+The adapter now obtains missing metadata through the canonical raw-command
+method instead of probing scalar ExpandVariable. `RawVariables` creates a
+short-lived backend variable object, reads its structured v2 DynamicValue result,
+and deletes the object, including on failure. Child expressions are represented
+as a root expression and index path, so nested assignment does not depend on
+missing evaluateName fields. No MI record parser or legacy route is used.
+
+The binary test now passes both mock and GDB. It also checks array expansion,
+root assignment, a compound watch expression, local/watch child assignment and
+hovering the assigned element. Unit tests cover cleanup after failed creation,
+quoting, target/frame forwarding, and rejection of expired canonical frames
+before raw mutation admission.
 
 Additional confirmed variable gaps: Evaluate currently always returns no
-variableId, and expanded children have no evaluateName. Compound watch expansion
-and nested assignment must be handled before the migration can be complete.
+variableId, and expanded children have no evaluateName. The v2 variable-object bridge covers compound watch expansion and nested
+assignment for these cases. Framework pretty printers and nonzero stack levels
+still require broader integration coverage.
