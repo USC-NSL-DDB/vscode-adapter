@@ -11,18 +11,26 @@ try {
 
 /**
  * Get the DDB service base URL from configuration or environment variable.
- * Priority: 1) DDB_API_URL env var (backward compat), 2) vscode config, 3) default
+ * The adapter receives the extension's resolved URL at launch. Otherwise use
+ * DDB_API_URL, vscode configuration, then the local default.
  */
-function getServiceUrl(): string {
+let serviceUrl: string | undefined;
+
+export function configureServiceUrl(url: string): void {
+  serviceUrl = url.replace(/\/+$/, "");
+}
+
+export function getServiceUrl(): string {
+  if (serviceUrl) return serviceUrl;
   // Priority 1: Environment variable (backward compatibility)
   if (process.env.DDB_API_URL) {
-    return process.env.DDB_API_URL;
+    return process.env.DDB_API_URL.replace(/\/+$/, "");
   }
   
   // Priority 2: VS Code configuration
   if (vscode) {
     const config = vscode.workspace.getConfiguration("ddb");
-    return config.get("serviceUrl", "http://localhost:5000");
+    return config.get("serviceUrl", "http://localhost:5000").replace(/\/+$/, "");
   }
   
   // Priority 3: Default
@@ -127,14 +135,15 @@ export async function getSessions(): Promise<Session[]> {
   return response.data;
 }
 
-export async function getServiceStatus(): Promise<ServiceStatus> {
-  const response = await axios.get<ServiceStatus>(get_url(Endpoint.Status));
+export async function getServiceStatus(signal?: AbortSignal): Promise<ServiceStatus> {
+  const response = await axios.get<ServiceStatus>(get_url(Endpoint.Status), { timeout: 5000, signal });
   return response.data;
 }
 
 export async function waitForServiceReady(
   maxAttempts?: number,
-  intervalMs?: number
+  intervalMs?: number,
+  signal?: AbortSignal
 ): Promise<void> {
   // Read from VSCode settings or use defaults
   let attempts = maxAttempts ?? 30;
@@ -150,12 +159,14 @@ export async function waitForServiceReady(
 
   while (currentAttempt < attempts) {
     try {
-      const status = await getServiceStatus();
+      if (signal?.aborted) throw new Error("DDB startup cancelled");
+      const status = await getServiceStatus(signal);
       if (status.status === "up") {
         console.log("DDB service is ready!");
         return;
       }
     } catch (error) {
+      if (signal?.aborted) throw new Error("DDB startup cancelled");
       // Service not ready, continue polling
     }
 
@@ -170,7 +181,7 @@ export async function waitForServiceReady(
 
 export async function getGroups(): Promise<LogicalGroup[]> {
   const response = await axios.get<LogicalGroup[]>(get_url(Endpoint.GetGroups));
-  return response.data;
+  return response.data.map(group => ({ ...group, sids: new Set(group.sids) }));
 }
 
 export async function getGroup(query: GetGroupQuery): Promise<LogicalGroup> {
@@ -200,7 +211,7 @@ export async function resolveSrcToGroups(src: string): Promise<LogicalGroup[]> {
   const response = await axios.get<GroupsResponse>(get_url(Endpoint.ResolveSrcToGroups), {
     params: { src } satisfies SourceResolver
   });
-  return response.data.grps;
+  return response.data.grps.map(group => ({ ...group, sids: new Set(group.sids) }));
 }
 
 /**
@@ -212,4 +223,41 @@ export async function getBreakpoints(): Promise<DDBBreakpoint[]> {
     get_url(Endpoint.GetBreakpoints)
   );
   return response.data.bkpts;
+}
+export interface CommandResult {
+  status: string;
+  payload?: Record<string, unknown>;
+}
+
+async function completedCommand(endpoint: string, body: unknown): Promise<CommandResult> {
+  try {
+    const response = await axios.post<{
+      data?: { state: string; result?: { responses: CommandResult[] } };
+      error?: { message: string };
+    }>(`${getServiceUrl()}${endpoint}`, body, { timeout: 30000 });
+    if (response.data.error) throw new Error(response.data.error.message);
+    const data = response.data.data;
+    const results = data?.result?.responses;
+    if (data?.state !== "completed" || !results?.length) throw new Error("DDB returned an incomplete command receipt");
+    const failure = results.find(result => result.status === "error");
+    if (failure) throw new Error(String(failure.payload?.msg || "DDB command failed"));
+    return results[0];
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.data?.error?.message) {
+      throw new Error(error.response.data.error.message);
+    }
+    throw error;
+  }
+}
+
+/** HTTP selection avoids tokenless MI thread-select replies in DDB 0.1.15. */
+export async function selectThread(threadId: number): Promise<boolean> {
+  const result = await completedCommand("/api/v1/threads/select", { thread_id: threadId });
+  if (result.status !== "done") throw new Error(`Thread selection failed: ${result.status}`);
+  return true;
+}
+
+/** Commands with silent MI presentation still return explicit HTTP receipts. */
+export function executeCommand(command: string): Promise<CommandResult> {
+  return completedCommand("/api/v1/commands", { command, wait: true });
 }

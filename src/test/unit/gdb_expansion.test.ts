@@ -3,8 +3,8 @@ import { expandValue, isExpandable } from "../../backend/gdb_expansion";
 import { VariableObject } from "../../backend/backend";
 
 suite("GDB Value Expansion", () => {
-  const variableCreate = (variable: string | VariableObject) => ({
-    expanded: typeof variable === "string" ? variable : variable.name,
+  const variableCreate = (variable: string | VariableObject | unknown[]) => ({
+    expanded: variable instanceof VariableObject ? variable.name : variable,
   });
   test("Various values", () => {
     assert.strictEqual(isExpandable(`false`), 0);

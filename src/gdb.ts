@@ -1,3 +1,4 @@
+import { configureServiceUrl } from "./common/ddb_api";
 import { MI2DebugSession, RunCommand } from "./mibase";
 import {
   DebugSession,
@@ -15,6 +16,7 @@ import { DebugProtocol } from "vscode-debugprotocol";
 import { MI2, escape } from "./backend/mi2/mi2";
 import { SSHArguments, ValuesFormattingMode } from "./backend/backend";
 import * as fs from "fs";
+import * as path from "path";
 import { promisify } from "util";
 import { spawn } from "child_process";
 import { OTelService } from "./common/otel";
@@ -27,6 +29,7 @@ export interface LaunchRequestArguments
   cwd: string;
   target: string;
   ddbpath: string;
+  serviceUrl?: string;
   env: any;
   debugger_args: string[];
   pathSubstitutions: { [index: string]: string };
@@ -121,8 +124,11 @@ class GDBDebugSession extends MI2DebugSession {
     args: LaunchRequestArguments
   ): Promise<void> {
     try {
+      if (args.serviceUrl) configureServiceUrl(args.serviceUrl);
       // 1. Check if the configuration file exists and is readable
-      await fs.promises.access(args.configFilePath, fs.constants.R_OK);
+      if (!args.configFilePath) throw new Error("Set configFilePath to a DDB YAML configuration");
+      const configFilePath = path.resolve(args.cwd || process.cwd(), args.configFilePath);
+      await fs.promises.access(configFilePath, fs.constants.R_OK);
 
       // 2. Check if DDB exists
       await checkDDBExists(args.ddbpath);
@@ -139,7 +145,7 @@ class GDBDebugSession extends MI2DebugSession {
       }
       
       const debugger_args_with_otel = [
-        ...args.debugger_args,
+        ...(args.debugger_args || []),
         "--enable-otel",
         "--user-id",
         `${userId}`,
@@ -150,7 +156,7 @@ class GDBDebugSession extends MI2DebugSession {
       // 5. Initialize the MI Debugger
       this.miDebugger = new MI2(
         args.ddbpath,
-        [args.configFilePath],
+        [configFilePath],
         debugger_args_with_otel,
         args.env
       );

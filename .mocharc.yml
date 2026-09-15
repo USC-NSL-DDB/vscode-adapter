@@ -1,6 +1,5 @@
 color: true
 recursive: true
-require: "ts-node/register"
 spec:
-  - "**/*.test.ts"
+  - "out/src/test/unit/**/*.test.js"
 ui: "tdd"

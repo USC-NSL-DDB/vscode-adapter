@@ -23,6 +23,15 @@ export function escape(str: string) {
   return str.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+// Match the representation consumed by MINode for structured HTTP payloads.
+function miValue(value: unknown): any {
+  if (Array.isArray(value)) return value.map(miValue);
+  if (value && typeof value === "object") {
+    return Object.entries(value).map(([key, item]) => [key, miValue(item)]);
+  }
+  return value === undefined || value === null ? "" : String(value);
+}
+
 const nonOutput = /^(?:\d*|undefined)[\*\+\=]|[\~\@\&\^]/;
 const gdbMatch = /(?:\d*|undefined)\(gdb\)/;
 const numRegex = /\d+/;
@@ -106,7 +115,7 @@ export class MI2 extends EventEmitter implements IBackend {
       // Overwrite with user specified variables
       for (const key in procEnv) {
         if (procEnv.hasOwnProperty(key)) {
-          if (procEnv === undefined) delete env[key];
+          if (procEnv[key] === undefined || procEnv[key] === null) delete env[key];
           else env[key] = procEnv[key];
         }
       }
@@ -123,71 +132,40 @@ export class MI2 extends EventEmitter implements IBackend {
     separateConsole: string,
     autorun: string[]
   ): Thenable<any> {
-    // if (!path.isAbsolute(target))
-    // 	target = path.join(cwd, target);
     return new Promise((resolve, reject) => {
       this.stderrOutput = "";
       this.isSSH = false;
-      const args = this.preargs.concat(this.extraargs || []);
+      const readiness = new AbortController();
       this.process = ChildProcess.spawn(
-        this.application,
-        args
-        // { cwd: cwd, env: this.procEnv }
+        this.application, this.preargs.concat(this.extraargs || []),
+        { cwd: cwd || undefined, env: this.procEnv }
       );
-      if (this.process.stdin) {
-        setInterval(() => this.process.stdin!.write("\n"), 2000);
-      }
       this.process.stdout?.on("data", this.stdout.bind(this));
       this.process.stderr?.on("data", this.stderr.bind(this));
-      this.process.on("exit", (code) => {
-        if (code !== 0) {
-          this.emit(
-            "launcherror",
-            new Error(`Process exited with code ${code}`)
-          );
-          reject(
-            new Error(`Process exited with code ${code}\n${this.stderrOutput}`)
-          );
-        } else {
-          this.emit("quit");
-        }
+      this.process.once("error", error => {
+        readiness.abort();
+        this.rejectPendingCommands(error);
+        reject(error);
       });
-      this.process.on("error", (err) => this.emit("launcherror", err));
-      // const promises = this.initCommands(target, cwd);
-      const promises = [];
-      promises.push(ddb_api.waitForServiceReady());
-      Promise.all(promises).then(() => {
-        this.emit("debug-ready");
-        resolve(undefined);
-      }, reject);
-      // 	if (procArgs && procArgs.length)
-      // 		promises.push(this.sendCommand("exec-arguments " + procArgs));
-      // 	if (process.platform == "win32") {
-      // 		if (separateConsole !== undefined)
-      // 			promises.push(this.sendCommand("gdb-set new-console on"));
-      // 		promises.push(...autorun.map(value => { return this.sendUserInput(value); }));
-      // 		Promise.all(promises).then(() => {
-      // 			this.emit("debug-ready");
-      // 			resolve(undefined);
-      // 		}, reject);
-      // 	} else {
-      // 		if (separateConsole !== undefined) {
-      // 			linuxTerm.spawnTerminalEmulator(separateConsole).then(tty => {
-      // 				promises.push(this.sendCommand("inferior-tty-set " + tty));
-      // 				promises.push(...autorun.map(value => { return this.sendUserInput(value); }));
-      // 				Promise.all(promises).then(() => {
-      // 					this.emit("debug-ready");
-      // 					resolve(undefined);
-      // 				}, reject);
-      // 			});
-      // 		} else {
-      // 			promises.push(...autorun.map(value => { return this.sendUserInput(value); }));
-      // 			Promise.all(promises).then(() => {
-      // 				this.emit("debug-ready");
-      // 				resolve(undefined);
-      // 			}, reject);
-      // 		}
-      // 	}
+      this.process.once("exit", (code, signal) => {
+        readiness.abort();
+        const error = new Error(`DDB exited (code ${code}, signal ${signal})\n${this.stderrOutput}`);
+        this.rejectPendingCommands(error);
+        reject(error);
+        this.emit("quit");
+      });
+      this.process.stdin?.on("error", error => this.rejectPendingCommands(error));
+      ddb_api.waitForServiceReady(undefined, undefined, readiness.signal)
+        .then(async () => {
+          for (const command of autorun) await this.sendUserInput(command);
+          if (readiness.signal.aborted) throw new Error("DDB exited during startup");
+          this.emit("debug-ready");
+          resolve(undefined);
+        })
+        .catch(error => {
+          if (!readiness.signal.aborted) this.process.kill("SIGINT");
+          reject(error);
+        });
     });
   }
 
@@ -384,7 +362,6 @@ export class MI2 extends EventEmitter implements IBackend {
         return;
       }
 
-      console.log("parsing line:", ` ${line}`);
       const parsed = parseMI(line);
       if (this.debugOutput)
         this.log("log", "GDB -> App: " + JSON.stringify(parsed));
@@ -525,27 +502,14 @@ export class MI2 extends EventEmitter implements IBackend {
     });
   }
 
-  async stop() {
-    // if (this.isSSH) {
-    // 	const proc = this.stream;
-    // 	const to = setTimeout(() => {
-    // 		proc.signal("KILL");
-    // 	}, 1000);
-    // 	this.stream.on("exit", function (code) {
-    // 		clearTimeout(to);
-    // 	});
-    // 	this.sendRaw("-gdb-exit");
-    // } else {
-    return new Promise((resolve) => {
-      const proc = this.process;
+  async stop(): Promise<void> {
+    const proc = this.process;
+    if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
+    await new Promise<void>(resolve => {
+      const timer = setTimeout(() => proc.kill("SIGKILL"), 5000);
+      proc.once("exit", () => { clearTimeout(timer); resolve(); });
       proc.kill("SIGINT");
-
-      this.process.on("exit", (code) => {
-        resolve(code);
-      });
     });
-    // this.sendRaw("-gdb-exit");
-    // }
   }
 
   detach() {
@@ -575,7 +539,7 @@ export class MI2 extends EventEmitter implements IBackend {
     return new Promise((resolve, reject) => {
       if (trace) this.log("stderr", `continuehandle continueRequest`);
       this.sendCommand(
-        "record-time-and-continue" + (reverse ? " --reverse" : "")
+        "exec-continue" + (reverse ? " --reverse" : "")
       ).then((info) => {
         resolve(info.resultRecords.resultClass == "running");
       }, reject);
@@ -585,19 +549,14 @@ export class MI2 extends EventEmitter implements IBackend {
     });
   }
   switchThread(thread: number): Thenable<boolean> {
-    if (trace) this.log("stderr", `switch thread to${thread}`);
-    return new Promise((resolve, reject) => {
-      this.sendCommand(`thread-select ${thread}`).then((info) => {
-        resolve(info.resultRecords.resultClass == "done");
-      }, reject);
-    });
+    return ddb_api.selectThread(thread);
   }
 
   next(thread: number, reverse: boolean = false): Thenable<boolean> {
     if (trace) this.log("stderr", "next");
     return new Promise((resolve, reject) => {
       this.sendCommand(
-        "record-time-and-next" +
+        "exec-next" +
         ` --thread ${thread}` +
         (reverse ? " --reverse" : "")
       ).then((info) => {
@@ -613,7 +572,7 @@ export class MI2 extends EventEmitter implements IBackend {
     if (trace) this.log("stderr", "step");
     return new Promise((resolve, reject) => {
       this.sendCommand(
-        "record-time-and-step" +
+        "exec-step" +
         ` --thread ${thread}` +
         (reverse ? " --reverse" : "")
       ).then((info) => {
@@ -629,7 +588,7 @@ export class MI2 extends EventEmitter implements IBackend {
     if (trace) this.log("stderr", "stepOut");
     return new Promise((resolve, reject) => {
       this.sendCommand(
-        "record-time-and-finish" +
+        "exec-finish" +
         ` --thread ${thread}` +
         (reverse ? " --reverse" : "")
       ).then((info) => {
@@ -658,9 +617,9 @@ export class MI2 extends EventEmitter implements IBackend {
     });
   }
 
-  changeVariable(name: string, rawValue: string): Thenable<any> {
+  changeVariable(name: string, rawValue: string, thread: number = 0, frame: number = 0): Thenable<any> {
     if (trace) this.log("stderr", "changeVariable");
-    return this.sendCommand("gdb-set var " + name + "=" + rawValue);
+    return this.sendCliCommand(`set variable ${name}=${rawValue}`, thread, frame);
   }
 
   loadBreakPoints(
@@ -787,7 +746,7 @@ export class MI2 extends EventEmitter implements IBackend {
           console.error("Invalid group target:", subbkpt.target);
         }
       }
-      if (subbkpt.type === SubBkptType.Session) {
+      else if (subbkpt.type === SubBkptType.Session) {
         if (typeof subbkpt.target === "number") {
           targets.push(`s${subbkpt.target}`);
         } else {
@@ -802,10 +761,10 @@ export class MI2 extends EventEmitter implements IBackend {
 
   private buildSubBkptsFromPayload(result: MINode): SubBkpt[] {
     const subbkpts: SubBkpt[] = [];
-    for (const subbkpt_obj of result.result("subbkpt")) {
-      const target_id = subbkpt_obj["target_id"];
-      const id = subbkpt_obj["id"];
-      const type_str = subbkpt_obj["type"];
+    for (const subbkpt_obj of result.result("subbkpt") || []) {
+      const target_id = MINode.valueOf(subbkpt_obj, "target_id");
+      const id = MINode.valueOf(subbkpt_obj, "id");
+      const type_str = MINode.valueOf(subbkpt_obj, "type");
 
       let type: SubBkptType;
       if (type_str === "group") {
@@ -1000,10 +959,10 @@ export class MI2 extends EventEmitter implements IBackend {
     return `${file}:${line}`;
   }
   getLineFromBreakpointId(id: string): number {
-    return parseInt(id.split(":")[1]);
+    return parseInt(id.slice(id.lastIndexOf(":") + 1));
   }
   getFileFromBreakpointId(id: string): string {
-    return id.split(":")[0];
+    return id.slice(0, id.lastIndexOf(":"));
   }
   clearBreakPoints(source?: string): Thenable<any> {
     if (trace) console.log("clearBreakPoints: source=", source);
@@ -1032,7 +991,7 @@ export class MI2 extends EventEmitter implements IBackend {
   async getThreads(): Promise<Thread[]> {
     if (trace) this.log("stderr", "getThreads");
 
-    const command = "thread-info";
+    const command = "thread-info --all";
     const result = await this.sendCommand(command);
     const threads = result.result("threads");
     const ret: Thread[] = [];
@@ -1161,15 +1120,15 @@ export class MI2 extends EventEmitter implements IBackend {
     return ret;
   }
 
-  async getRegisters(): Promise<Variable[]> {
+  async getRegisters(thread: number = 0): Promise<Variable[]> {
     if (trace) this.log("stderr", "getRegisters");
 
     // Getting register names and values are separate GDB commands.
     // We first retrieve the register names and then the values.
     // The register names should never change, so we could cache and reuse them,
     // but for now we just retrieve them every time to keep it simple.
-    const names = await this.getRegisterNames();
-    const values = await this.getRegisterValues();
+    const names = await this.getRegisterNames(thread);
+    const values = await this.getRegisterValues(thread);
     const ret: Variable[] = [];
     for (const val of values) {
       const key = names[val.index];
@@ -1184,9 +1143,9 @@ export class MI2 extends EventEmitter implements IBackend {
     return ret;
   }
 
-  async getRegisterNames(): Promise<string[]> {
+  async getRegisterNames(thread: number = 0): Promise<string[]> {
     if (trace) this.log("stderr", "getRegisterNames");
-    const result = await this.sendCommand("data-list-register-names");
+    const result = await this.sendCommand(`data-list-register-names${thread ? ` --thread ${thread}` : ""}`);
     const names = result.result("register-names");
     if (!Array.isArray(names)) {
       throw new Error("Failed to retrieve register names.");
@@ -1194,9 +1153,9 @@ export class MI2 extends EventEmitter implements IBackend {
     return names.map((name) => name.toString());
   }
 
-  async getRegisterValues(): Promise<RegisterValue[]> {
+  async getRegisterValues(thread: number = 0): Promise<RegisterValue[]> {
     if (trace) this.log("stderr", "getRegisterValues");
-    const result = await this.sendCommand("data-list-register-values N");
+    const result = await this.sendCommand(`data-list-register-values${thread ? ` --thread ${thread}` : ""} N`);
     const nodes = result.result("register-values");
     if (!Array.isArray(nodes)) {
       throw new Error("Failed to retrieve register values.");
@@ -1232,7 +1191,7 @@ export class MI2 extends EventEmitter implements IBackend {
     if (thread != 0) {
       command += `--thread ${thread} --frame ${frame} `;
     }
-    command += name;
+    command += this.quote(name);
 
     return await this.sendCommand(command);
   }
@@ -1250,7 +1209,7 @@ export class MI2 extends EventEmitter implements IBackend {
       miCommand += `--thread ${threadId} --frame ${frameLevel}`;
     }
     const res = await this.sendCommand(
-      `${miCommand} ${this.quote(name)} ${frame} "${expression}"`
+      `${miCommand} ${this.quote(name)} ${frame} "${escape(expression)}"`
     );
     return new VariableObject(res.result(""), threadId);
   }
@@ -1294,9 +1253,9 @@ export class MI2 extends EventEmitter implements IBackend {
     return this.sendCommand(`${miCommand} --all-values ${this.quote(name)}`);
   }
 
-  async varAssign(name: string, rawValue: string): Promise<MINode> {
+  async varAssign(name: string, rawValue: string, thread: number = 0): Promise<MINode> {
     if (trace) this.log("stderr", "varAssign");
-    return this.sendCommand(`var-assign ${this.quote(name)} ${rawValue}`);
+    return this.sendCommand(`var-assign${thread ? ` --thread ${thread}` : ""} ${this.quote(name)} ${this.quote(rawValue)}`);
   }
 
   logNoNewLine(type: string, msg: string) {
@@ -1322,7 +1281,9 @@ export class MI2 extends EventEmitter implements IBackend {
   sendRaw(raw: string) {
     if (this.printCalls) this.log("log", raw);
     if (this.isSSH) this.stream.write(raw + "\n");
-    else if (this.process.stdin) this.process.stdin.write(raw + "\n");
+    else if (this.process?.stdin?.writable && this.process.exitCode === null && this.process.signalCode === null) {
+      this.process.stdin.write(raw + "\n");
+    } else throw new Error("DDB process is not running");
   }
 
   sendCliCommand(
@@ -1340,18 +1301,33 @@ export class MI2 extends EventEmitter implements IBackend {
 
   sendCommand(
     command: string,
-    suppressFailure: boolean = true
+    suppressFailure: boolean = false
   ): Thenable<MINode> {
     const sel = this.currentToken++;
+    // These current DDB commands intentionally suppress their MI completion.
+    // HTTP returns a waited receipt; MI continues delivering async stop events.
+    if (/^(?:thread-select|exec-next|exec-step|exec-finish|record-time-and-next|record-time-and-step|record-time-and-finish|send-signal)(?:\s|$)/.test(command)) {
+      if (this.printCalls) this.log("log", `HTTP: -${command}`);
+      return ddb_api.executeCommand(`-${command}`).then(result =>
+        new MINode(sel, [], {resultClass: result.status, results: miValue(result.payload || {})})
+      ).catch(error => {
+        const diagnostic = error instanceof Error ? error.message : String(error);
+        if (!suppressFailure) throw new MIError(diagnostic, command);
+        this.log("stderr", `WARNING: Error executing command '${command}': ${diagnostic}`);
+        return new MINode(sel, [], {resultClass: "error", results: [["msg", diagnostic]]});
+      });
+    }
     return new Promise((resolve, reject) => {
+      this.commandRejectors.set(sel, reject);
       this.handlers[sel] = (node: MINode) => {
+        this.commandRejectors.delete(sel);
         if (
           node &&
           node.resultRecords &&
           node.resultRecords.resultClass === "error"
         ) {
           if (suppressFailure) {
-            this.log("stderr", `WARNING: Error executing command '${command}'`);
+            this.log("stderr", `WARNING: Error executing command '${command}': ${node.result("msg") || "Internal error"}`);
             resolve(node);
           } else
             reject(
@@ -1359,9 +1335,23 @@ export class MI2 extends EventEmitter implements IBackend {
             );
         } else resolve(node);
       };
-      this.sendRaw(sel + "-" + command);
+      try {
+        this.sendRaw(sel + "-" + command);
+      } catch (error) {
+        delete this.handlers[sel];
+        this.commandRejectors.delete(sel);
+        reject(error);
+      }
       // this.log("log", `--> ${sel}-${command}\n`);
     });
+  }
+
+  private commandRejectors = new Map<number, (error: Error) => void>();
+
+  private rejectPendingCommands(error: Error): void {
+    for (const reject of this.commandRejectors.values()) reject(error);
+    this.commandRejectors.clear();
+    this.handlers = {};
   }
 
   isReady(): boolean {

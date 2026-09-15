@@ -650,41 +650,52 @@ export class MI2DebugSession extends DebugSession {
     });
     this.threadIdToSessionId.set(threadId, session_id);
 
-    let thread_response = await this.miDebugger.sendCommand(
-      `thread-info --thread ${threadId}`
-    );
-
-    // Check if thread was deleted while we were waiting (by threadExitedEvent)
-    if (!this.m_threads.has(threadId)) {
-      return;
-    }
-
-    const thread_info = thread_response.result("threads");
-    if (thread_info.length != 1) {
-      // No valid thread info, remove the pending entry
-      this.m_threads.delete(threadId);
-      this.threadIdToSessionId.delete(threadId);
-      return;
-    }
-    const name = MINode.valueOf(thread_info[0], "name");
-    const target_id = MINode.valueOf(thread_info[0], "target-id");
-    const parsed_tid_result = this.tryGetTidFromTargetId(target_id);
-    let parsed_target_id = 0;
-    if (parsed_tid_result.success) {
-      parsed_target_id = parsed_tid_result.tid;
-    }
-
-    // Update the thread with full info (no longer pending)
-    this.m_threads.set(threadId, {
-      id: threadId,
-      name: `${name} [tid=${parsed_target_id}, sid=${session_id}], ddb_tid=${threadId}`,
-      groupId: groupId,
-    });
-    let thread_state = MINode.valueOf(thread_info[0], "state");
+    // Metadata may lag thread-created while DDB registers the owning session.
+    // Publish the thread now so stopped events always refer to a known thread.
     this.sendEvent(new ThreadEvent("started", threadId));
-    if (thread_state == "stopped" && this.bufferedStopEvents.has(threadId)) {
-      this.sendEvent(this.bufferedStopEvents.get(threadId)!);
-      this.bufferedStopEvents.delete(threadId);
+    const pendingThread = this.m_threads.get(threadId);
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (this.quit || this.m_threads.get(threadId) !== pendingThread) return;
+      try {
+        const response = await this.miDebugger.sendCommand(
+          `thread-info --thread ${threadId}`, false
+        );
+        // Also handle backends that return an error record rather than reject.
+        if (response.resultRecords?.resultClass === "error") {
+          throw new Error(response.result("msg") || "Thread query failed");
+        }
+        if (this.m_threads.get(threadId) !== pendingThread) return;
+        const threads = response.result("threads");
+        const thread = Array.isArray(threads)
+          ? threads.find(item => Number(MINode.valueOf(item, "id")) === threadId)
+          : undefined;
+        if (!thread) throw new Error(`Thread ${threadId} missing from thread-info response`);
+        const name = MINode.valueOf(thread, "name") || `Thread ${threadId}`;
+        const targetId = MINode.valueOf(thread, "target-id") || "";
+        const tid = this.tryGetTidFromTargetId(targetId);
+        this.m_threads.set(threadId, {
+          id: threadId,
+          name: `${name} [tid=${tid.tid}, sid=${session_id}], ddb_tid=${threadId}`,
+          groupId,
+          pending: false,
+        });
+        return;
+      } catch (error) {
+        if (this.quit || this.m_threads.get(threadId) !== pendingThread) return;
+        const message = error instanceof Error || error instanceof MIError ? error.message : String(error);
+        const registering = /^Session \d+ does not exist$/.test(message);
+        if (registering && attempt < 49) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          continue;
+        }
+        // Keep the thread usable even when optional display metadata fails.
+        this.m_threads.set(threadId, {
+          id: threadId, name: `Thread ${threadId} [sid=${session_id}]`,
+          groupId, pending: false,
+        });
+        this.miDebugger.log("stderr", `Could not load thread ${threadId}: ${message}`);
+        return;
+      }
     }
   }
 
@@ -695,6 +706,7 @@ export class MI2DebugSession extends DebugSession {
     // Thread will always be in m_threads (added immediately by threadCreatedEvent)
     this.m_threads.delete(threadId);
     this.threadIdToSessionId.delete(threadId);
+    this.bufferedStopEvents.delete(threadId);
     this.sendEvent(new ThreadEvent("exited", threadId));
   }
 
@@ -771,12 +783,14 @@ export class MI2DebugSession extends DebugSession {
           name = `${parent.name}.${name}`;
         }
 
-        const res = await this.miDebugger.varAssign(name, args.value);
+        const res = await this.miDebugger.varAssign(name, args.value, parent instanceof VariableScope || parent instanceof VariableObject ? parent.threadId : 0);
         response.body = {
           value: res.result("value"),
         };
       } else {
-        await this.miDebugger.changeVariable(args.name, args.value);
+        const scope = this.variableHandles.get(args.variablesReference);
+        if (!(scope instanceof VariableScope)) throw new Error("Variable assignment requires a frame scope");
+        await this.miDebugger.changeVariable(args.name, args.value, scope.threadId, scope.level);
         response.body = {
           value: args.value,
         };
@@ -835,7 +849,25 @@ export class MI2DebugSession extends DebugSession {
     args: any,
     request?: DebugProtocol.Request
   ): Promise<void> {
-    if (command.includes("setSessionBreakpoints")) {
+    try {
+      await this.handleCustomRequest(command, response, args, request);
+    } catch (error) {
+      if (command === "setSessionBreakpoints") {
+        const deferred = this.getOrCreateBkptRequest(args.seq);
+        deferred.reject(error);
+        deferred.resolved = true;
+      }
+      this.sendErrorResponse(response, 9, `DDB request failed: ${error}`);
+    }
+  }
+
+  private async handleCustomRequest(
+    command: string,
+    response: DebugProtocol.Response,
+    args: any,
+    request?: DebugProtocol.Request
+  ): Promise<void> {
+    if (command === "setSessionBreakpoints") {
       console.log("setSessionBreakpoints", args);
       OTelService.log_trace(`setSessionBreakpoints: ${JSON.stringify(args)}`);
       const bkptArgs = args.arguments as DebugProtocol.SetBreakpointsArguments;
@@ -850,7 +882,7 @@ export class MI2DebugSession extends DebugSession {
       const removePromises: Promise<boolean>[] = [];
       const breakpoints = bkptArgs.breakpoints ?? [];
       for (const [pathLineId, bkpt] of this.miDebugger.breakpoints) {
-        if (pathLineId.startsWith(path)) {
+        if (this.miDebugger.getFileFromBreakpointId(pathLineId) === path) {
           const found = breakpoints.find(
             (brk) =>
               brk.line == this.miDebugger.getLineFromBreakpointId(pathLineId)
@@ -878,7 +910,9 @@ export class MI2DebugSession extends DebugSession {
           const needUpdate =
             existedBreakpoint.condition !== (bkpt.condition ?? "") ||
             existedBreakpoint.countCondition !== (bkpt.hitCondition ?? "") ||
-            existedBreakpoint.logMessage !== (bkpt.logMessage ?? "");
+            existedBreakpoint.logMessage !== (bkpt.logMessage ?? "") ||
+            JSON.stringify(existedBreakpoint.subbkpts.map(b => `${b.type}:${b.target}`).sort()) !==
+              JSON.stringify((bkpt.subbkpts ?? []).map(b => `${b.type}:${b.target}`).sort());
 
           if (needUpdate) {
             await this.miDebugger.removeBreakPoint(existedBreakpoint);
@@ -916,7 +950,7 @@ export class MI2DebugSession extends DebugSession {
         };
         allResponse.push(breakpoint);
 
-        if (bkptId.startsWith(path)) {
+        if (this.miDebugger.getFileFromBreakpointId(bkptId) === path) {
           breakpointsResponse.push(breakpoint);
         }
       }
@@ -935,7 +969,7 @@ export class MI2DebugSession extends DebugSession {
     }
     // continue
     if (command == "continue") {
-      const session_id = args.session_id;
+      const session_id = args.sessionId ?? args.session_id;
 
       new Promise((resolve, reject) => {
         if (trace)
@@ -944,7 +978,7 @@ export class MI2DebugSession extends DebugSession {
             `custom continueRequest session_id: ${session_id}`
           );
         this.miDebugger
-          .sendCommand(`record-time-and-continue --session ${session_id}`)
+          .sendCommand(`exec-continue --session ${session_id}`)
           .then((info) => {
             // this.markSessionRunning(session_id);
             resolve(info.resultRecords.resultClass == "done");
@@ -994,13 +1028,16 @@ export class MI2DebugSession extends DebugSession {
         return;
       }
 
-      this.miDebugger.sendCommand(
-        `send-signal ${signame} --session ${session_id}`
-      );
-      this.sendResponse(response);
+      try {
+        await this.miDebugger.sendCommand(`send-signal ${signame} --session ${session_id}`);
+        this.sendResponse(response);
+      } catch (error) {
+        this.sendErrorResponse(response, 4, `Could not send signal: ${error}`);
+      }
       return;
     }
   }
+
   private bkptRequests: Map<number, DeferredBreakpointRequest> = new Map();
   private bkptmap = new Map<string, DebugProtocol.SourceBreakpoint[]>();
 
@@ -1016,6 +1053,8 @@ export class MI2DebugSession extends DebugSession {
           reject = rej;
         }
       );
+      // The extension's custom request may finish before the DAP request arrives.
+      void promise.catch(() => undefined);
       this.bkptRequests.set(seq, {
         promise,
         resolve: resolve!,
@@ -1396,7 +1435,7 @@ export class MI2DebugSession extends DebugSession {
     if (id instanceof VariableScope) {
       try {
         if (id.name == "Registers") {
-          const registers = await this.miDebugger.getRegisters();
+          const registers = await this.miDebugger.getRegisters(id.threadId);
           for (const reg of registers) {
             variables.push({
               name: reg.name,
@@ -1483,7 +1522,7 @@ export class MI2DebugSession extends DebugSession {
               if (variable.valueStr !== undefined) {
                 let expanded = expandValue(
                   createVariable,
-                  `{${variable.name}=${variable.valueStr})`,
+                  `{${variable.name}=${variable.valueStr}}`,
                   "",
                   variable.raw
                 );
@@ -1526,7 +1565,7 @@ export class MI2DebugSession extends DebugSession {
       try {
         // TODO: this evaluates on an (effectively) unknown thread for multithreaded programs.
         variable = await this.miDebugger.evalExpression(
-          JSON.stringify(id),
+          id,
           0,
           0,
           0
@@ -1610,7 +1649,7 @@ export class MI2DebugSession extends DebugSession {
           const addOne = async () => {
             // TODO: this evaluates on an (effectively) unknown thread for multithreaded programs.
             const variable = await this.miDebugger.evalExpression(
-              JSON.stringify(`${varReq.name}+${arrIndex})`),
+              `${varReq.name}+${arrIndex})`,
               0,
               0,
               0
@@ -1704,8 +1743,10 @@ export class MI2DebugSession extends DebugSession {
     } else {
       command += ` --all`;
     }
-    this.miDebugger.sendCommand(command);
-    this.sendResponse(response);
+    this.miDebugger.sendCommand(command).then(
+      () => this.sendResponse(response),
+      error => this.sendErrorResponse(response, 3, `Could not pause: ${error}`)
+    );
     // .then(
     // 	(info) => {
     // 		if (info.resultRecords.resultClass === "done") {
@@ -1749,7 +1790,7 @@ export class MI2DebugSession extends DebugSession {
     //@ts-ignore
     OTelService.log_trace(`[activity] continue thread=${args.threadId} session=${args.sessionId}`);
     // let command = "exec-continue"
-    let command = "record-time-and-continue";
+    let command = "exec-continue";
     //@ts-ignore
     const sessionId: number | undefined = args.sessionId;
     if (sessionId != undefined) {

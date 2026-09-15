@@ -272,7 +272,11 @@ export class NotificationService {
   private handleMessage(data: WebSocket.Data): void {
     try {
       const message = data.toString();
-      const notification: Notification = JSON.parse(message);
+      const notification = JSON.parse(message);
+      if (notification?.type === "welcome") return;
+      if (notification?.version !== 1 || typeof notification?.payload?.type !== "string") {
+        throw new Error("Unsupported DDB notification envelope");
+      }
 
       console.log(
         `[NotificationService] Received notification: ${notification.payload.type}`

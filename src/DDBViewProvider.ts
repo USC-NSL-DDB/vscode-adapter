@@ -830,6 +830,8 @@ export function activate(context: vscode.ExtensionContext) {
           sessionManager.stopAutoRefresh(); // Stop polling
           breakpointManager.setWebSocketActive(true);
           breakpointManager.stopAutoRefresh(); // Stop polling
+          Promise.all([sessionManager.updateAll(), breakpointManager.updateAll()])
+            .catch(error => logger.error("Failed to refresh DDB state after reconnect:", error));
         } else {
           logger.debug(
             "[DDBViewProvider] WebSocket disconnected, enabling polling fallback"

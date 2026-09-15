@@ -8,7 +8,7 @@
     "ddb"
   ],
   "license": "public domain",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "publisher": "ddb",
   "icon": "images/ddbicon.webp",
   "engines": {
@@ -751,7 +751,7 @@
   },
   "scripts": {
     "vscode:prepublish": "tsc -p ./",
-    "test": "mocha",
+    "test": "tsc -p ./ && mocha",
     "coverage": "nyc npm test",
     "compile": "tsc -watch -p ./",
     "lint": "eslint . --ext .ts --format compact",
@@ -760,7 +760,8 @@
     "lint-docs": "markdownlint **/*.md",
     "link-check": "markdown-link-check *.md",
     "prettier-write-docs": "prettier --write **/*.md",
-    "prettier-check-docs": "prettier --check **/*.md"
+    "prettier-check-docs": "prettier --check **/*.md",
+    "test:integration": "tsc -p ./ && node -e \"if (!process.env.DDB_TEST_BINARY) throw new Error('Set DDB_TEST_BINARY to the current DDB executable')\" && mocha --no-config --ui tdd out/src/test/integration/**/*.test.js"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",

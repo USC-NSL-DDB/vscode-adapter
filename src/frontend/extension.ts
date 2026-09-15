@@ -1191,6 +1191,14 @@ export async function activate(context: vscode.ExtensionContext) {
     )
   );
 
+  context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider("ddb", {
+    resolveDebugConfiguration(_folder, config) {
+      // The adapter runs in a separate Node process without the vscode module.
+      config.serviceUrl = ddb_api.getServiceUrl();
+      return config;
+    },
+  }));
+
   vscode.debug.registerDebugAdapterTrackerFactory(
     "ddb",
     new MyDebugAdapterTrackerFactory()
