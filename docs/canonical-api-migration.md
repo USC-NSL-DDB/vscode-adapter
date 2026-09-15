@@ -824,3 +824,16 @@ Sessions and back, and that selecting an individual session creates a canonical
 session-targeted breakpoint. It checks rendered Groups/Sessions labels, the
 execution-line session/thread annotation, and focused-frame status-bar metadata.
 Disconnect clears the rendered execution annotation. All these checks pass.
+
+## Sidebar control verification
+
+The sidebar Kill Session callback sent SIGINT despite promising termination.
+It now sends SIGKILL after confirmation. Controls capture their owning DDB debug
+session, await completion, and report rejected requests. Closing a signal picker
+while its list is loading disposes its handlers and ignores the late response.
+
+Validation: 114 unit tests pass. The real VS Code/GDB extension-host scenario
+resumes and pauses through sidebar commands, loads the signal list, selects
+SIGKILL, and verifies that no inferior threads remain. Modal confirmation uses
+callback tests because VS Code refuses modal dialogs in extension-test mode.
+This change does not modify the DDB backend.

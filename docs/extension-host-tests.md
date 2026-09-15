@@ -5,7 +5,8 @@ profile. The test uses GDB and a temporary C program, activates the extension,
 refreshes and groups the sidebar, opens the focused source frame, steps through
 VS Code, requests scopes, selects a pre-existing enabled breakpoint group through Quick Pick during
 launch, disables
-and re-enables that breakpoint, and disconnects. It fails on unhandled promise
+and re-enables that breakpoint, resumes and pauses through sidebar commands,
+selects SIGKILL through the signal picker, verifies process exit, and disconnects. It fails on unhandled promise
 rejections or refresh-error diagnostics from the extension host.
 
 Requirements: a Linux VS Code executable, a running X display, `cc`, `gdb`, and
@@ -60,3 +61,9 @@ npm run test:extension
 
 For packaged stdio tests, set DDB_TEST_ADAPTER to the extracted
 `extension/out/src/gdb.js` and run the compiled canonical_stdio integration test.
+
+The modal Kill Session confirmation is covered by callback tests because VS Code
+refuses modal dialogs in extension-test mode. Those tests verify confirmation,
+cancellation, owning-session capture, awaited control failures, and signal-picker
+cancellation during loading. The real extension-host test covers delivery of the
+same SIGKILL signal to GDB.
