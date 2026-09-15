@@ -13,6 +13,8 @@ import { BreakpointManager } from "../common/ddb_breakpoint_mgr";
 import * as ddb_api from "../common/ddb_dap_api";
 import { Session, SubBreakpoint } from "../common/ddb_dap_api";
 import { SubBkpt, SubBkptType } from "../backend/backend";
+import { getOTelConfig } from "../common/otel/config";
+import { backendTelemetryArguments } from "../common/ddb_launch_telemetry";
 import { OTelService } from "../common/otel";
 import {
   getOrCreateUserId,
@@ -1188,9 +1190,17 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider("ddb", {
-    resolveDebugConfiguration(_folder, config) {
+    async resolveDebugConfiguration(_folder, config) {
       // The adapter runs in a separate Node process without the vscode module.
       config.pairedBreakpointRequests = true;
+      if (config.request === "launch" && !config.apiEndpoint) {
+        const telemetry = getOTelConfig("ddb", "", "");
+        if (telemetry.enabled) {
+          telemetry.userId = await getOrCreateUserId();
+          telemetry.sessionId = generateSessionId();
+          config.debugger_args = backendTelemetryArguments(config.debugger_args ?? [], telemetry);
+        }
+      }
       return config;
     },
   }));

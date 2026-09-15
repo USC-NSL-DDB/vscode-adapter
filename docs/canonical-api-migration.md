@@ -39,7 +39,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | External endpoint | SDK endpoint and bearer token, disconnect without shutdown | Real DAP attach/disconnect leaves the existing server responsive; owner shutdown removes process and private startup directory |
 | Session/group/thread discovery | Snapshot and replayed resource upserts/tombstones | Connection, DAP view models and frontend facade tested |
 | Thread selection | SelectThread operation | Connection tested |
-| Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging, multi-page source reads and inaccessible-path source-reference fallback tested; remote mapping and GUI navigation pending |
+| Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging, multi-page source reads and inaccessible-path source-reference fallback tested; local-file and debugger-source GUI navigation tested; remote path mapping remains unverified |
 | Distributed stack and boundary labels | RunDistributedBacktrace typed frames | Pending |
 | Locals and expansion | ListScopes, ListVariables, ExpandVariable | DAP handlers implemented; root/array expansion and compound-watch expansion tested with real GDB |
 | Registers | ListRegisters | DAP handler tested with mock and GDB |
@@ -47,13 +47,13 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Variable assignment | Evaluate assignment if supported; backend escape hatch otherwise | Root and array-child DAP assignment tested with real GDB |
 | Source/function breakpoints | Create/Update/DeleteBreakpoint operations | Source and function creation, conditions, real hits, replacement and deletion tested with patched DDB |
 | Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Group selection, verified member projection and paired requests tested; streamed verification refresh implemented |
-| Conditions, hit counts, enable/disable, logpoints | Typed conditions/counts; adapter evaluates and continues logpoint stops | Conditions, hit conditions and logpoints tested; enable/disable UI audit pending |
+| Conditions, hit counts, enable/disable, logpoints | Typed conditions/counts; adapter evaluates and continues logpoint stops | Conditions, hit conditions and logpoints tested; real VS Code disable/re-enable preserves editor entries and group selection |
 | Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | DAP next/step-in/step-out, session-specific continue/pause, peer all-stop coordination and stopped-frame metadata tested with patched GDB |
 | Signals and session kill | ListSignals and v2 raw signal command | DAP list/validation tested on mock/GDB; SIGKILL tested on GDB |
 | Jump to line | Temporary canonical breakpoint followed by Execute JUMP | Local GDB destination stop, consumed breakpoint and invalid targets tested; remote source mapping remains unverified |
 | Debug Console, autorun, path substitution | Canonical raw-command escape hatch where typed APIs do not cover the command | Implemented with focused-frame CLI/raw console and per-session setup; entrypoint tests cover autorun and substitution |
 | Memory reads | ReadMemory | Real GDB bytes, positive/negative offsets, empty reads and limits tested; memory-view UI still unverified |
-| Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Real VS Code activation, sidebar refresh/grouping and disconnect tested; breakpoint dialogs and rendered decorations pending |
+| Sidebar refresh, grouping, breakpoint/source decorations | Custom DAP requests/events from shared projection | Real VS Code activation, sidebar refresh/grouping and disconnect tested; group-selection dialog and disable/re-enable tested; session-selection toggles and rendered decorations pending |
 | Focused frame navigation | Frame metadata lookup through DAP, no bit decoding | Focused-frame source navigation passes in a real VS Code host; status/decorations audit remains |
 | Reconnect, replay gap, output gap, restart | SDK recovery, projection rehydration, explicit loss/restart handling | Real HTTP socket interruption tests cover cursor resume, output gaps, state replay-gap rehydration and changed-instance rejection; managed-child crash termination tested |
 
@@ -78,7 +78,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 90 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 103 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -637,3 +637,22 @@ credential/payload exclusion. This setting now describes canonical API calls
 rather than obsolete MI command transport.
 
 Validation: 100 unit tests and six canonical integration tests pass.
+
+
+## Telemetry configuration checkpoint
+
+The extension-host telemetry service and activity hooks remain in place. The
+old adapter's telemetry initialization emitted only a startup log; session
+activity is already recorded by the extension host. The canonical process does
+not create a duplicate exporter.
+
+Managed launch now forwards enabled extension telemetry settings, collector
+endpoint, user ID, and a generated session ID through DDB's current CLI flags.
+Disabled settings add no telemetry flags. Explicit debugger_args values take
+precedence, and repeated configuration resolution does not duplicate flags.
+External attach does not reconfigure the existing server. The normal environment
+and VS Code settings precedence remains in getOTelConfig.
+
+Argument tests use local fixture values without contacting a collector. The
+extension-host suite runs with OTEL_SDK_DISABLED=true. Remote collector delivery
+is not exercised by the migration tests.
