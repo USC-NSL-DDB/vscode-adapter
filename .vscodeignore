@@ -25,3 +25,5 @@ tsconfig.json
 vsc-extension-quickstart.md
 gdb.txt
 sampleWorkSpace
+# The SDK is installed under node_modules; its install archive is not needed.
+vendor/**

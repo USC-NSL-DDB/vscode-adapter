@@ -18,7 +18,7 @@ suite("Canonical adapter entrypoint", function () {
 			execFileSync("cc", ["-g", "-O0", join(directory, "main.c"), "-o", executable]);
 		}
 		await writeFile(config, `Framework: unspecified\nConf:\n  auto_shutdown: false\n  on_exit: kill\n  base_dir: ${JSON.stringify(join(directory, "base"))}\n  log_dir: ${JSON.stringify(join(directory, "logs"))}\n  Debugger:\n    backend: ${backend}\nStaticSessions:\n  - tag: stdio\n    alias: stdio\n    hash: stdio-group\n    pid: 4501\n${backend === "gdb" ? `    start_mode: binary\n    binary_path: ${JSON.stringify(executable)}\n    stop_at_entry: true\n` : ""}`);
-		const child = spawn(process.execPath, [fileURLToPath(new URL("../../gdb.js", import.meta.url))], { stdio: ["pipe", "pipe", "pipe"], detached: true });
+		const child = spawn(process.execPath, [process.env.DDB_TEST_ADAPTER ?? fileURLToPath(new URL("../../gdb.js", import.meta.url))], { stdio: ["pipe", "pipe", "pipe"], detached: true });
 		let sequence = 0;
 		let buffer = Buffer.alloc(0);
 		let stderr = "";

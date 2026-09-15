@@ -476,3 +476,21 @@ deduplication, local-file behavior and missing-source fallback. Validation:
 86 unit tests and six canonical integration tests pass. The fallback tests
 use a controlled service; actual VS Code navigation between different hosts
 and remote path mappings remain unverified.
+
+## Manifest and package checkpoint
+
+The initial configuration and snippets now launch type ddb with a YAML file
+or attach to apiEndpoint. External attach requires apiEndpoint and advertises
+apiToken and distributedStack. Descriptions for managed process arguments,
+environment overrides and startup output now match the canonical launcher.
+Legacy configuration properties remain subject to the full migration audit;
+replacing obsolete GDB snippets does not establish support for those settings.
+
+A development VSIX was built at /tmp/ddb-canonical-migration.vsix. Its extracted
+copy contains the canonical entrypoint, ESM adapter modules, frontend and
+installed TypeScript SDK. The SDK installation archive is excluded from the
+package. Both mock and GDB stdio tests passed against the extracted adapter,
+including sidebar queries, distributed stack, autorun/substitution and shutdown.
+The test runner accepts DDB_TEST_ADAPTER to repeat these checks on a packaged
+entrypoint. This development artifact is not a completed migration release,
+and a real VS Code extension-host/UI run is still required.
