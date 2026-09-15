@@ -41,7 +41,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Thread selection | SelectThread operation | Connection tested |
 | Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging, multi-page source reads and inaccessible-path source-reference fallback tested; local-file and debugger-source GUI navigation tested; remote path mapping remains unverified |
 | Distributed stack and boundary labels | RunDistributedBacktrace typed frames | Pending |
-| Locals and expansion | ListScopes, ListVariables, ExpandVariable | DAP handlers implemented; root/array expansion and compound-watch expansion tested with real GDB |
+| Locals and expansion | ListScopes, ListVariables, ExpandVariable | Root/array expansion, C++ vectors, nested and empty dynamic containers, scopes and caller-frame watches tested with real GDB |
 | Registers | ListRegisters | DAP handler tested with mock and GDB |
 | Watch and hover | Evaluate with frame ID and evaluation context | Scalar and compound DAP watches, hover and watch-child assignment tested |
 | Variable assignment | Evaluate assignment if supported; backend escape hatch otherwise | Root and array-child DAP assignment tested with real GDB |
@@ -656,3 +656,21 @@ and VS Code settings precedence remains in getOTelConfig.
 Argument tests use local fixture values without contacting a collector. The
 extension-host suite runs with OTEL_SDK_DISABLED=true. Remote collector delivery
 is not exercised by the migration tests.
+
+
+## C++ value inspection checkpoint
+
+A real C++/GDB fixture now checks non-top-frame evaluation with shadowed names,
+std::string presentation, paged std::vector expansion, scope-derived vectors,
+nested vectors, and assignment through their child handles.
+
+The nested-vector test reproduced missing expansion handles. GDB's dynamic
+pretty printers report child vector rows with dynamic=1 and numchild=0 before
+expansion. The adapter now treats that count as deferred for containers and
+requests their children. String display hints remain leaves. The regression
+also checks an empty nested container expands to an empty list.
+
+The fixture uses the ordinary launch/configurationDone path, so it covers
+pretty-printer setup as well as inspection. No backend change was needed.
+
+Validation: 103 unit tests and seven canonical integration tests pass.

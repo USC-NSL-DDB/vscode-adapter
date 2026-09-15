@@ -21,8 +21,13 @@ function count(fields: Fields): number {
 	if (!Number.isSafeInteger(value) || value < 0) throw new Error("DDB returned an invalid variable child count");
 	return value;
 }
+function childCount(fields: Fields): number {
+	// Dynamic pretty printers can defer their count until children are requested.
+	const deferred = string(fields, "dynamic") === "1" && string(fields, "displayhint") !== "string";
+	return Math.max(count(fields), string(fields, "has_more") === "1" || deferred ? 1 : 0);
+}
 function shape(fields: Fields): VariableShape {
-	return { name: string(fields, "exp") ?? string(fields, "name") ?? "?", value: string(fields, "value") ?? "", type: string(fields, "type"), children: Math.max(count(fields), string(fields, "has_more") === "1" ? 1 : 0) };
+	return { name: string(fields, "exp") ?? string(fields, "name") ?? "?", value: string(fields, "value") ?? "", type: string(fields, "type"), children: childCount(fields) };
 }
 
 /** Bounded v2 escape hatch for metadata absent from canonical variable resources.
@@ -96,7 +101,7 @@ export class RawVariables {
 	expand(context: ExpressionContext, start = 0, length = 1000): Promise<VariableShape[]> {
 		if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(length) || length < 1 || length > 10000) throw new Error("Invalid variable child range");
 		return this.withObject(context, async (name, fields) => {
-			if (count(fields) === 0 && string(fields, "has_more") !== "1") return [];
+			if (childCount(fields) === 0) return [];
 			return (await this.children(context.frame, name, start, length)).map(shape);
 		});
 	}
