@@ -198,15 +198,14 @@ interface SessionSelection {
 }
 
 async function promptForSessions(
-  source: DebugProtocol.Source
+  source: DebugProtocol.Source,
+  debugSession: vscode.DebugSession
 ): Promise<SessionSelection | undefined> {
   if (!source || !source.path) {
     vscode.window.showErrorMessage("Invalid source for breakpoint.");
     return undefined;
   }
   const src_path = path.normalize(source.path);
-  const sessionManager = SessionManager.getInstance();
-
   return new Promise(async (resolve) => {
     const quickPick = vscode.window.createQuickPick<SessionQuickPickItem>();
     quickPick.canSelectMany = true;
@@ -271,12 +270,13 @@ async function promptForSessions(
     let ungroupedSessions: ddb_api.Session[];
 
     try {
-      const [_, fetchedGroups] = await Promise.all([
-        sessionManager.immediateUpdateAll(),
-        sessionManager.fetchGroupsBySrc(src_path),
+      // Configuration requests can arrive before activeDebugSession is set.
+      const [sessionResponse, groupResponse] = await Promise.all([
+        debugSession.customRequest("ddb.getSessions"),
+        debugSession.customRequest("ddb.resolveSourceGroups", { src: src_path }),
       ]);
-
-      groups = fetchedGroups;
+      sessions = sessionResponse.sessions;
+      groups = groupResponse.grps;
 
       // Clear timeout since loading succeeded
       clearTimeout(timeoutId);
@@ -284,8 +284,6 @@ async function promptForSessions(
       if (timedOut) {
         return; // Already handled by timeout
       }
-
-      sessions = sessionManager.getAllSessions();
 
       if (!sessions || sessions.length === 0) {
         quickPick.dispose();
@@ -301,12 +299,12 @@ async function promptForSessions(
       }
 
       groupedSessions = new Map();
-      ungroupedSessions = sessionManager.getUngroupedSessions();
+      ungroupedSessions = sessions.filter(session => !session.group?.valid);
 
       for (const group of groups) {
         const groupId = group.id;
         if (groupId !== undefined) {
-          const sess = sessionManager.getSessionsByGroup(groupId);
+          const sess = sessions.filter(session => session.group?.valid && session.group.id === groupId);
           groupedSessions.set(groupId, sess);
         }
       }
@@ -597,7 +595,7 @@ async function handleSetBreakpoints(message: any, session: vscode.DebugSession, 
       !existingSelection ||
       existingSelection.subbkpts.length === 0
     ) {
-      const selection: SessionSelection | undefined = await promptForSessions(source);
+      const selection: SessionSelection | undefined = await promptForSessions(source, session);
       console.log("debug2", selection);
 
       const noSelection = (!selection) || selection.subbkpts.length === 0;

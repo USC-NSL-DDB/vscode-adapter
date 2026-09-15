@@ -754,3 +754,18 @@ breakpoint-selection prompts. No adapter empty-set bypass was retained.
 Validation: 105 unit tests and the real VS Code extension-host scenarios pass.
 VS Code can report cancellation of the overlapping breakpoint request during
 disconnect; no unhandled rejection or late sidebar-refresh error is accepted.
+
+
+## Enabled breakpoint startup checkpoint
+
+The extension-host scenario now creates an enabled source breakpoint before
+launch. It reproduced target selection querying SessionManager before the
+active session and cache were initialized. Source-group resolution failed and
+the breakpoint could not be configured.
+
+The selection dialog now fetches sessions and source groups through the owning
+DebugSession supplied by its tracker. Group and ungrouped membership are built
+from those responses, without depending on sidebar cache initialization.
+
+Validation: 105 unit tests and the real VS Code scenario pass, including initial
+group selection, stepping, disable/re-enable, and scoped disconnect cleanup.

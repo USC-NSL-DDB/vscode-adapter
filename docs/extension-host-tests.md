@@ -3,7 +3,8 @@
 Run the canonical adapter inside a real VS Code extension host with a dedicated
 profile. The test uses GDB and a temporary C program, activates the extension,
 refreshes and groups the sidebar, opens the focused source frame, steps through
-VS Code, requests scopes, selects a breakpoint group through Quick Pick, disables
+VS Code, requests scopes, selects a pre-existing enabled breakpoint group through Quick Pick during
+launch, disables
 and re-enables that breakpoint, and disconnects. It fails on unhandled promise
 rejections or refresh-error diagnostics from the extension host.
 
