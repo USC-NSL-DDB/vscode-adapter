@@ -42,8 +42,8 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | Registers | ListRegisters | DAP handler tested with mock and GDB |
 | Watch and hover | Evaluate with frame ID and evaluation context | Scalar and compound DAP watches, hover and watch-child assignment tested |
 | Variable assignment | Evaluate assignment if supported; backend escape hatch otherwise | Root and array-child DAP assignment tested with real GDB |
-| Source/function breakpoints | Create/Update/DeleteBreakpoint operations | Source insertion/deletion tested; function and DAP handlers pending |
-| Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Multiple-group creation tested; frontend pairing pending |
+| Source/function breakpoints | Create/Update/DeleteBreakpoint operations | DAP source creation, condition replacement and deletion tested; function support pending |
+| Session/group breakpoint selection, inheritance | Explicit canonical session/group/multiple target selectors | Group selection and paired DAP/custom requests tested in both arrival orders |
 | Conditions, hit counts, enable/disable, logpoints | Typed fields where supported; logpoints need explicit implementation | Pending |
 | Continue, pause, step in/out/over and all-stop coordination | Execute operations plus execution/thread state events | Next tested; remaining actions and DAP handlers pending |
 | Signals and session kill | ListSignals and Execute SIGNAL | Pending |
@@ -119,3 +119,30 @@ Additional confirmed variable gaps: Evaluate currently always returns no
 variableId, and expanded children have no evaluateName. The v2 variable-object bridge covers compound watch expansion and nested
 assignment for these cases. Framework pretty printers and nonzero stack levels
 still require broader integration coverage.
+
+## Breakpoint DAP checkpoint
+
+Source breakpoint reconciliation now uses CreateBreakpoint/DeleteBreakpoint,
+retains unchanged breakpoint IDs, serializes mutations, and preserves explicit
+session/group selection. The canonical DAP session supports the frontend's
+paired setBreakpoints/setSessionBreakpoints requests. Integration tests check
+both arrival orders, backend condition/target resources, and error completion
+for both paired requests. Unmatched requests are bounded and rejected at
+session disconnect.
+
+The sidebar's group query now has a DAP endpoint that allocates local handles.
+The old frontend has not yet been switched to it. Launch must explicitly enable
+pairedBreakpointRequests when using that frontend workflow; standard clients
+can use setBreakpoints directly.
+
+Full breakpoint parity remains unproven:
+
+- Function breakpoints and ignore counts are rejected by the current backend's
+  typed breakpoint implementation. A schema field alone does not establish
+  runtime support.
+- Logpoints and hit conditions remain explicitly unimplemented in the canonical
+  adapter. They must be implemented and exercised before switching entrypoints.
+- The backend reports group-only breakpoints as unverified even when their
+  installation operation succeeds. Its projection derives verified from direct
+  session sub-breakpoints only. The adapter preserves that flag; correcting the
+  status and testing an actual group breakpoint hit remain required.

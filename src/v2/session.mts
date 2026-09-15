@@ -2,6 +2,7 @@ import dap from "vscode-debugadapter";
 import type { DebugProtocol } from "vscode-debugprotocol";
 import type { ExecuteRequest, Thread as DdbThread, StateSyncItem, OutputEvent as DdbOutput } from "@ddb-debugger/api-client";
 import { DdbConnection } from "./connection.mjs";
+import { DdbBreakpoints } from "./breakpoints.mjs";
 import { DdbInspection } from "./inspection.mjs";
 
 const { DebugSession, InitializedEvent, TerminatedEvent, OutputEvent, StoppedEvent, ContinuedEvent, ThreadEvent, Event } = dap;
@@ -15,12 +16,20 @@ export interface CanonicalLaunchArguments extends DebugProtocol.LaunchRequestArg
 	apiToken?: string;
 	distributedStack?: boolean;
 	showDevDebugOutput?: boolean;
+	pairedBreakpointRequests?: boolean;
 }
 
 /** Canonical DAP implementation. Activated once the remaining parity handlers land. */
 export class CanonicalDebugSession extends DebugSession {
 	private connection?: DdbConnection;
 	private inspection?: DdbInspection;
+	private breakpoints?: DdbBreakpoints;
+	protected pairedBreakpoints = false;
+	private readonly breakpointRequests = new Map<number, {
+		promise: Promise<DebugProtocol.Breakpoint[]>;
+		resolve: (value: DebugProtocol.Breakpoint[]) => void;
+		reject: (error: unknown) => void;
+	}>();
 	private readonly knownThreads = new Map<string, DdbThread>();
 	private stateTask?: Promise<void>;
 	private outputTask?: Promise<void>;
@@ -32,6 +41,7 @@ export class CanonicalDebugSession extends DebugSession {
 	protected override initializeRequest(response: DebugProtocol.InitializeResponse): void {
 		response.body = {
 			supportsConfigurationDoneRequest: true,
+			supportsConditionalBreakpoints: true,
 			supportsEvaluateForHovers: true,
 			supportsSetVariable: true,
 			supportsReadMemoryRequest: true,
@@ -42,6 +52,7 @@ export class CanonicalDebugSession extends DebugSession {
 	protected override async launchRequest(response: DebugProtocol.LaunchResponse, args: CanonicalLaunchArguments): Promise<void> {
 		await this.reply(response, async () => {
 			this.distributed = args.distributedStack ?? false;
+			this.pairedBreakpoints = args.pairedBreakpointRequests ?? false;
 			if (!args.apiEndpoint && !args.configFilePath) throw new Error("Set configFilePath for managed DDB, or apiEndpoint for an existing server");
 			const connection = args.apiEndpoint
 				? await DdbConnection.connect({ endpoint: args.apiEndpoint, bearerToken: args.apiToken ?? process.env.DDB_API_TOKEN })
@@ -64,6 +75,7 @@ export class CanonicalDebugSession extends DebugSession {
 		if (this.connection) throw new Error("A DDB connection is already active");
 		this.connection = connection;
 		this.inspection = new DdbInspection(connection);
+		this.breakpoints = new DdbBreakpoints(this.inspection);
 		let readyResolve!: () => void;
 		let readyReject!: (error: unknown) => void;
 		const ready = new Promise<void>((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
@@ -171,6 +183,51 @@ export class CanonicalDebugSession extends DebugSession {
 		await this.reply(response, () => this.model.readSource(args.sourceReference));
 	}
 
+	private breakpointPair(seq: number) {
+		let pair = this.breakpointRequests.get(seq);
+		if (!pair) {
+			if (this.breakpointRequests.size >= 1024) throw new Error("Too many unmatched breakpoint requests");
+			let resolve!: (value: DebugProtocol.Breakpoint[]) => void;
+			let reject!: (error: unknown) => void;
+			const promise = new Promise<DebugProtocol.Breakpoint[]>((done, fail) => { resolve = done; reject = fail; });
+			void promise.catch(() => undefined);
+			pair = { promise, resolve, reject };
+			this.breakpointRequests.set(seq, pair);
+		}
+		return pair;
+	}
+
+	protected override async setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): Promise<void> {
+		await this.reply(response, async () => {
+			if (!this.breakpoints) throw new Error("DDB is not connected");
+			if (!this.pairedBreakpoints) return { breakpoints: await this.breakpoints.set(args.source.path ?? "", args.breakpoints ?? [], args.sourceModified) };
+			try { return { breakpoints: await this.breakpointPair(response.request_seq).promise }; }
+			finally { this.breakpointRequests.delete(response.request_seq); }
+		});
+	}
+
+	protected override async customRequest(command: string, response: DebugProtocol.Response, args: any): Promise<void> {
+		if (command === "ddb.getGroups") {
+			await this.reply(response, async () => ({ groups: this.model.connection.state.all("group").map(group => ({
+				id: this.model.groupHandles.put(group.groupId!, group.groupId!), alias: group.displayName ?? "Group",
+				hash: group.groupId!, sids: (group.sessionIds ?? []).map(id => this.model.sessionHandle(id)),
+			})) }));
+			return;
+		}
+		if (command !== "setSessionBreakpoints") { super.customRequest(command, response, args); return; }
+		await this.reply(response, async () => {
+			if (!Number.isInteger(args.seq)) throw new Error("Original breakpoint request sequence is required");
+			const pair = this.breakpointPair(args.seq);
+			try {
+				if (!this.breakpoints) throw new Error("DDB is not connected");
+				const request = args.arguments as DebugProtocol.SetBreakpointsArguments;
+				const result = await this.breakpoints.set(request.source.path ?? "", request.breakpoints ?? [], request.sourceModified);
+				pair.resolve(result);
+				return { breakpoints: this.breakpoints.all() };
+			} catch (error) { pair.reject(error); throw error; }
+		});
+	}
+
 	protected override async nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): Promise<void> {
 		await this.execute(response, () => ({ target: this.model.threadTarget(args.threadId), action: "EXECUTION_ACTION_NEXT" }));
 	}
@@ -208,6 +265,8 @@ export class CanonicalDebugSession extends DebugSession {
 	protected override async disconnectRequest(response: DebugProtocol.DisconnectResponse): Promise<void> {
 		await this.reply(response, async () => {
 			this.closing = true;
+			for (const pair of this.breakpointRequests.values()) pair.reject(new Error("DDB disconnected"));
+			this.breakpointRequests.clear();
 			await this.connection?.close();
 			await Promise.all([this.stateTask, this.outputTask]);
 			this.sendEvent(new TerminatedEvent());
