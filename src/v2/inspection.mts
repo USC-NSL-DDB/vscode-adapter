@@ -186,10 +186,14 @@ export class DdbInspection {
 		const sourceReference = this.sources.get(reference);
 		let line = 1;
 		let content = "";
+		let contentHash: string | undefined;
 		for (;;) {
 			const { source } = await this.connection.client.call("DebuggerService.ReadSource", { sourceReference, startLine: line, maxLines: 1000 });
 			if (!source) throw new Error("DDB omitted source content");
-			content += source.content ?? "";
+			if (source.startLine !== line) throw new Error("DDB returned the wrong source page");
+			if (line === 1) contentHash = source.source?.contentHash;
+			else if (contentHash !== source.source?.contentHash) throw new Error("Source changed while reading; request it again");
+			content += (line > 1 && source.lineCount ? "\n" : "") + (source.content ?? "");
 			if (Buffer.byteLength(content) > 16 * 1024 * 1024) throw new Error("Source exceeds the 16 MiB display limit");
 			if (!source.hasMore) return { content, mimeType: source.source?.mediaType };
 			if (!source.lineCount) throw new Error("DDB source pagination did not advance");

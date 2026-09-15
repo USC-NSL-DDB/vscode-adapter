@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { CanonicalHarness } from "./helpers/canonical_session.mjs";
+import { DdbInspection } from "../../v2/inspection.mjs";
 import { DdbConnection } from "../../v2/connection.mjs";
 
 async function until(predicate: () => boolean, detail: string) {
@@ -29,6 +30,7 @@ suite("Canonical DDB binary", function () {
 				const source = join(dir, "main.c");
 				const executable = join(dir, "main");
 				await writeFile(source, '#include <unistd.h>\nint tick(int); int main(void) {\n int counter = 42; int values[2] = {3, 5};\n while (counter) {\n  sleep(1);\n  counter = tick(counter);\n }\n return 0;\n}\nint tick(int counter) { return counter - 1; }\n');
+				await writeFile(source, (await readFile(source, "utf8")) + "// source pagination fixture\n".repeat(1005));
 				if (backend === "gdb") execFileSync("cc", ["-g", "-O0", source, "-o", executable]);
 				const config = join(dir, "ddb.yaml");
 				const sessions = [1, 2].map(id => `  - tag: session-${id}\n    alias: session-${id}\n    hash: group-${id}\n    pid: ${4400 + id}\n` + (backend === "mock"
@@ -49,6 +51,14 @@ suite("Canonical DDB binary", function () {
 				const frames = await c.client.collect("DebuggerService.ListFrames", { threadId: thread.threadId });
 				assert.ok(frames.length > 0);
 				assert.equal(frames[0].location?.path, source);
+				if (backend === "gdb") {
+					const resolved = await c.client.call("DebuggerService.ResolveSource", { target, location: frames[0].location });
+					assert.ok(resolved.source?.sourceReference);
+					const inspection = new DdbInspection(c);
+					const handle = inspection.source({ sourceReference: resolved.source.sourceReference })!.sourceReference!;
+					const contents = await inspection.readSource(handle);
+					assert.equal(contents?.content, (await readFile(source, "utf8")).trimEnd(), "canonical source pages must preserve every line");
+				}
 				const scopes = await c.client.collect("DebuggerService.ListScopes", { frameId: frames[0].frameId });
 				assert.ok(scopes.length > 0);
 				await c.client.collect("DebuggerService.ListVariables", { scopeId: scopes[0].scopeId });

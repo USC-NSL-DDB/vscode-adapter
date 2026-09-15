@@ -39,7 +39,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 | External endpoint | SDK endpoint and bearer token, disconnect without shutdown | Real DAP attach/disconnect leaves the existing server responsive; owner shutdown removes process and private startup directory |
 | Session/group/thread discovery | Snapshot and replayed resource upserts/tombstones | Connection, DAP view models and frontend facade tested |
 | Thread selection | SelectThread operation | Connection tested |
-| Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging implemented and exercised; remote source reads pending verification |
+| Stack, paging, source navigation | ListFrames, ResolveSource, ReadSource; local handles | DAP stack paging and canonical multi-page source reads tested; remote path/reference exposure in stacks still pending |
 | Distributed stack and boundary labels | RunDistributedBacktrace typed frames | Pending |
 | Locals and expansion | ListScopes, ListVariables, ExpandVariable | DAP handlers implemented; root/array expansion and compound-watch expansion tested with real GDB |
 | Registers | ListRegisters | DAP handler tested with mock and GDB |
@@ -78,7 +78,7 @@ must become DAP errors. Do not automatically retry a mutation with a new key.
 
 ## Checks completed so far
 
-`npm test`: 82 unit tests pass, including opaque handle invalidation, revisions
+`npm test`: 84 unit tests pass, including opaque handle invalidation, revisions
 above JavaScript's integer precision, stale replay/tombstones, atomic snapshot
 replacement, required resync, and failed/partial operation rejection.
 
@@ -442,3 +442,20 @@ journal-retention stress test. They required no production-code change.
 Validation: 82 tests pass in npm test, including both HTTP recovery scenarios.
 The six real-binary integration tests last passed at the preceding checkpoint;
 production code has not changed since that run.
+
+## Source pagination checkpoint
+
+ReadSource returns pages joined internally by newlines, without a trailing
+page separator. The adapter previously concatenated those pages directly,
+merging lines at each boundary. It now inserts the missing separator, checks
+that the returned start line matches the request, and rejects a content-hash
+change between pages rather than displaying a mixture of file versions.
+
+Both regressions failed before the fix. The real GDB integration fixture now
+contains more than 1,000 lines; canonical ResolveSource and the adapter's
+ReadSource loop reproduce all its lines across the page boundary.
+
+Validation: 84 unit tests and six canonical integration tests pass. This proves
+retrieval using a resolved source reference. Stack frames still need to expose
+references for paths unavailable to VS Code; remote path mapping and GUI
+source navigation remain incomplete. No backend source changes were needed.
