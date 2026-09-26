@@ -103,6 +103,11 @@
         "icon": "$(group-by-ref-type)"
       },
       {
+        "command": "ddbBreakpointsExplorer.openSource",
+        "title": "Go to Breakpoint Source",
+        "icon": "$(go-to-file)"
+      },
+      {
         "command": "ddbBreakpointsExplorer.refresh",
         "title": "Refresh Breakpoints",
         "icon": "$(refresh)"
@@ -682,6 +687,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "ddbBreakpointsExplorer.openSource",
+          "when": "view == ddbBreakpointsExplorer && viewItem == sourceBreakpointItem",
+          "group": "inline@1"
+        },
         {
           "command": "ddbSessionsExplorer.sendSignal",
           "when": "viewItem == sessionItem",

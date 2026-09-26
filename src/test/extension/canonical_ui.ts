@@ -36,7 +36,7 @@ export async function run(): Promise<void> {
 		await extension.activate();
 		assert.equal(extension.isActive, true);
 		const commands = await vscode.commands.getCommands(true);
-		for (const command of ["ddbSessionsExplorer.refresh", "ddbSessionsExplorer.toggleGrouping", "ddbBreakpointsExplorer.refresh", "ddb.jumpToFocusedFrame"]) assert.ok(commands.includes(command), command);
+		for (const command of ["ddbSessionsExplorer.refresh", "ddbSessionsExplorer.toggleGrouping", "ddbBreakpointsExplorer.refresh", "ddbBreakpointsExplorer.openSource", "ddb.jumpToFocusedFrame"]) assert.ok(commands.includes(command), command);
 		const source = join(directory, "main.c");
 		const executable = join(directory, "main");
 		unrelated.push(new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(join(directory, "unrelated.c")), new vscode.Position(0, 0)), false));
@@ -81,6 +81,10 @@ export async function run(): Promise<void> {
 		assert.ok(scopes.scopes.length > 0);
 		const hasBreakpoint = async () => (await session!.customRequest("ddb.getBreakpoints")).bkpts.some((bp: any) => bp.location.src === source && bp.location.line === 5);
 		await until(hasBreakpoint, "selected group must install the source breakpoint");
+		const navigationBreakpoint = (await session.customRequest("ddb.getBreakpoints")).bkpts.find((bp: any) => bp.location.src === source && bp.location.line === 5);
+		await vscode.commands.executeCommand("ddbBreakpointsExplorer.openSource", { breakpoint: navigationBreakpoint });
+		assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath, source);
+		assert.equal(vscode.window.activeTextEditor?.selection.start.line, 4, "breakpoint button must navigate to its exact source line");
 		const selectionsBefore = messages.filter(message => message.type === "response" && message.command === "ddb.resolveSourceGroups").length;
 		const sessionBreakpoint = new vscode.SourceBreakpoint(new vscode.Location(vscode.Uri.file(source), new vscode.Position(5, 0)));
 		vscode.debug.addBreakpoints([sessionBreakpoint]);

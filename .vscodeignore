@@ -30,3 +30,6 @@ vendor/**
 scripts/test-extension.cjs
 
 scripts/test-vscode-cdp.cjs
+
+# The receipt records this archive hash and stays beside the package.
+ddb-native-api-validation.txt

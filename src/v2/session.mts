@@ -58,6 +58,7 @@ export class CanonicalDebugSession extends DebugSession {
 	private supportsInvalidatedEvent = false;
 	private controlEpoch = 0;
 	private configured = false;
+	private focusedStop?: string;
 	private entrySetup?: Promise<void>;
 	private distributed = false;
 	private readonly pendingStops = new Map<string, ExecutionState>();
@@ -165,6 +166,7 @@ export class CanonicalDebugSession extends DebugSession {
 		}
 		const threads = this.connection!.state.all("thread");
 		const live = new Set(threads.map(thread => thread.threadId));
+		if (this.focusedStop && !threads.some(thread => thread.threadId === this.focusedStop && thread.state === "THREAD_STATE_STOPPED")) this.focusedStop = undefined;
 		for (const [id] of this.knownThreads) {
 			if (!live.has(id)) {
 				this.sendEvent(new ThreadEvent("exited", inspection.threadHandle(id)));
@@ -218,6 +220,11 @@ export class CanonicalDebugSession extends DebugSession {
 	}
 
 	private stopped(threadId: string, state: ExecutionState): void {
+		// GDB reports one all-stop cause on every thread in a process. Repeating
+		// DAP stopped for those peers cancels VS Code's in-flight frame selection.
+		if (state.stopReason?.threadId && state.stopReason.threadId !== threadId) return;
+		const sessionId = this.connection!.state.get("thread", threadId)?.sessionId;
+		if (sessionId && this.execution!.pauseKind(sessionId, state.stopReason) === "automatic") return;
 		const epoch = this.controlEpoch;
 		const sameStop = () => !this.closing && this.stopRevisions.get(threadId) === `${state.executionStateId}:${state.revision ?? "0"}` && this.connection?.state.get("thread", threadId)?.state === "THREAD_STATE_STOPPED";
 		void (async () => {
@@ -230,7 +237,8 @@ export class CanonicalDebugSession extends DebugSession {
 				const continued = await new DdbLogpoints(this.connection!).run(threadId, state, parts, () => sameStop() && epoch === this.controlEpoch, text => this.sendEvent(new OutputEvent(text, "console")));
 				if (continued || !sameStop()) return;
 			}
-			this.publishStopped(threadId, state, epoch === this.controlEpoch);
+			if (epoch === this.controlEpoch && sessionId) await this.execution!.interruptOthers(sessionId);
+			if (sameStop()) this.publishStopped(threadId, state, epoch === this.controlEpoch);
 		})().catch(error => {
 			if (!sameStop()) return;
 			this.sendEvent(new OutputEvent(`DDB logpoint failed: ${error instanceof Error ? error.message : String(error)}\n`, "stderr"));
@@ -247,19 +255,22 @@ export class CanonicalDebugSession extends DebugSession {
 		};
 		const thread = this.connection!.state.get("thread", threadId)!;
 		const pause = thread.sessionId ? this.execution!.pauseKind(thread.sessionId, reason) : undefined;
-		const event = new StoppedEvent(pause ? "pause" : kinds[reason?.kind ?? ""] ?? "pause", this.model.threadHandle(threadId), reason?.description ?? reason?.signalName);
-		const body = (event as DebugProtocol.StoppedEvent).body;
 		const secondary = !!reason?.threadId && reason.threadId !== threadId;
+		const event = new StoppedEvent(pause || secondary ? "pause" : kinds[reason?.kind ?? ""] ?? "pause", this.model.threadHandle(threadId), reason?.description ?? reason?.signalName);
+		const body = (event as DebugProtocol.StoppedEvent).body;
 		body.preserveFocusHint = !currentControl || secondary || !!pause || (reason?.kind === "STOP_REASON_KIND_SIGNAL" && !["SIGABRT", "SIGSEGV"].includes(reason.signalName ?? ""));
+		if (!body.preserveFocusHint) {
+			body.preserveFocusHint = this.focusedStop !== undefined && this.focusedStop !== threadId;
+			if (!body.preserveFocusHint) this.focusedStop = threadId;
+		}
 		body.allThreadsStopped = this.connection!.state.all("thread").every(item => item.state === "THREAD_STATE_STOPPED");
 		const location = state.location ?? thread.location;
-		if (thread.sessionId && location?.path && location.line) {
+		if (!secondary && thread.sessionId && location?.path && location.line) {
 			const metadata = { session_id: this.model.sessionHandle(thread.sessionId), thread_id: this.model.threadHandle(threadId), file: location.path, line: location.line, level: 0 };
 			Object.assign(body, { stoppedFrameInfo: metadata });
 			if (reason?.kind === "STOP_REASON_KIND_BREAKPOINT" && !secondary) Object.assign(event, { breakpointInfo: metadata });
 		}
-		if (currentControl && thread.sessionId && pause !== "automatic" && !secondary) this.execution!.interruptOthers(thread.sessionId);
-		if (reason?.breakpointId) (event as DebugProtocol.StoppedEvent).body.hitBreakpointIds = [this.breakpoints!.handle(reason.breakpointId)];
+		if (!secondary && reason?.breakpointId) (event as DebugProtocol.StoppedEvent).body.hitBreakpointIds = [this.breakpoints!.handle(reason.breakpointId)];
 		this.sendEvent(event);
 	}
 
@@ -341,7 +352,7 @@ export class CanonicalDebugSession extends DebugSession {
 		await this.reply(response, () => this.model.setVariable(args));
 	}
 	protected override async sourceRequest(response: DebugProtocol.SourceResponse, args: DebugProtocol.SourceArguments): Promise<void> {
-		await this.reply(response, () => this.model.readSource(args.sourceReference));
+		await this.reply(response, () => this.model.readSource(args.sourceReference, args.source));
 	}
 
 	private breakpointPair(seq: number) {
@@ -476,9 +487,11 @@ export class CanonicalDebugSession extends DebugSession {
 	private async runExecution(request: ExecuteRequest): Promise<void> {
 		const connection = this.model.connection;
 		if (!connection.handshake.capabilities.executionActions?.includes(request.action!)) throw new Error(`DDB does not support ${request.action}`);
+		const previousFocus = this.focusedStop;
+		this.focusedStop = undefined;
 		const undo = this.execution!.userControl(request);
 		try { await connection.complete(await connection.client.call("DebuggerControlService.Execute", request)); }
-		catch (error) { undo(); throw error; }
+		catch (error) { this.focusedStop = previousFocus; undo(); throw error; }
 	}
 
 	protected override async readMemoryRequest(response: DebugProtocol.ReadMemoryResponse, args: DebugProtocol.ReadMemoryArguments): Promise<void> {

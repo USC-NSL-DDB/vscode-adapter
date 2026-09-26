@@ -9,15 +9,16 @@ for (const key of ['DDB_VSCODE_EXECUTABLE', 'DDB_TEST_BINARY', 'DISPLAY']) {
 const directory = mkdtempSync(join(tmpdir(), 'ddb-vscode-host-'));
 const extensionDirectory = resolve(process.env.DDB_TEST_EXTENSION_DIRECTORY ?? resolve(__dirname, '..'));
 let fixtureDirectory;
-let testsPath = resolve(__dirname, '../out/src/test/extension/canonical_ui.js');
+const suite = process.env.DDB_GREETER_WORKSPACE ? 'greeter_ui.js' : 'canonical_ui.js';
+let testsPath = resolve(__dirname, '../out/src/test/extension', suite);
 try {
   if (process.env.DDB_TEST_EXTENSION_DIRECTORY) {
     // VS Code attributes API permissions to the extension containing each file.
     fixtureDirectory = mkdtempSync(join(extensionDirectory, '.ddb-tests-'));
-    for (const name of ['canonical_ui.js', 'source_navigation.js']) {
+    for (const name of ['canonical_ui.js', 'source_navigation.js', 'greeter_ui.js']) {
       copyFileSync(resolve(__dirname, '../out/src/test/extension', name), join(fixtureDirectory, name));
     }
-    testsPath = join(fixtureDirectory, 'canonical_ui.js');
+    testsPath = join(fixtureDirectory, suite);
   }
   const profile = join(directory, 'user-data');
   mkdirSync(join(profile, 'User'), { recursive: true });
@@ -33,7 +34,7 @@ try {
     `--extensions-dir=${join(directory, 'extensions')}`,
     `--extensionDevelopmentPath=${extensionDirectory}`,
     `--extensionTestsPath=${testsPath}`,
-  ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, env: { ...process.env, OTEL_SDK_DISABLED: 'true', DDB_TEST_PROFILE: profile, DDB_TEST_CDP_SCRIPT: resolve(__dirname, 'test-vscode-cdp.cjs'), DDB_TEST_NODE: process.execPath }, timeout: 90000, detached: true });
+  ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, env: { ...process.env, OTEL_SDK_DISABLED: 'true', DDB_TEST_PROFILE: profile, DDB_TEST_CDP_SCRIPT: resolve(__dirname, 'test-vscode-cdp.cjs'), DDB_TEST_NODE: process.execPath }, timeout: process.env.DDB_GREETER_WORKSPACE ? 150000 : 90000, detached: true });
   process.stdout.write(result.stdout ?? "");
   process.stderr.write(result.stderr ?? "");
   if (result.pid) { try { process.kill(-result.pid, 'SIGTERM'); } catch {} }

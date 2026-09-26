@@ -1,9 +1,11 @@
+import { setTimeout as delay } from "node:timers/promises";
 import type { ExecuteRequest, StopReason } from "@ddb-debugger/api-client";
 import type { DdbConnection } from "./connection.mjs";
 
 /** Coordinates visible stops while keeping automatic pauses out of the focus path. */
 export class DdbExecution {
 	private readonly pending = new Map<string, symbol>();
+	private readonly interrupts = new Map<string, Promise<void>>();
 	private readonly pauses = new Map<string, { kind: "automatic" | "explicit"; token: symbol }>();
 	constructor(private readonly connection: DdbConnection, private readonly error: (message: string) => void) {}
 
@@ -44,21 +46,41 @@ export class DdbExecution {
 		return undefined;
 	}
 
-	interruptOthers(exceptSession: string): void {
+	async interruptOthers(exceptSession: string): Promise<void> {
+		const work: Promise<void>[] = [];
 		const sessions = new Set(this.connection.state.all("thread").filter(thread => thread.state === "THREAD_STATE_RUNNING").map(thread => thread.sessionId));
 		for (const sessionId of sessions) {
-			if (!sessionId || sessionId === exceptSession || this.pending.has(sessionId)) continue;
+			if (!sessionId || sessionId === exceptSession) continue;
+			const pending = this.interrupts.get(sessionId);
+			if (pending) { work.push(pending); continue; }
+			if (this.pending.has(sessionId)) continue;
 			const token = Symbol();
 			this.pending.set(sessionId, token);
 			this.pauses.set(sessionId, { kind: "automatic", token });
-			void this.connection.client.call("DebuggerControlService.Execute", { target: { session: { sessionId } }, action: "EXECUTION_ACTION_INTERRUPT" })
+			const operation = this.connection.client.call("DebuggerControlService.Execute", { target: { session: { sessionId } }, action: "EXECUTION_ACTION_INTERRUPT" })
 				.then(admission => this.connection.complete(admission))
 				.catch(error => {
 					if (this.pauses.get(sessionId)?.token !== token) return;
 					this.pending.delete(sessionId);
 					this.pauses.delete(sessionId);
 					this.error(`Could not pause DDB session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+				}).then(() => undefined).finally(() => {
+					if (this.interrupts.get(sessionId) === operation) this.interrupts.delete(sessionId);
 				});
+			this.interrupts.set(sessionId, operation);
+			work.push(operation);
+		}
+		await Promise.all(work);
+		// Operation completion and state-stream delivery are separate. Publish the
+		// owner's stop only after peers appear stopped, or their pause is cancelled.
+		const deadline = Date.now() + 1000;
+		const waitingForPeers = () => this.connection.state.all("thread").some(thread =>
+			thread.sessionId && sessions.has(thread.sessionId) && thread.sessionId !== exceptSession &&
+			this.pending.has(thread.sessionId) && thread.state === "THREAD_STATE_RUNNING",
+		);
+		while (waitingForPeers()) {
+			if (Date.now() >= deadline) break;
+			await delay(5);
 		}
 	}
 }

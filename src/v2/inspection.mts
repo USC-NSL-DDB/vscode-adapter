@@ -13,6 +13,7 @@ export interface FrameContext {
 	boundary?: string;
 	boundaryLabel?: string;
 }
+interface SourceContext { reference?: string; location?: SourceLocation; sessionId?: string }
 interface VariableContext {
 	frame: FrameContext;
 	kind: "scope" | "variable" | "registers";
@@ -27,7 +28,7 @@ export class DdbInspection {
 	readonly groupHandles = new Handles<string>();
 	readonly frames = new Handles<FrameContext>();
 	private readonly variables = new Handles<VariableContext>();
-	private readonly sources = new Handles<string>();
+	private readonly sources = new Handles<SourceContext>();
 	private epoch = 0;
 	private readonly threadEpochs = new Map<string, number>();
 	private readonly frameChecks = new WeakMap<FrameContext, () => void>();
@@ -39,12 +40,24 @@ export class DdbInspection {
 	threadTarget(handle: number): Target { return { thread: { threadId: this.threadHandles.get(handle) } }; }
 	sessionTarget(handle: number): Target { return { session: { sessionId: this.sessionHandles.get(handle) } }; }
 
+	private breakpointLocation(threadId: string): SourceLocation | undefined {
+		const thread = this.connection.state.get("thread", threadId);
+		if (thread?.state !== "THREAD_STATE_STOPPED") return undefined;
+		const execution = this.connection.state.all("executionState").find(state => state.target?.thread?.threadId === threadId);
+		if (execution?.running || execution?.stopReason?.kind !== "STOP_REASON_KIND_BREAKPOINT") return undefined;
+		if (execution.stopReason.threadId && execution.stopReason.threadId !== threadId) return undefined;
+		return execution.location ?? thread.location;
+	}
+
 	threads(): DebugProtocol.Thread[] {
 		return this.connection.state.all("thread").map(thread => {
 			if (!thread.threadId) throw new Error("DDB thread is missing its ID");
 			const session = this.connection.state.get("session", thread.sessionId ?? "");
-			return { id: this.threadHandle(thread.threadId), name: `${session?.displayName ?? "Session"}: ${thread.name ?? thread.backendThreadId ?? thread.threadId}` };
-		});
+			const location = this.breakpointLocation(thread.threadId);
+			const name = `${session?.displayName ?? "Session"}: ${thread.name ?? thread.backendThreadId ?? thread.threadId}`;
+			const hit = location ? ` [breakpoint at ${location.path?.split(/[\\/]/).pop() ?? location.functionName ?? "?"}:${location.line ?? "?"}]` : "";
+			return { id: this.threadHandle(thread.threadId), name: name + hit, hit: !!location };
+		}).sort((left, right) => Number(right.hit) - Number(left.hit)).map(({ id, name }) => ({ id, name }));
 	}
 
 	/** Invalidates inspection handles on execution; stale requests must fail. */
@@ -77,7 +90,7 @@ export class DdbInspection {
 
 	async stack(args: DebugProtocol.StackTraceArguments, distributed = false): Promise<DebugProtocol.StackTraceResponse["body"]> {
 		const threadId = this.threadHandles.get(args.threadId);
-		const check = this.inspectionCheck();
+		const originCheck = this.inspectionCheck();
 		const thread = this.connection.state.get("thread", threadId);
 		if (!thread?.sessionId) throw new Error("Thread is no longer available");
 		let frames: DistributedFrame[];
@@ -89,7 +102,10 @@ export class DdbInspection {
 		} else {
 			frames = (await this.connection.client.collect("DebuggerService.ListFrames", { threadId })).map(frame => ({ frame, threadId, sessionId: thread.sessionId }));
 		}
-		check(threadId);
+		originCheck(threadId);
+		// Distributed traversal can interrupt a running caller. Its returned
+		// frames belong to that new stop, rather than the pre-traversal epoch.
+		const check = distributed ? this.inspectionCheck() : originCheck;
 		const start = args.startFrame ?? 0;
 		const sourceRequests = new Map<string, Promise<DebugProtocol.Source | undefined>>();
 		const result = {
@@ -107,10 +123,13 @@ export class DdbInspection {
 				if (!source) { source = this.stackSource(frame.location, entry.sessionId); sourceRequests.set(sourceKey, source); }
 
 				const resolvedSource = await source;
+				const hit = this.breakpointLocation(entry.threadId);
+				const atBreakpoint = hit?.path && hit.path === frame.location?.path && hit.line === frame.location?.line && (frame.level ?? 0) === 0;
+				const caller = boundaryOnly ? this.connection.state.get("session", entry.sessionId)?.displayName : undefined;
 				check(entry.threadId);
 				return {
 					id: this.frames.put(context, key),
-					name: boundaryOnly ? entry.boundaryLabel ?? "distributed call boundary" : `${entry.boundaryLabel ? `${entry.boundaryLabel} · ` : ""}${frame.functionName ?? "<unknown>"}`,
+					name: boundaryOnly ? `${entry.boundaryLabel ?? "distributed call boundary"}${caller ? ` · Caller: ${caller}` : ""}` : `${atBreakpoint ? "[breakpoint] " : ""}${entry.boundaryLabel ? `${entry.boundaryLabel} · ` : ""}${frame.functionName ?? "<unknown>"}`,
 					presentationHint: boundaryOnly ? "label" as const : undefined,
 					source: resolvedSource, line: frame.location?.line ?? 0, column: frame.location?.column ?? 0,
 					instructionPointerReference: frame.location?.address,
@@ -214,20 +233,29 @@ export class DdbInspection {
 			try { await access(location.path, constants.R_OK); return local; }
 			catch { /* Ask DDB for source content unavailable on the adapter host. */ }
 		}
-		try {
-			const { source } = await this.connection.client.call("DebuggerService.ResolveSource", { target: { session: { sessionId } }, location });
-			if (source?.sourceReference) return this.source({ ...location, sourceReference: source.sourceReference });
-		} catch { /* Missing source must not hide an otherwise valid stack frame. */ }
-		return local;
+		// VS Code fetches this only when opening the frame. Source discovery can
+		// involve SSH and must not delay delivery of the rest of the call stack.
+		return { ...local, sourceReference: this.sources.put({ location, sessionId }, JSON.stringify([sessionId, location.path])) };
 	}
 
 	source(location?: SourceLocation): DebugProtocol.Source | undefined {
 		if (!location?.path && !location?.sourceReference) return undefined;
-		return { path: location.path, name: location.path?.split(/[\\/]/).pop(), sourceReference: location.sourceReference ? this.sources.put(location.sourceReference, location.sourceReference) : 0 };
+		return { path: location.path, name: location.path?.split(/[\\/]/).pop(), sourceReference: location.sourceReference ? this.sources.put({ reference: location.sourceReference }, location.sourceReference) : 0 };
 	}
 
-	async readSource(reference: number): Promise<DebugProtocol.SourceResponse["body"]> {
-		const sourceReference = this.sources.get(reference);
+	async readSource(reference: number, source?: DebugProtocol.Source): Promise<DebugProtocol.SourceResponse["body"]> {
+		// VS Code can fall back to a source request after a local file disappears.
+		// Zero means a filesystem path, never an adapter handle.
+		if (!reference) throw new Error(`Source file ${source?.path ?? source?.name ?? "<unknown>"} is not available`);
+		const context = this.sources.get(reference);
+		if (!context.reference) {
+			const resolved = await this.connection.client.call("DebuggerService.ResolveSource", {
+				target: { session: { sessionId: context.sessionId } }, location: context.location,
+			});
+			if (!resolved.source?.sourceReference) throw new Error(`Source file ${context.location?.path ?? "<unknown>"} is not available`);
+			context.reference = resolved.source.sourceReference;
+		}
+		const sourceReference = context.reference;
 		let line = 1;
 		let content = "";
 		let contentHash: string | undefined;

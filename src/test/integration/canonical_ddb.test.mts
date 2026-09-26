@@ -323,7 +323,10 @@ suite("Canonical DDB binary", function () {
 					assert.equal(hitEvent.body.stoppedFrameInfo.file, source);
 					assert.equal(hitEvent.body.stoppedFrameInfo.line, 6);
 					assert.equal(hitEvent.body.preserveFocusHint, false);
-					await until(() => dap.events.slice(beforeHit).some(event => event.event === "stopped" && event.body.threadId !== dapThreadId && event.body.reason === "pause" && event.body.preserveFocusHint === true), "coordinated pause preserves focus");
+					await until(() => c.state.all("thread").every(item => item.state === "THREAD_STATE_STOPPED"), "coordinated pause stops every process");
+					const coordinatedStops = dap.events.slice(beforeHit).filter(event => event.event === "stopped");
+					assert.ok(coordinatedStops.some(event => event.body.threadId === dapThreadId && event.body.allThreadsStopped), "the breakpoint event must announce the coordinated stop");
+					assert.equal(coordinatedStops.some(event => event.body.threadId !== dapThreadId), false, "automatic peer stops must not cancel VS Code's breakpoint frame selection");
 					assert.equal(hitEvent.body.hitBreakpointIds.length, 1);
 					assert.ok(hitEvent.body.hitBreakpointIds[0] > 0);
 					await c.complete(await c.client.call("DebuggerControlService.DeleteBreakpoint", { target: { broadcast: {} }, breakpointId: hit.breakpoint?.breakpointId }));

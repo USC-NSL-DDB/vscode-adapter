@@ -42,7 +42,7 @@ suite("Canonical source content", () => {
 		assert.ok(source.sourceReference! > 0, "remote stack source must be retrievable");
 		assert.equal(source.path, path);
 		assert.equal(stack!.stackFrames[1].source!.sourceReference, source.sourceReference);
-		assert.deepEqual(calls, [{ method: "DebuggerService.ResolveSource", args: { target: { session: { sessionId: "session" } }, location: { path, line: 2 } } }]);
+		assert.deepEqual(calls, [], "stack rendering must not wait for source retrieval");
 		assert.equal((await model.readSource(source.sourceReference!))!.content, "first\nsecond");
 	});
 
@@ -58,8 +58,8 @@ suite("Canonical source content", () => {
 			const stack = await model.stack({ threadId: model.threadHandle("thread") });
 			assert.equal(stack!.stackFrames.length, 1);
 			assert.equal(stack!.stackFrames[0].source!.path, path);
-			assert.equal(stack!.stackFrames[0].source!.sourceReference, 0);
-			assert.equal(calls, local ? 0 : 1);
+			assert.equal(stack!.stackFrames[0].source!.sourceReference! > 0, !local);
+			assert.equal(calls, 0);
 		}
 	});
 

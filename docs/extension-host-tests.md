@@ -46,7 +46,7 @@ DDB deployment.
 ## Test an extracted VSIX
 
 Set DDB_TEST_EXTENSION_DIRECTORY to the `extension` directory extracted from a
-VSIX to test its packaged runtime. The runner temporarily copies its two test
+VSIX to test its packaged runtime. The runner temporarily copies its three test
 files under that directory so VS Code attributes fixture API calls to the DDB
 extension. It removes those files afterward. The directory must be writable.
 The test asserts that VS Code loaded the requested extension path.
@@ -72,3 +72,36 @@ Packaged stdio tests also check environment override/removal and the three
 variable display modes. The mock backend emits a scheduled stop after Continue;
 the integration scenario observes that event instead of polling for a lasting
 running state. Real GDB verifies running-to-paused behavior.
+
+## Instrumented gRPC greeter test
+
+Set `DDB_GREETER_WORKSPACE` to a helloworld workspace containing
+`build/greeter_server` and `build/greeter_client` built with DDB instrumentation.
+This selects the greeter scenario instead of the C fixture. The current test
+expects the client RPC at `greeter_client.cc:70` and the server handler at
+`greeter_server.cc:59`. It uses `mosquitto` on port 28883 and gRPC on port 50059.
+Stop other local DDB discovery/broker sessions before this test. The test saves
+and restores `/tmp/ddb/service_discovery/config`; DDB's managed broker cleanup
+currently affects other Mosquitto processes on the host.
+
+```sh
+DISPLAY=:191 \
+DDB_VSCODE_EXECUTABLE=/path/to/VSCode-linux-x64/code \
+DDB_TEST_BINARY=/path/to/ddb \
+DDB_TEST_EXTENSION_DIRECTORY=/tmp/extracted-vsix/extension \
+DDB_GREETER_WORKSPACE=/mnt/home/ybyan/codebase/grpc/examples/cpp/helloworld \
+npm run test:extension
+```
+
+The test launches the actual binaries with `--ddb`, installs group breakpoints,
+and checks automatic editor selection at both client and server hits. It checks
+actual-hit thread labels, distributed caller frames, scopes and variables, then
+clicks a caller frame and the breakpoint panel's inline source action. Disconnect
+must terminate both attached processes. It also checks initial stack retrieval
+finishes within one second without waiting for missing system-library sources.
+
+The normal scenario covers the group Quick Pick. The greeter scenario supplies
+its selected group through the same paired breakpoint request so it can test RPC
+and stop behavior independently. Both scenarios use an isolated VS Code profile.
+Simultaneous independent breakpoint hits are covered by deterministic adapter
+unit tests; the greeter scenario hits the client and server in sequence.

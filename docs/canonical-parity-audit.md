@@ -5,7 +5,7 @@ commit `8e7317b`. The runtime entrypoint loads `src/v2/session.mts`. It uses the
 vendored TypeScript SDK over authenticated API v2 HTTP, with separate state and
 output streams. The sidebar uses DAP requests and events through that connection.
 
-Use backend branch `codex/vscode-api-parity` at `10f0f8aa` or a descendant. Its
+Use backend branch `codex/vscode-api-parity` at `b773bcf8` or a descendant. Its
 worktree is `/mnt/home/ybyan/projs/DDB-vscode-api-parity`; the DDB main worktree was not modified.
 The unpatched 0.1.15 binary does not provide all required behavior.
 
@@ -19,8 +19,8 @@ implementation and package manifest to define the existing feature set.
 | YAML launch, working directory, arguments and environment | Managed startup and authenticated endpoint discovery. Packaged stdio tests exercise launch options, environment override and removal, autorun, path substitutions and diagnostics. |
 | Stop at entry | Typed temporary function breakpoint, installed once at configuration completion. GDB tests verify a named entrypoint and its actual stop. |
 | Session, group and thread discovery | Canonical snapshot/event projection with opaque-ID mapping. Binary, frontend and real VS Code tests cover discovery and sidebar refresh/grouping. |
-| Local and distributed stacks | Typed frame APIs, pagination and frame ownership. GDB checks local frames; a real two-session DDB mock topology checks distributed parent frames, boundary rows, pagination and thread selection. |
-| Source navigation | Local paths and canonical source references. GDB tests exercise substituted paths and executable paths with spaces. VS Code tests open local, reference-only and remote-path sources. |
+| Local and distributed stacks | Typed frame APIs, pagination and frame ownership. GDB checks local frames; the mock topology checks pagination and ownership. The instrumented gRPC greeter test opens a distributed caller frame in VS Code and inspects its variables. |
+| Source navigation | Local paths and canonical source references. GDB tests exercise substituted paths and executable paths with spaces. VS Code tests open local, reference-only and remote-path sources, plus the breakpoint-panel source action. Missing library sources resolve lazily when opened. |
 | Locals, watches, hover, registers and assignment | Typed variable metadata, retained evaluation handles and identity-based assignment. Real GDB checks scalar, array and C++ container expansion, caller-frame ownership, registers and assignments. Unit tests reject stale handles and late replies. |
 | Variable display modes | Packaged GDB tests expand arrays in prettyPrinters and parseText modes, and verify disabled mode exposes no expansion handle. |
 | Source and function breakpoints | Typed creation/deletion, conditions, hit counts, verification and inherited members. GDB tests exercise real hits; VS Code tests cover group/session selection, view switching, disable/re-enable and unrelated breakpoint preservation. |
@@ -65,8 +65,8 @@ with GDB.
 
 The SDK/API remains preview-stage and this adapter is pinned to the tested SDK
 archive and backend fixes. Distributed adapter behavior is tested through DDB's
-mock topology, not a deployed application framework. The original DDB adapter's
-GDB path is validated with real GDB; this audit does not claim real LLDB coverage.
+mock topology and the instrumented gRPC greeter client/server. The GDB path is
+validated with real GDB; this audit does not claim real LLDB coverage.
 The repository's pre-existing broad lint failures are not a passing validation
 gate. TypeScript compilation, focused tests and runtime checks are the evidence.
 
@@ -75,7 +75,7 @@ Earlier investigation and regression details are retained in
 
 ## Validation results
 
-- Adapter unit tests: 113 passed.
+- Adapter unit tests: 118 passed.
 - Backend core tests: 322 passed, one ignored; HTTP and gRPC checks passed.
 - Canonical binary integration suite: 12 passed, including all variable modes,
   C++ nested containers, typed child assignment and caller-frame native console.
@@ -86,3 +86,25 @@ Earlier investigation and regression details are retained in
 Packaged stdio and extension-host checks use the procedures above. Their logs and
 artifact digest are recorded with the packaged build, since source test results
 alone do not establish that a VSIX contains the expected runtime.
+
+## Follow-up to greeter manual testing
+
+- Missing source references no longer become handle zero. Stack rendering does
+  not perform remote source resolution. Initial greeter stack requests measured
+  25–73 ms after the change, compared with 4.1–4.9 seconds before it.
+- A process-wide GDB stop produces one DAP stop for its actual owner. Automatically
+  interrupted peers do not cancel VS Code's frame selection. Stop publication
+  waits for their state updates after the interrupt operation completes.
+- Breakpoint owners sort first and carry file/line labels; one simultaneous hit
+  receives editor focus. A unit regression checks two actual hits and a paused peer.
+- Distributed traversal can interrupt a running caller. Returned caller frames
+  now use that new stop's inspection lifetime while the origin's stale-request
+  check remains active. Boundary labels include the caller session.
+- The breakpoint panel provides an inline source-navigation action.
+- Backend GDB exit-policy tests cover kill and detach with running and stopped
+  inferiors. Managed startup tests cover unexpected launcher exit. Direct tests
+  against the greeter pair cover DDB SIGTERM and SIGKILL cleanup.
+
+The greeter VS Code scenario checks the initial stack, client/server highlights,
+caller-frame clicks, scopes and variables, source navigation and cleanup.
+See the package validation receipt for the exact artifact and test logs.

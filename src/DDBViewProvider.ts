@@ -571,7 +571,8 @@ class BreakpointItem extends vscode.TreeItem {
     collapsibleState: vscode.TreeItemCollapsibleState
   ) {
     super(displayLabel, collapsibleState);
-    this.contextValue = "breakpointItem";
+    this.id = `breakpoint:${breakpoint.id}`;
+    this.contextValue = breakpoint.location.src && breakpoint.location.line > 0 ? "sourceBreakpointItem" : "breakpointItem";
     this.description = breakpoint.enabled ? "" : "(disabled)";
     this.tooltip = new vscode.MarkdownString(
       `**Breakpoint ${breakpoint.id}**\n\n` +
@@ -957,6 +958,21 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(breakpointsRefreshCommand);
+
+  context.subscriptions.push(vscode.commands.registerCommand(
+    "ddbBreakpointsExplorer.openSource",
+    async (item: BreakpointItem) => {
+      const location = item?.breakpoint?.location;
+      if (!location?.src || !Number.isInteger(location.line) || location.line < 1) return;
+      const line = location.line - 1;
+      const session = vscode.debug.activeDebugSession;
+      const base = session?.configuration.cwd ?? session?.workspaceFolder?.uri.fsPath;
+      const file = base ? path.resolve(base, location.src) : location.src;
+      await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(file), {
+        selection: new vscode.Range(line, 0, line, 0),
+      });
+    }
+  ));
 
   // Toggle grouping command for breakpoints view
   const toggleBreakpointGroupingCommand = vscode.commands.registerCommand(

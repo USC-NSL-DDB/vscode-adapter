@@ -10,7 +10,7 @@ The compatibility adapter remains on `codex/migrate-current-ddb`.
 
 ## Required DDB build
 
-Use DDB's `codex/vscode-api-parity` branch at commit `10f0f8aa` or a descendant
+Use DDB's `codex/vscode-api-parity` branch at commit `b773bcf8` or a descendant
 containing those fixes. The unpatched 0.1.15 binary lacks required stop metadata,
 function-breakpoint and hit-count behavior. The patched branch also fixes
 GDB executable paths containing spaces, typed signal delivery, variable assignment,
@@ -55,7 +55,9 @@ Use a working DDB YAML configuration. In `.vscode/launch.json`:
 
 The adapter starts `ddb serve --managed`, creates private authentication and
 startup-report files, and connects to the reported loopback endpoint. Disconnect
-shuts down that owned process and removes its temporary files. Configure debugged
+shuts down that owned process and removes its temporary files. The patched backend
+also shuts down if the adapter exits unexpectedly. GDB retains the configured
+`Conf.on_exit` policy, including when its connection to DDB closes. Configure debugged
 programs and their startup behavior in DDB YAML.
 
 `stopAtEntry: true` additionally installs a temporary `main` breakpoint;
@@ -66,6 +68,21 @@ automatically continue an initially stopped process.
 and startup-report flags belong to the adapter and cannot be overridden there.
 `printCalls: true` shows API methods and HTTP status without headers or payloads.
 `showDevDebugOutput: true` also shows managed-process stdout.
+
+## Breakpoints and call stacks
+
+The call stack labels actual breakpoint threads with their file and line and
+lists them before paused peers. The top frame at the breakpoint has a
+`[breakpoint]` prefix. One hit receives automatic editor focus; concurrent hits
+remain labelled without repeatedly switching editors.
+
+Hover over a source breakpoint in **DDB Breakpoints** and click **Go to Breakpoint
+Source** to open its line. Distributed call boundaries include the caller's
+session name, and caller frames support source navigation and variable inspection.
+
+Unavailable library source is fetched only when opening that frame. It no longer
+holds up the call stack. A file that DDB cannot retrieve still requires installing
+its source or configuring a source mapping.
 
 ## Attach to an existing API v2 server
 

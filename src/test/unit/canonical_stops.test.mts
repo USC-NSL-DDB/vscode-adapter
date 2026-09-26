@@ -35,6 +35,7 @@ suite("Canonical DAP stop events", () => {
 		const dap = new CanonicalHarness();
 		try {
 			await dap.begin(connection);
+			await setImmediate();
 			const stops = () => dap.events.filter(event => event.event === "stopped");
 			assert.deepEqual(stops().map(event => event.body.reason), ["entry"]);
 			await publish(snapshot(true));
