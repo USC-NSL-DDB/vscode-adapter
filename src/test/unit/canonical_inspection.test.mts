@@ -3,23 +3,28 @@ import { DdbInspection } from "../../v2/inspection.mjs";
 import type { DdbConnection } from "../../v2/connection.mjs";
 
 function fixture(formatting = "prettyPrinters") {
+	const calls: { method: string; args: any }[] = [];
 	let pending: { method: string; entered: () => void; wait: Promise<void> } | undefined;
 	const connection = {
 		state: { get: (_kind: string, id: string) => ({ threadId: id, sessionId: `session-${id}` }) },
 		client: { collect: async (method: string, args: any) => {
+			calls.push({ method, args });
 			if (pending?.method === method) { pending.entered(); await pending.wait; }
 			if (method.endsWith("ListFrames")) return [{ frameId: `frame-${args.threadId}`, functionName: "main" }];
 			if (method.endsWith("ListScopes")) return [{ scopeId: `scope-${args.frameId}`, name: "Locals" }];
 			if (method.endsWith("ListVariables")) return [{ variableId: "value", name: "value", value: "42", evaluateName: "value", hasChildren: true }];
+			if (method.endsWith("ExpandVariable")) return [{ variableId: "leaf", name: "[0]", value: "42", hasChildren: false }];
 			return [];
-		}, call: async (method: string) => {
+		}, call: async (method: string, args: any) => {
+			calls.push({ method, args });
 			if (pending?.method === method) { pending.entered(); await pending.wait; }
-			return { evaluation: { value: "42", variableId: "value" } };
+			if (method.endsWith("SetVariable")) return { variableAssignment: { value: args.value, variableId: args.variableId } };
+			return { evaluation: { value: "42", variableId: "value", hasChildren: args.expression !== "scalar" } };
 		} },
 		complete: async (result: unknown) => result,
 	} as unknown as DdbConnection;
 	const model = new DdbInspection(connection, formatting);
-	return { model, pause(method: string) {
+	return { model, calls, pause(method: string) {
 		let release!: () => void;
 		let entered!: () => void;
 		const started = new Promise<void>(resolve => { entered = resolve; });
@@ -56,7 +61,7 @@ suite("Canonical inspection lifetimes", () => {
 		const { model, pause } = fixture("disabled");
 		const frame = (await model.stack({ threadId: model.threadHandle("one") })).stackFrames[0];
 		const scope = (await model.scopes(frame.id)).scopes[0];
-		const gate = pause("DebuggerControlService.Evaluate");
+		const gate = pause(`DebuggerControlService.${operation === "evaluate" ? "Evaluate" : "SetVariable"}`);
 		const result = operation === "evaluate"
 			? model.evaluate({ frameId: frame.id, expression: "value", context: "watch" })
 			: model.setVariable({ variablesReference: scope.variablesReference, name: "value", value: "42" });
@@ -64,6 +69,22 @@ suite("Canonical inspection lifetimes", () => {
 		model.invalidate("one");
 		gate.release();
 		await assert.rejects(result, /expired|changed/i);
+	});
+
+	test("typed values expand and assign children without expression names", async () => {
+		const { model, calls } = fixture();
+		const frame = (await model.stack({ threadId: model.threadHandle("one") })).stackFrames[0];
+		const scope = (await model.scopes(frame.id)).scopes[0];
+		const root = (await model.listVariables({ variablesReference: scope.variablesReference })).variables[0];
+		const child = (await model.listVariables({ variablesReference: root.variablesReference })).variables[0];
+		assert.equal(child.evaluateName, undefined);
+		assert.equal((await model.setVariable({ variablesReference: root.variablesReference, name: child.name, value: "43" })).value, "43");
+		assert.deepEqual(calls.find(call => call.method.endsWith("SetVariable"))?.args, {
+			target: { thread: { threadId: "one" } }, variableId: "leaf", value: "43",
+		});
+		assert.ok((await model.evaluate({ frameId: frame.id, expression: "value", context: "watch" })).variablesReference > 0);
+		assert.equal((await model.evaluate({ frameId: frame.id, expression: "scalar", context: "hover" })).variablesReference, 0);
+		assert.equal(calls.some(call => call.method.endsWith("ExecuteRawCommand")), false);
 	});
 
 	test("another thread resuming does not discard an in-flight inspection", async () => {

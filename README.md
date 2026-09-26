@@ -10,10 +10,11 @@ The compatibility adapter remains on `codex/migrate-current-ddb`.
 
 ## Required DDB build
 
-Use DDB's `codex/vscode-api-parity` branch at commit `00adc459` or a descendant
+Use DDB's `codex/vscode-api-parity` branch at commit `10f0f8aa` or a descendant
 containing those fixes. The unpatched 0.1.15 binary lacks required stop metadata,
 function-breakpoint and hit-count behavior. The patched branch also fixes
-GDB executable paths containing spaces and typed signal delivery. API v2 and its SDK are preview APIs.
+GDB executable paths containing spaces, typed signal delivery, variable assignment,
+expandable evaluations, native frame-scoped console commands and debugger settings. API v2 and its SDK are preview APIs.
 
 Build from a separate DDB worktree. For example:
 
@@ -24,6 +25,11 @@ cargo build --manifest-path /path/to/ddb-worktree/ddb/Cargo.toml \
 
 Use `/tmp/ddb-canonical-build/debug/ddb` as `ddbpath` below. The adapter repository
 vendors the matching SDK install archive; `npm ci` installs it.
+
+Debug Console and `autorun` accept native debugger CLI commands, such as
+`print counter` or `set print elements 100`. Replace old MI commands such as
+`-data-evaluate-expression` with their CLI equivalents. Watch and hover expressions
+use typed evaluation directly.
 
 ## Managed launch
 

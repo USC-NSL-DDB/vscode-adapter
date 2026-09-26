@@ -208,9 +208,11 @@ export class CanonicalDebugSession extends DebugSession {
 	private async configureBackend(sessionId: string, gdb: boolean): Promise<void> {
 		const target = { session: { sessionId } };
 		const options = this.startupOptions!;
-		if (gdb && (options.valuesFormatting ?? "prettyPrinters") === "prettyPrinters") await this.commands!.run("-enable-pretty-printing", target);
+		if (gdb && (options.valuesFormatting ?? "prettyPrinters") === "prettyPrinters") {
+			await this.connection!.complete(await this.connection!.client.call("DebuggerControlService.ConfigureDebugger", { target, enablePrettyPrinting: {} }));
+		}
 		for (const [from, to] of Object.entries(options.pathSubstitutions ?? {})) {
-			await this.commands!.run(`set substitute-path ${JSON.stringify(from)} ${JSON.stringify(to)}`, target);
+			await this.connection!.complete(await this.connection!.client.call("DebuggerControlService.ConfigureDebugger", { target, sourceMapping: { from, to } }));
 		}
 		for (const command of options.autorun ?? []) await this.commands!.run(command, target);
 	}

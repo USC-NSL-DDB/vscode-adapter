@@ -42,6 +42,8 @@ suite("Canonical C++ inspection", function () {
 			assert.ok(caller, "caller frame must be present");
 			assert.equal((await request("evaluate", { frameId: frames[0].id, expression: "marker", context: "watch" })).result, "99");
 			assert.equal((await request("evaluate", { frameId: caller.id, expression: "marker", context: "watch" })).result, "17");
+			await request("evaluate", { frameId: caller.id, expression: "set $ddb_caller_marker = marker", context: "repl" });
+			assert.equal((await request("evaluate", { frameId: frames[0].id, expression: "$ddb_caller_marker", context: "watch" })).result, "17", "native console must use the caller's canonical frame");
 			const label = await request("evaluate", { frameId: caller.id, expression: "label", context: "watch" });
 			assert.match(label.result, /caller text/);
 			assert.equal(label.variablesReference, 0, "pretty-printed strings are leaves");

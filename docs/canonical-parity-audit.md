@@ -5,8 +5,8 @@ commit `8e7317b`. The runtime entrypoint loads `src/v2/session.mts`. It uses the
 vendored TypeScript SDK over authenticated API v2 HTTP, with separate state and
 output streams. The sidebar uses DAP requests and events through that connection.
 
-Use backend branch `codex/vscode-api-parity` at `00adc459` or a descendant. Its
-worktree is `/tmp/ddb-canonical-api-fixes`; the DDB main worktree was not modified.
+Use backend branch `codex/vscode-api-parity` at `10f0f8aa` or a descendant. Its
+worktree is `/mnt/home/ybyan/projs/DDB-vscode-api-parity`; the DDB main worktree was not modified.
 The unpatched 0.1.15 binary does not provide all required behavior.
 
 ## Enabled compatibility features
@@ -21,14 +21,14 @@ implementation and package manifest to define the existing feature set.
 | Session, group and thread discovery | Canonical snapshot/event projection with opaque-ID mapping. Binary, frontend and real VS Code tests cover discovery and sidebar refresh/grouping. |
 | Local and distributed stacks | Typed frame APIs, pagination and frame ownership. GDB checks local frames; a real two-session DDB mock topology checks distributed parent frames, boundary rows, pagination and thread selection. |
 | Source navigation | Local paths and canonical source references. GDB tests exercise substituted paths and executable paths with spaces. VS Code tests open local, reference-only and remote-path sources. |
-| Locals, watches, hover, registers and assignment | Typed inspection with structured raw-command results for missing variable metadata. Real GDB checks scalar, array and C++ container expansion, caller-frame ownership, registers and assignments. Unit tests reject stale handles and late replies. |
+| Locals, watches, hover, registers and assignment | Typed variable metadata, retained evaluation handles and identity-based assignment. Real GDB checks scalar, array and C++ container expansion, caller-frame ownership, registers and assignments. Unit tests reject stale handles and late replies. |
 | Variable display modes | Packaged GDB tests expand arrays in prettyPrinters and parseText modes, and verify disabled mode exposes no expansion handle. |
 | Source and function breakpoints | Typed creation/deletion, conditions, hit counts, verification and inherited members. GDB tests exercise real hits; VS Code tests cover group/session selection, view switching, disable/re-enable and unrelated breakpoint preservation. |
 | Logpoints | Canonical stop handling evaluates expressions and resumes the correct session. Tests cover successful output, failed evaluation and newer user control. |
 | Continue, pause and stepping | Typed Execute operations. GDB tests verify step in/out/over, session-specific control, all-stop coordination and pause focus. Deterministic unit tests cover delayed stop publication after newer control. |
 | Signals and kill | ListSignals and typed Execute SIGNAL. VS Code sends SIGKILL and verifies process exit. Callback tests cover confirmation, cancellation, owning-session capture and rejected requests. |
 | Jump to line | Temporary breakpoint and typed Execute JUMP. GDB tests verify destination stops, substituted paths, consumed breakpoints and invalid targets. |
-| Console and startup commands | Canonical raw-command operations preserve quoting and frame/session context. Packaged GDB tests verify autorun and console output. |
+| Console and startup commands | Native console requests preserve command text and canonical frame/session context; typed configuration enables pretty-printers and source mappings. Packaged GDB tests verify autorun and console output. |
 | Decorations and focused-frame status | Real VS Code tests inspect rendered group/session breakpoint labels, execution labels and status-bar metadata, then verify cleanup. |
 | Output and reconnection | Real loopback HTTP tests interrupt streams, verify cursor resume and loss warnings, rehydrate state after replay gaps and reject a changed server instance. |
 | Shutdown and failures | Managed process exit, bounded owned-process cleanup, credential cleanup and external-server preservation are exercised by lifecycle tests. Refresh tests reject late results and stop callbacks during disconnect. |
@@ -45,8 +45,9 @@ endpoint and typed memory reads, both tested.
 
 Legacy implementation files remain for compatibility regression tests. The active
 entrypoint does not instantiate their MI transport or parser. Arbitrary console
-commands and variable metadata still use GDB MI command syntax inside structured
-v2 raw-command requests where the backend lacks an equivalent typed operation.
+and autorun commands use native debugger CLI text. Variable
+inspection, assignment and setup use typed SDK methods. The adapter does not
+construct MI commands or manage backend variable objects.
 
 ## Reproducibility and limits
 
@@ -74,10 +75,14 @@ Earlier investigation and regression details are retained in
 
 ## Validation results
 
-- Adapter unit tests: 114 passed.
-- Backend core tests: 317 passed, one ignored.
-- Canonical binary integration suite: 12 passed, including all variable modes.
-- Corrected mock execution scenario: five additional consecutive passes.
-- Extracted VSIX: four stdio scenarios and the real VS Code/GDB scenario passed
-  before the documentation and setting-description update. The final artifact
-  is rechecked after packaging; its receipt is recorded separately.
+- Adapter unit tests: 113 passed.
+- Backend core tests: 322 passed, one ignored; HTTP and gRPC checks passed.
+- Canonical binary integration suite: 12 passed, including all variable modes,
+  C++ nested containers, typed child assignment and caller-frame native console.
+- Backend real GDB tests cover one-time evaluation, stop-scoped cleanup,
+  lazy pretty-printers, typed settings, authorization and idempotent assignment.
+- Rust, TypeScript and Python SDK checks and generated-contract checks passed.
+
+Packaged stdio and extension-host checks use the procedures above. Their logs and
+artifact digest are recorded with the packaged build, since source test results
+alone do not establish that a VSIX contains the expected runtime.

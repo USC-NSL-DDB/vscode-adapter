@@ -4,7 +4,6 @@ import { isAbsolute } from "node:path";
 import type { DebugProtocol } from "vscode-debugprotocol";
 import type { Frame, Variable, Target, DistributedFrame, SourceLocation } from "@ddb-debugger/api-client";
 import { DdbConnection } from "./connection.mjs";
-import { RawVariables, type ExpressionContext } from "./raw_variables.mjs";
 import { Handles } from "./handles.mjs";
 
 export interface FrameContext {
@@ -16,8 +15,7 @@ export interface FrameContext {
 }
 interface VariableContext {
 	frame: FrameContext;
-	kind: "scope" | "variable" | "registers" | "expression";
-	expression?: ExpressionContext;
+	kind: "scope" | "variable" | "registers";
 	id: string;
 	children?: Variable[];
 }
@@ -29,14 +27,12 @@ export class DdbInspection {
 	readonly groupHandles = new Handles<string>();
 	readonly frames = new Handles<FrameContext>();
 	private readonly variables = new Handles<VariableContext>();
-	private readonly childHints = new Map<string, boolean>();
 	private readonly sources = new Handles<string>();
 	private epoch = 0;
 	private readonly threadEpochs = new Map<string, number>();
 	private readonly frameChecks = new WeakMap<FrameContext, () => void>();
 
-	private readonly raw: RawVariables;
-	constructor(readonly connection: DdbConnection, private readonly valuesFormatting = "prettyPrinters") { this.raw = new RawVariables(connection); }
+	constructor(readonly connection: DdbConnection, private readonly valuesFormatting = "prettyPrinters") {}
 
 	threadHandle(id: string): number { return this.threadHandles.put(id, id); }
 	sessionHandle(id: string): number { return this.sessionHandles.put(id, id); }
@@ -63,7 +59,6 @@ export class DdbInspection {
 			this.frames.removeWhere(frame => frame.threadId === threadId);
 			this.variables.removeWhere(variable => variable.frame.threadId === threadId);
 		}
-		this.childHints.clear();
 	}
 
 	private inspectionCheck(): (threadId: string) => void {
@@ -146,15 +141,6 @@ export class DdbInspection {
 		const context = this.variables.get(args.variablesReference);
 		const check = this.checkFrame(context.frame);
 		const client = this.connection.client;
-		if (context.kind === "expression") {
-			const expression = context.expression!;
-			const start = args.start ?? 0;
-			const children = await this.raw.expand(expression, start, args.count || 1000);
-			check();
-			context.children = children.map((child, index) => ({ name: child.name, value: child.value, variableId: String(start + index) }));
-			return { variables: children.map((child, index) => ({ name: child.name, value: child.value, type: child.type,
-				variablesReference: child.children > 0 ? this.variables.put({ frame: context.frame, kind: "expression", id: "", expression: { ...expression, path: [...expression.path, start + index] } }) : 0 })) };
-		}
 		if (context.kind === "registers") {
 			const registers = await client.collect("DebuggerService.ListRegisters", { frameId: context.id, format: "REGISTER_FORMAT_HEXADECIMAL" });
 			check();
@@ -164,22 +150,6 @@ export class DdbInspection {
 			? await client.collect("DebuggerService.ListVariables", { scopeId: context.id })
 			: await client.collect("DebuggerService.ExpandVariable", { variableId: context.id });
 		check();
-		// Canonical local-variable queries omit child counts on GDB. Ask only for
-		// object metadata; scalar ExpandVariable currently rejects empty children.
-		for (let offset = 0; offset < variables.length; offset += 4) {
-			await Promise.all(variables.slice(offset, offset + 4).map(async variable => {
-				if (this.valuesFormatting === "disabled" || variable.childCount !== undefined || variable.hasChildren || !variable.variableId || !variable.evaluateName) return;
-				let hasChildren = this.childHints.get(variable.variableId);
-				if (hasChildren === undefined) {
-					const metadata = await this.raw.inspect({ frame: context.frame, expression: variable.evaluateName, path: [] });
-					check();
-					hasChildren = metadata.children > 0;
-					this.childHints.set(variable.variableId, hasChildren);
-				}
-				variable.hasChildren = hasChildren;
-			}));
-		}
-		check();
 		context.children = variables;
 		const start = args.start ?? 0;
 		return { variables: variables.slice(start, args.count ? start + args.count : undefined).map(variable => this.variable(variable, context.frame)) };
@@ -188,9 +158,8 @@ export class DdbInspection {
 	private variable(variable: Variable, frame: FrameContext): DebugProtocol.Variable {
 		return {
 			name: variable.name ?? "?", value: variable.value ?? "", type: variable.typeName, evaluateName: variable.evaluateName,
-			variablesReference: this.valuesFormatting !== "disabled" && variable.hasChildren && variable.variableId ? this.variables.put(variable.evaluateName
-				? { frame, kind: "expression", id: variable.variableId, expression: { frame, expression: variable.evaluateName, path: [] } }
-				: { frame, kind: "variable", id: variable.variableId }, variable.variableId) : 0,
+			variablesReference: this.valuesFormatting !== "disabled" && variable.hasChildren && variable.variableId
+				? this.variables.put({ frame, kind: "variable", id: variable.variableId }, variable.variableId) : 0,
 			memoryReference: variable.address,
 		};
 	}
@@ -199,12 +168,6 @@ export class DdbInspection {
 		const frame = args.frameId === undefined ? undefined : this.frames.get(args.frameId);
 		if (frame && !frame.frame.frameId) throw new Error("Select an executable stack frame to evaluate an expression");
 		const check = frame ? this.checkFrame(frame) : () => {};
-		if (frame && args.context !== "repl" && this.valuesFormatting !== "disabled") {
-			const expression: ExpressionContext = { frame, expression: args.expression, path: [] };
-			const value = await this.raw.inspect(expression);
-			check();
-			return { result: value.value, type: value.type, variablesReference: value.children > 0 ? this.variables.put({ frame, kind: "expression", id: "", expression }) : 0 };
-		}
 		const result = await this.connection.complete(await this.connection.client.call("DebuggerControlService.Evaluate", {
 			target: frame ? { thread: { threadId: frame.threadId } } : { currentThread: {} },
 			frameId: frame?.frame.frameId, expression: args.expression,
@@ -214,7 +177,7 @@ export class DdbInspection {
 		const value = result.evaluation;
 		if (!value) throw new Error("DDB omitted evaluation result");
 		return { result: value.value ?? "", type: value.typeName, memoryReference: value.address,
-			variablesReference: this.valuesFormatting !== "disabled" && value.variableId && frame ? this.variables.put({ frame, kind: "variable", id: value.variableId }, value.variableId) : 0 };
+			variablesReference: this.valuesFormatting !== "disabled" && value.hasChildren && value.variableId && frame ? this.variables.put({ frame, kind: "variable", id: value.variableId }, value.variableId) : 0 };
 	}
 
 	async setVariable(args: DebugProtocol.SetVariableArguments): Promise<DebugProtocol.SetVariableResponse["body"]> {
@@ -222,25 +185,26 @@ export class DdbInspection {
 		const check = this.checkFrame(context.frame);
 		if (!context.children && context.kind !== "registers") await this.listVariables({ variablesReference: args.variablesReference });
 		check();
-		const child = context.children?.find(variable => variable.name === args.name);
-		if (context.kind === "expression") {
-			if (!child?.variableId) throw new Error(`Unknown child ${args.name}`);
-			const value = await this.raw.assign({ ...context.expression!, path: [...context.expression!.path, Number(child.variableId)] }, args.value);
+		const target = { thread: { threadId: context.frame.threadId } };
+		if (context.kind === "registers") {
+			const expression = `$${args.name.replace(/^\$/, "")}`;
+			const result = await this.connection.complete(await this.connection.client.call("DebuggerControlService.Evaluate", {
+				target, frameId: context.frame.frame.frameId,
+				expression: `(${expression}) = (${args.value})`, evaluationContext: "EVALUATION_CONTEXT_REPL",
+			}));
 			check();
-			this.childHints.clear();
-			return { value, variablesReference: 0 };
+			if (!result.evaluation) throw new Error("DDB omitted register assignment result");
+			return { value: result.evaluation.value ?? args.value, type: result.evaluation.typeName, variablesReference: 0 };
 		}
-		const expression = context.kind === "registers" ? `$${args.name.replace(/^\$/, "")}` : child?.evaluateName;
-		if (!expression) throw new Error(`DDB did not provide an assignable expression for ${args.name}`);
-		const result = await this.connection.complete(await this.connection.client.call("DebuggerControlService.Evaluate", {
-			target: { thread: { threadId: context.frame.threadId } }, frameId: context.frame.frame.frameId,
-			expression: `(${expression}) = (${args.value})`, evaluationContext: "EVALUATION_CONTEXT_REPL",
+		const child = context.children?.find(variable => variable.name === args.name);
+		if (!child?.variableId) throw new Error(`DDB did not provide a variable identity for ${args.name}`);
+		const result = await this.connection.complete(await this.connection.client.call("DebuggerControlService.SetVariable", {
+			target, variableId: child.variableId, value: args.value,
 		}));
 		check();
-		if (!result.evaluation) throw new Error("DDB omitted assignment result");
+		if (!result.variableAssignment) throw new Error("DDB omitted assignment result");
 		context.children = undefined;
-		this.childHints.clear();
-		return { value: result.evaluation.value ?? args.value, type: result.evaluation.typeName, variablesReference: 0 };
+		return { value: result.variableAssignment.value ?? args.value, type: child.typeName, variablesReference: this.variable(child, context.frame).variablesReference };
 	}
 
 	private async stackSource(location: SourceLocation | undefined, sessionId: string): Promise<DebugProtocol.Source | undefined> {

@@ -727,7 +727,7 @@
     "test:extension": "tsc -p ./ && node scripts/test-extension.cjs"
   },
   "dependencies": {
-    "@ddb-debugger/api-client": "file:vendor/ddb-debugger-api-client-0.1.0-25e4a354.tgz",
+    "@ddb-debugger/api-client": "file:vendor/ddb-debugger-api-client-0.1.0-10f0f8aa.tgz",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/api-logs": "^0.57.0",
     "@opentelemetry/exporter-logs-otlp-grpc": "^0.57.0",

@@ -255,9 +255,10 @@ suite("Canonical DDB binary", function () {
 					assert.equal(consoleSet.success, true, consoleSet.message);
 					const consoleValue = await dap.request("evaluate", { frameId: freshFrame.id, expression: "counter", context: "watch" });
 					assert.equal(consoleValue.body.result, "19");
-					const rawConsole = await dap.request("evaluate", { frameId: freshFrame.id, expression: '-data-evaluate-expression "1 + 2"', context: "repl" });
-					assert.equal(rawConsole.success, true, rawConsole.message);
-					assert.equal(rawConsole.body.result, "3");
+					const beforeConsole = dap.events.length;
+					const nativeConsole = await dap.request("evaluate", { frameId: freshFrame.id, expression: "print 1 + 2", context: "repl" });
+					assert.equal(nativeConsole.success, true, nativeConsole.message);
+					await until(() => dap.events.slice(beforeConsole).some(event => event.event === "output" && /\$\d+ = 3/.test(event.body.output ?? "")), "native console output");
 					const childAssignment = await dap.request("setVariable", { variablesReference: compound.variablesReference, name: children.body.variables[0].name, value: "101" });
 					assert.equal(childAssignment.success, true, childAssignment.message);
 					assert.equal(childAssignment.body.value, "101");
