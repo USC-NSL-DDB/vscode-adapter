@@ -583,7 +583,8 @@ class BreakpointItem extends vscode.TreeItem {
       `- Sub-breakpoints: ${breakpoint.subbkpts.length}`
     );
     this.iconPath = new vscode.ThemeIcon(
-      breakpoint.enabled ? "debug-breakpoint" : "debug-breakpoint-disabled"
+      breakpoint.enabled ? "debug-breakpoint" : "debug-breakpoint-disabled",
+      new vscode.ThemeColor(breakpoint.enabled ? "debugIcon.breakpointForeground" : "debugIcon.breakpointDisabledForeground")
     );
   }
 }
