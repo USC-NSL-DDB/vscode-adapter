@@ -32,10 +32,12 @@ suite("Manual greeter regressions", () => {
 	});
 	test("distributed traversal may stop its caller without expiring the new caller frames", async () => {
 		let model: DdbInspection;
+		let traversals = 0;
 		const connection = {
 			state: { get: (_kind: string, id: string) => ({ sessionId: id + "-session" }) },
 			client: {
 				call: async () => {
+					traversals++;
 					model.invalidate("caller"); // The backend interrupts the caller to unwind it.
 					return { distributedBacktrace: { frames: [
 						{ frame: { frameId: "server-frame" }, threadId: "server", sessionId: "server-session" },
@@ -50,6 +52,12 @@ suite("Manual greeter regressions", () => {
 		const stack = await model.stack({ threadId: model.threadHandle("server") }, true);
 		assert.equal(stack!.stackFrames.length, 2);
 		assert.ok((await model.scopes(stack!.stackFrames[1].id))!.scopes.length);
+		assert.deepEqual(await model.stack({ threadId: model.threadHandle("server") }, true), stack);
+		assert.equal(traversals, 1, "the new caller stop must not discard the completed stack");
+		model.invalidate("caller");
+		await assert.rejects(model.scopes(stack.stackFrames[1].id), /expired/);
+		await model.stack({ threadId: model.threadHandle("server") }, true);
+		assert.equal(traversals, 2, "caller execution must invalidate the distributed stack");
 	});
 
 	test("all-stop peers are paused and only one concurrent breakpoint takes focus", async () => {

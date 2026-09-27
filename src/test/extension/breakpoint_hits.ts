@@ -31,23 +31,34 @@ export async function testBreakpointHits(): Promise<void> {
 		],
 		executionStates: ["a", "b", "other"].map(id => ({ executionStateId: id, revision: "1", target: { thread: { threadId: id } }, stopReason: { kind: "STOP_REASON_KIND_BREAKPOINT", threadId: id, breakpointId: id === "other" ? "other" : "shared" } })),
 	};
+	snapshot.threads!.push({ threadId: "running", sessionId: "b", name: "running", state: "THREAD_STATE_RUNNING" });
 	const state = new DdbState();
+	const distributed = process.env.DDB_HIT_DISTRIBUTED === "1";
 	const connection = {
 		state, handshake: { capabilities: {} },
 		async *states() { state.hydrate(snapshot); yield { type: "snapshot", snapshot }; },
 		client: {
 			async *subscribeOutput() {},
 			collect: async (method: string, args: any) => {
+				// A real backend takes longer than VS Code's 50 ms tree refresh.
+				if (method === "DebuggerService.ListFrames") await delay(250);
 				if (method === "DebuggerService.ListFrames") return [
 					{ frameId: `${args.threadId}-frame`, functionName: args.threadId, location: { path: source, line: args.threadId === "other" ? 3 : 2 } },
-					{ frameId: `${args.threadId}-caller`, level: 1, functionName: "caller", location: { path: source, line: 1 } },
+					{ frameId: `${args.threadId}-caller`, level: 1, functionName: `${args.threadId}_caller`, location: { path: source, line: 1 } },
 				];
 				if (method === "DebuggerService.ListScopes" || method === "DebuggerService.ListRegisters") return [];
 				throw new Error(`Unexpected fixture collection ${method}`);
 			},
-			call: async (method: string) => { assert.equal(method, "DebuggerControlService.SelectThread"); return {}; },
+			call: async (method: string, args: any) => {
+				if (method === "DebuggerControlService.RunDistributedBacktrace") {
+					const threadId = args.target.thread.threadId;
+					const frames = await connection.client.collect("DebuggerService.ListFrames", { threadId });
+					return { distributedBacktrace: { frames: frames.map((frame, index) => ({ frame, index, threadId, sessionId: threadId === "a" ? "a" : "b" })) } } as any;
+				}
+				assert.equal(method, "DebuggerControlService.SelectThread"); return {};
+			},
 		},
-		complete: async () => ({}), close: async () => {},
+		complete: async (result: unknown) => result, close: async () => {},
 	} as unknown as DdbConnection;
 	const emitter = new vscode.EventEmitter<any>();
 	const trace: any[] = [];
@@ -56,6 +67,7 @@ export async function testBreakpointHits(): Promise<void> {
 		sendEvent(event: any) { emitter.fire(event); }
 		sendResponse(response: any) { trace.push({ response: response.command, success: response.success, message: response.message, body: response.body }); emitter.fire(response); }
 		async launchRequest(response: DebugProtocol.LaunchResponse) {
+			Object.assign(this, { distributed });
 			await this.useConnection(connection);
 			this.sendResponse(response);
 			this.sendEvent({ type: "event", event: "initialized", seq: 0 });
@@ -104,6 +116,17 @@ export async function testBreakpointHits(): Promise<void> {
 		await until(() => vscode.window.activeTextEditor?.selection.start.line === 0, "fixture must select a caller before returning to the hit");
 		assert.ok(click("worker-b", '[aria-label="Go to Paused Frame"]'));
 		await until(() => ui(`Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row[aria-selected="true"]')).some(row => row.textContent.includes('[breakpoint] b'))`), "repeated hit navigation must leave the caller and select the paused frame");
+		// A manual selection in another thread must not prevent explicit hit navigation.
+		assert.ok(ui(`(() => { const row = Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row')).find(row => row.textContent.includes('worker-a: a')); if (!row) return false; if (row.getAttribute('aria-expanded') !== 'true') row.querySelector('.monaco-tl-twistie').click(); return true; })()`));
+		await until(() => ui(`Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row')).some(row => row.textContent.includes('[breakpoint] a'))`), "other thread's frame must be visible");
+		assert.ok(ui(`(() => { const row = Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row')).find(row => row.textContent.includes('[breakpoint] a')); if (!row) return false; row.dispatchEvent(new MouseEvent('click', { bubbles: true })); return true; })()`));
+		await until(() => vscode.debug.activeStackItem instanceof vscode.DebugStackFrame && vscode.debug.activeStackItem.threadId === shared.hits.find((hit: any) => hit.threadName === "a").threadId, "manual click must select the other thread");
+		await until(() => ui(`Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row')).some(row => row.textContent.includes('a_caller'))`), "other thread's caller must be visible");
+		assert.ok(ui(`(() => { const row = Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row')).find(row => row.textContent.includes('a_caller')); if (!row) return false; row.dispatchEvent(new MouseEvent('click', { bubbles: true })); return true; })()`));
+		await until(() => vscode.window.activeTextEditor?.selection.start.line === 0, "manual click must select another thread's caller");
+		assert.ok(click("worker-b", '[aria-label="Go to Paused Frame"]'));
+		await until(() => vscode.debug.activeStackItem instanceof vscode.DebugStackFrame && vscode.debug.activeStackItem.threadId === target.threadId, "hit navigation must override manual selection in another thread");
+		await until(() => ui(`Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row[aria-selected="true"]')).some(row => row.textContent.includes('[breakpoint] b'))`), "hit navigation must select its row after another thread was manually selected");
 		// Parent actions present every current hit and can navigate back to another session.
 		assert.ok(click("hits.c:2", '[aria-label="Go to Paused Frame"]'));
 		await until(() => ui(`document.querySelector('.quick-input-widget')?.textContent.includes('Go to Paused Frame') ?? false`), "concurrent hits must offer a choice");

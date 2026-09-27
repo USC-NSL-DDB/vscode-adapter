@@ -21,7 +21,7 @@ function fixture() {
 	};
 	const state = new DdbState();
 	state.hydrate(snapshot);
-	const connection = { state, client: { call: () => assert.fail("hit navigation must not execute debugger commands") } } as unknown as DdbConnection;
+	const connection = { state, client: { collect: async (_method: string, args: any) => [{ frameId: `frame-${args.threadId}` }], call: () => assert.fail("hit navigation must not execute debugger commands") } } as unknown as DdbConnection;
 	const model = new DdbInspection(connection);
 	const breakpoints = new DdbBreakpoints(model);
 	const sidebar = new DdbSidebar(model, breakpoints);
@@ -60,6 +60,20 @@ suite("Current breakpoint hits", () => {
 		snapshot.threads = [];
 		state.hydrate(snapshot);
 		assert.equal(sidebar.currentHits().length, 0);
+	});
+
+	test("a hit that resumes while its stack is loading must not take focus", async () => {
+		const { connection, state, snapshot, model, sidebar, breakpoints } = fixture();
+		connection.client.collect = async () => {
+			snapshot.threads![2].state = "THREAD_STATE_RUNNING";
+			state.hydrate(snapshot);
+			return [{ frameId: "frame" }] as any;
+		};
+		const dap = new CanonicalHarness();
+		Object.assign(dap, { connection, inspection: model, sidebar, breakpoints });
+		const hit = sidebar.breakpointSnapshot()[0].hits[1];
+		assert.equal((await dap.request("ddb.focusBreakpointHit", hit)).success, false);
+		assert.equal(dap.events.length, 0);
 	});
 
 	test("explicit focus selects the requested stopped thread and rejects a resumed or newer hit", async () => {

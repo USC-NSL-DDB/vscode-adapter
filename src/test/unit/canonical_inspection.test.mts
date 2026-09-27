@@ -24,7 +24,7 @@ function fixture(formatting = "prettyPrinters") {
 		complete: async (result: unknown) => result,
 	} as unknown as DdbConnection;
 	const model = new DdbInspection(connection, formatting);
-	return { model, calls, pause(method: string) {
+	return { model, connection, calls, pause(method: string) {
 		let release!: () => void;
 		let entered!: () => void;
 		const started = new Promise<void>(resolve => { entered = resolve; });
@@ -39,12 +39,44 @@ suite("Canonical inspection lifetimes", () => {
 		const threadId = model.threadHandle("one");
 		const frame = (await model.stack({ threadId })).stackFrames[0];
 		const scope = (await model.scopes(frame.id)).scopes[0];
+		if (method === "ListFrames") model.invalidate();
 		const gate = pause(`DebuggerService.${method}`);
 		const result = method === "ListFrames" ? model.stack({ threadId }) : method === "ListScopes" ? model.scopes(frame.id) : model.listVariables({ variablesReference: scope.variablesReference });
 		await gate.started;
 		model.invalidate();
 		gate.release();
 		await assert.rejects(result, /expired|changed/i);
+	});
+
+	test("overlapping stack reads and pagination share the current stop, then reload after execution", async () => {
+		const { model, calls, pause } = fixture();
+		const threadId = model.threadHandle("one");
+		const gate = pause("DebuggerService.ListFrames");
+		const first = model.stack({ threadId, levels: 1 });
+		await gate.started;
+		const second = model.stack({ threadId });
+		gate.release();
+		assert.deepEqual(await first, await second);
+		assert.deepEqual((await model.stack({ threadId, startFrame: 1 })).stackFrames, []);
+		assert.equal(calls.filter(call => call.method.endsWith("ListFrames")).length, 1);
+		const oldId = (await first).stackFrames[0].id;
+		model.invalidate("one");
+		const fresh = await model.stack({ threadId });
+		assert.notEqual(fresh.stackFrames[0].id, oldId);
+		assert.equal(calls.filter(call => call.method.endsWith("ListFrames")).length, 2);
+	});
+
+	test("a failed stack load is retried", async () => {
+		const { model, connection } = fixture();
+		let attempts = 0;
+		connection.client.collect = async () => {
+			if (++attempts === 1) throw new Error("temporary stack failure");
+			return [{ frameId: "frame" }] as any;
+		};
+		const threadId = model.threadHandle("one");
+		await assert.rejects(model.stack({ threadId }), /temporary stack failure/);
+		assert.equal((await model.stack({ threadId })).stackFrames.length, 1);
+		assert.equal(attempts, 2);
 	});
 
 	test("one thread resuming preserves handles for another stopped thread", async () => {

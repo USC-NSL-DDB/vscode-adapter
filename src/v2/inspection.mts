@@ -29,6 +29,7 @@ export class DdbInspection {
 	readonly frames = new Handles<FrameContext>();
 	private readonly variables = new Handles<VariableContext>();
 	private readonly sources = new Handles<SourceContext>();
+	private readonly stacks = new Map<string, Promise<DebugProtocol.StackTraceResponse["body"]>>();
 	private epoch = 0;
 	private readonly threadEpochs = new Map<string, number>();
 	private readonly frameChecks = new WeakMap<FrameContext, () => void>();
@@ -62,6 +63,9 @@ export class DdbInspection {
 
 	/** Invalidates inspection handles on execution; stale requests must fail. */
 	invalidate(threadId?: string): void {
+		// A distributed stack may depend on any caller thread. Frame/variable
+		// handles below still expire only for the thread that actually changed.
+		this.stacks.clear();
 		if (threadId === undefined) {
 			this.epoch++;
 			this.threadEpochs.clear();
@@ -88,8 +92,28 @@ export class DdbInspection {
 		return check;
 	}
 
+	/** Reuse one stack per stop so overlapping DAP loads cannot race a tree refresh. */
 	async stack(args: DebugProtocol.StackTraceArguments, distributed = false): Promise<DebugProtocol.StackTraceResponse["body"]> {
 		const threadId = this.threadHandles.get(args.threadId);
+		const check = this.inspectionCheck();
+		const key = JSON.stringify([threadId, distributed]);
+		let pending = this.stacks.get(key);
+		if (!pending) {
+			pending = this.loadStack(threadId, distributed);
+			this.stacks.set(key, pending);
+			void pending.catch(() => { if (this.stacks.get(key) === pending) this.stacks.delete(key); });
+		}
+		const stack = await pending;
+		check(threadId);
+		for (const frame of stack.stackFrames) this.checkFrame(this.frames.get(frame.id));
+		// Traversal can stop a caller and clear the cache while loading. The
+		// completed stack is reusable once all its frame lifetimes are checked.
+		if (!this.stacks.has(key)) this.stacks.set(key, Promise.resolve(stack));
+		const start = args.startFrame ?? 0;
+		return { ...stack, stackFrames: stack.stackFrames.slice(start, args.levels ? start + args.levels : undefined) };
+	}
+
+	private async loadStack(threadId: string, distributed: boolean): Promise<DebugProtocol.StackTraceResponse["body"]> {
 		const originCheck = this.inspectionCheck();
 		const thread = this.connection.state.get("thread", threadId);
 		if (!thread?.sessionId) throw new Error("Thread is no longer available");
@@ -106,11 +130,10 @@ export class DdbInspection {
 		// Distributed traversal can interrupt a running caller. Its returned
 		// frames belong to that new stop, rather than the pre-traversal epoch.
 		const check = distributed ? this.inspectionCheck() : originCheck;
-		const start = args.startFrame ?? 0;
 		const sourceRequests = new Map<string, Promise<DebugProtocol.Source | undefined>>();
 		const result = {
 			totalFrames: frames.length,
-			stackFrames: await Promise.all(frames.slice(start, args.levels ? start + args.levels : undefined).map(async entry => {
+			stackFrames: await Promise.all(frames.map(async entry => {
 				const boundaryOnly = !entry.frame && !!entry.boundary && entry.boundary !== "DISTRIBUTED_BOUNDARY_KIND_UNSPECIFIED";
 				const frame: Frame = entry.frame ?? { synthetic: true };
 				if ((!frame.frameId && !boundaryOnly) || !entry.threadId || !entry.sessionId) throw new Error("DDB omitted a stack frame's identity");

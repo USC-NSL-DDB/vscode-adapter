@@ -393,13 +393,18 @@ export class CanonicalDebugSession extends DebugSession {
 		}
 		if (command === "ddb.focusBreakpointHit") {
 			await this.reply(response, async () => {
-				const hit = this.sidebar!.currentHits().find(hit => hit.breakpointId === args.breakpointId &&
+				const findHit = () => this.sidebar!.currentHits().find(hit => hit.breakpointId === args.breakpointId &&
 					hit.threadId === args.threadId && hit.sessionId === args.sessionId && hit.stopRevision === args.stopRevision);
+				const hit = findHit();
 				if (!hit) throw new Error("This breakpoint hit is no longer paused. Refresh the breakpoint panel.");
 				const threadId = this.model.threadHandles.get(hit.threadId);
 				const state = this.connection!.state.all("executionState").find(state => state.target?.thread?.threadId === threadId)!;
 				// Explicit navigation asks the DAP client to select this stopped thread's
-				// top frame. It neither resumes execution nor interrupts other sessions.
+				// top frame without resuming the target.
+				// VS Code may load the stack both for stop focus and for an expanded
+				// tree. Preload it so those reads finish before its selection update.
+				await this.model.stack({ threadId: hit.threadId }, this.distributed);
+				if (!findHit()) throw new Error("This breakpoint hit is no longer paused. Refresh the breakpoint panel.");
 				this.focusedStop = threadId;
 				this.publishStopped(threadId, state, true);
 				return {};
