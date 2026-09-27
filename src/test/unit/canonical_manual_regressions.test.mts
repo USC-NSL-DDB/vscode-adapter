@@ -71,6 +71,8 @@ suite("Manual greeter regressions", () => {
 		assert.deepEqual(stops.map(event => event.body.reason), ["breakpoint", "breakpoint"]);
 		assert.equal(stops.length, 2, "all-stop peers must not interrupt VS Code frame selection with redundant stop events");
 		assert.equal(stops.filter(event => !event.body.preserveFocusHint).length, 1);
+		assert.equal(stops[0].body.allThreadsStopped, true);
+		assert.equal(stops[1].body.allThreadsStopped, undefined, "later hits must not invalidate every thread's pending frame selection");
 		const threads = (await dap.request("threads")).body.threads;
 		assert.match(threads[0].name, /breakpoint at handler.cc:59/);
 		assert.match(threads[1].name, /breakpoint at handler.cc:59/);

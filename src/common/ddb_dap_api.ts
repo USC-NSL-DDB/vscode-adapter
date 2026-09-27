@@ -2,7 +2,14 @@ import * as vscode from "vscode";
 export type { LogicalGroup, GetGroupQuery, ServiceStatus, SubBreakpoint } from "./ddb_api";
 import type { Session as LegacySession, LogicalGroup, GetGroupQuery, ServiceStatus, DDBBreakpoint as LegacyBreakpoint } from "./ddb_api";
 export type Session = Omit<LegacySession, "group"> & { group?: { valid: boolean; id: number; hash: string } };
-export type DDBBreakpoint = Omit<LegacyBreakpoint, "times"> & { times: string | number };
+export interface BreakpointHit {
+	breakpointId: number;
+	sessionId: number;
+	threadId: number;
+	threadName: string;
+	stopRevision: string;
+}
+export type DDBBreakpoint = Omit<LegacyBreakpoint, "times"> & { times: string | number; hits?: BreakpointHit[] };
 
 function session(): vscode.DebugSession {
 	const active = vscode.debug.activeDebugSession;

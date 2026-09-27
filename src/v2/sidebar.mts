@@ -1,6 +1,7 @@
 import { DdbApiError, type Target } from "@ddb-debugger/api-client";
 import type { DdbInspection } from "./inspection.mjs";
 import type { DdbBreakpoints } from "./breakpoints.mjs";
+import type { BreakpointHit } from "../common/ddb_dap_api.js";
 import { Handles } from "./handles.mjs";
 
 /** Sidebar DTOs use adapter-local handles; no canonical IDs cross as numbers. */
@@ -15,7 +16,30 @@ export class DdbSidebar {
 		}));
 	}
 
+	/** Current stop ownership, never historical hit counts or all-stop peers. */
+	currentHits(): BreakpointHit[] {
+		const state = this.model.connection.state;
+		const breakpoints = state.all("breakpoint");
+		return state.all("executionState").flatMap(execution => {
+			const threadId = execution.target?.thread?.threadId;
+			const reason = execution.stopReason;
+			if (!threadId || execution.running || reason?.kind !== "STOP_REASON_KIND_BREAKPOINT" || !reason.breakpointId) return [];
+			if (reason.threadId && reason.threadId !== threadId) return [];
+			const thread = state.get("thread", threadId);
+			if (thread?.state !== "THREAD_STATE_STOPPED" || !thread.sessionId) return [];
+			const breakpoint = breakpoints.find(item => item.breakpointId === reason.breakpointId ||
+				item.subBreakpoints?.some(sub => sub.subBreakpointId === reason.breakpointId && sub.sessionId === thread.sessionId));
+			if (!breakpoint?.breakpointId) return [];
+			return [{ breakpointId: this.breakpoints.handle(breakpoint.breakpointId),
+				sessionId: this.model.sessionHandle(thread.sessionId), threadId: this.model.threadHandle(threadId),
+				threadName: thread.name ?? thread.backendThreadId ?? threadId,
+				stopRevision: JSON.stringify([execution.executionStateId, execution.revision ?? "0"]),
+			}];
+		});
+	}
+
 	breakpointSnapshot() {
+		const hits = this.currentHits();
 		return this.model.connection.state.all("breakpoint").map(breakpoint => {
 			const targets: { type: "group" | "session"; id: number; target_group?: number; target_session?: number }[] = [];
 			const seen = new Set<string>();
@@ -39,6 +63,7 @@ export class DdbSidebar {
 			if (breakpoint.target) visit(breakpoint.target);
 			return {
 				id: this.breakpoints.handle(breakpoint.breakpointId!),
+				hits: hits.filter(hit => hit.breakpointId === this.breakpoints.handle(breakpoint.breakpointId!)),
 				location: { src: breakpoint.spec?.source?.source ?? breakpoint.spec?.function?.functionName ?? "", line: breakpoint.spec?.source?.line ?? 0 },
 				enabled: breakpoint.spec?.enabled ?? true, times: breakpoint.hitCount ?? "0", subbkpts: targets,
 				verified: breakpoint.verified ?? false, pending: breakpoint.pending ?? false, message: breakpoint.message,

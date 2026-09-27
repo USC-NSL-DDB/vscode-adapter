@@ -405,7 +405,7 @@ class BreakpointsProvider
           new BreakpointItem(
             bp,
             `:${bp.location.line}`, // Short form for grouped view
-            bp.subbkpts.length > 0
+            bp.subbkpts.length > 0 || !!bp.hits?.length
               ? vscode.TreeItemCollapsibleState.Collapsed
               : vscode.TreeItemCollapsibleState.None
           )
@@ -414,14 +414,14 @@ class BreakpointsProvider
 
     if (element instanceof BreakpointItem) {
       // Breakpoint level: return sub-breakpoints (groups and sessions)
-      return this.getSubBreakpointItems(element.breakpoint.subbkpts);
+      return this.getSubBreakpointItems(element.breakpoint);
     }
 
     if (element instanceof SubBreakpointItem) {
       // Sub-breakpoint level: if it's a group, show sessions within it
       if (element.subbkpt.type === "group") {
         const groupId = element.subbkpt.target_group!;
-        return this.getSessionsInGroup(groupId);
+        return this.getSessionsInGroup(groupId, element.breakpoint);
       }
       // Sessions are not expandable
       return [];
@@ -436,7 +436,7 @@ class BreakpointsProvider
       return new BreakpointItem(
         bp,
         `[bkpt ${bp.id}] ${fileName}:${bp.location.line}`,
-        bp.subbkpts.length > 0
+        bp.subbkpts.length > 0 || !!bp.hits?.length
           ? vscode.TreeItemCollapsibleState.Collapsed
           : vscode.TreeItemCollapsibleState.None
       );
@@ -447,12 +447,13 @@ class BreakpointsProvider
     const files = this.breakpointManager.getUniqueFiles();
     return files.map((filePath) => {
       const bps = this.breakpointManager.getBreakpointsByFile(filePath);
-      return new BreakpointFileItem(filePath, bps.length);
+      return new BreakpointFileItem(filePath, bps.length, bps.flatMap(bp => bp.hits ?? []));
     });
   }
 
-  private getSubBreakpointItems(subbkpts: SubBreakpoint[]): SubBreakpointItem[] {
-    return subbkpts.map((sub) => {
+  private getSubBreakpointItems(breakpoint: DDBBreakpoint): SubBreakpointItem[] {
+    const covered = new Set<number>();
+    const items = breakpoint.subbkpts.map((sub) => {
       let displayName: string;
       let targetId: number;
 
@@ -466,11 +467,24 @@ class BreakpointsProvider
         displayName = `[Session, sid: ${targetId}] ${session?.alias || `Session ${targetId}`}`;
       }
 
-      return new SubBreakpointItem(sub, displayName);
+      const sessions = sub.type === "group"
+        ? this.sessionManager.getSessionsByGroup(targetId).map(session => session.sid) : [targetId];
+      for (const id of sessions) covered.add(id);
+      return new SubBreakpointItem(sub, displayName, breakpoint, (breakpoint.hits ?? []).filter(hit => sessions.includes(hit.sessionId)));
     });
+    // Broadcast/thread targets may not have an explicit sidebar assignment.
+    for (const hit of breakpoint.hits ?? []) {
+      if (covered.has(hit.sessionId)) continue;
+      covered.add(hit.sessionId);
+      const session = this.sessionManager.getSession(hit.sessionId);
+      items.push(new SubBreakpointItem({ type: "session", id: -hit.sessionId, target_session: hit.sessionId },
+        `[Session, sid: ${hit.sessionId}] ${session?.alias ?? hit.sessionId}`, breakpoint,
+        breakpoint.hits!.filter(item => item.sessionId === hit.sessionId)));
+    }
+    return items;
   }
 
-  private getSessionsInGroup(groupId: number): BreakpointTreeItem[] {
+  private getSessionsInGroup(groupId: number, breakpoint: DDBBreakpoint): BreakpointTreeItem[] {
     const group = this.sessionManager.getGroup(groupId);
     if (!group) {
       return [new PlaceholderItem("Currently no active session in this group")];
@@ -480,7 +494,7 @@ class BreakpointsProvider
     if (sessions.length === 0) {
       return [new PlaceholderItem("Currently no active session in this group")];
     }
-    return sessions.map((session) => new GroupSessionItem(session, group));
+    return sessions.map((session) => new GroupSessionItem(session, group, breakpoint));
   }
 }
 
@@ -551,20 +565,34 @@ class PlaceholderItem extends vscode.TreeItem {
 class BreakpointFileItem extends vscode.TreeItem {
   constructor(
     public readonly filePath: string,
-    public readonly breakpointCount: number
+    public readonly breakpointCount: number,
+    public readonly hits: ddb_api.BreakpointHit[]
   ) {
     super(
       `${path.basename(filePath)} (${breakpointCount} breakpoint${breakpointCount !== 1 ? "s" : ""})`,
       vscode.TreeItemCollapsibleState.Collapsed
     );
     this.contextValue = "breakpointFileItem";
-    this.tooltip = filePath;
+    this.tooltip = new vscode.MarkdownString().appendText(filePath);
     this.iconPath = new vscode.ThemeIcon("file");
+    showBreakpointHits(this, hits);
   }
+}
+
+function showBreakpointHits(item: vscode.TreeItem, hits: ddb_api.BreakpointHit[], arrow = false): void {
+  if (!hits.length) return;
+  const sessions = new Set(hits.map(hit => hit.sessionId)).size;
+  item.description = arrow
+    ? hits.length === 1 ? "Hit" : `Hit · ${hits.length} threads`
+    : `Hit · ${sessions} session${sessions === 1 ? "" : "s"}`;
+  item.contextValue += "Hit";
+  if (arrow) item.iconPath = new vscode.ThemeIcon("debug-stackframe", new vscode.ThemeColor("debugIcon.breakpointCurrentStackframeForeground"));
+  if (item.tooltip instanceof vscode.MarkdownString) item.tooltip.appendMarkdown(`\n\n**Currently paused here:** ${hits.map(hit => `session ${hit.sessionId}, thread ${hit.threadName}`).join("; ")}`);
 }
 
 // Represents a single breakpoint
 class BreakpointItem extends vscode.TreeItem {
+  get hits(): ddb_api.BreakpointHit[] { return this.breakpoint.hits ?? []; }
   constructor(
     public readonly breakpoint: DDBBreakpoint,
     displayLabel: string,
@@ -586,6 +614,7 @@ class BreakpointItem extends vscode.TreeItem {
       breakpoint.enabled ? "debug-breakpoint" : "debug-breakpoint-disabled",
       new vscode.ThemeColor(breakpoint.enabled ? "debugIcon.breakpointForeground" : "debugIcon.breakpointDisabledForeground")
     );
+    showBreakpointHits(this, this.hits);
   }
 }
 
@@ -594,7 +623,9 @@ class BreakpointItem extends vscode.TreeItem {
 class SubBreakpointItem extends vscode.TreeItem {
   constructor(
     public readonly subbkpt: SubBreakpoint,
-    displayName: string
+    displayName: string,
+    public readonly breakpoint: DDBBreakpoint,
+    public readonly hits: ddb_api.BreakpointHit[]
   ) {
     // Groups are expandable to show sessions within them
     const collapsibleState =
@@ -602,6 +633,7 @@ class SubBreakpointItem extends vscode.TreeItem {
         ? vscode.TreeItemCollapsibleState.Collapsed
         : vscode.TreeItemCollapsibleState.None;
     super(displayName, collapsibleState);
+    this.id = `breakpoint:${breakpoint.id}:${subbkpt.type}:${subbkpt.type === "group" ? subbkpt.target_group : subbkpt.target_session}`;
     this.contextValue =
       subbkpt.type === "group" ? "groupSubBkpt" : "sessionSubBkpt";
     this.iconPath = new vscode.ThemeIcon(
@@ -609,20 +641,25 @@ class SubBreakpointItem extends vscode.TreeItem {
     );
     const targetId =
       subbkpt.type === "group" ? subbkpt.target_group : subbkpt.target_session;
-    this.tooltip = `${subbkpt.type === "group" ? "Group" : "Session"} ID: ${targetId}`;
+    this.tooltip = new vscode.MarkdownString(`${subbkpt.type === "group" ? "Group" : "Session"} ID: ${targetId}`);
+    showBreakpointHits(this, hits, subbkpt.type === "session");
   }
 }
 
 // Represents a session within a group (when expanding group sub-breakpoints)
 class GroupSessionItem extends vscode.TreeItem {
+  readonly hits: ddb_api.BreakpointHit[];
   constructor(
     public readonly session: ddb_api.Session,
-    public readonly group: LogicalGroup
+    public readonly group: LogicalGroup,
+    breakpoint: DDBBreakpoint
   ) {
     super(
       `↳ [sid: ${session.sid}] ${session.alias || "unnamed"}`,
       vscode.TreeItemCollapsibleState.None
     );
+    this.id = `breakpoint:${breakpoint.id}:group:${group.id}:session:${session.sid}`;
+    this.hits = (breakpoint.hits ?? []).filter(hit => hit.sessionId === session.sid);
     this.contextValue = "groupSessionItem";
     // this.iconPath = new vscode.ThemeIcon("debug");
     this.description = session.status;
@@ -633,6 +670,7 @@ class GroupSessionItem extends vscode.TreeItem {
         `- Tag: ${session.tag}\n` +
         `- Group: ${group.alias || `Group ${group.id}`}`
     );
+    showBreakpointHits(this, this.hits, true);
   }
 }
 
@@ -959,6 +997,26 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(breakpointsRefreshCommand);
+
+  context.subscriptions.push(vscode.commands.registerCommand(
+    "ddbBreakpointsExplorer.focusHit",
+    async (item: { hits?: ddb_api.BreakpointHit[] }) => {
+      const session = vscode.debug.activeDebugSession;
+      if (session?.type !== "ddb" || !item?.hits?.length) return;
+      const hits = item.hits;
+      const hit = hits.length === 1 ? hits[0] : (await vscode.window.showQuickPick(hits.map(hit => ({
+        label: sessionManager.getSession(hit.sessionId)?.alias ?? `Session ${hit.sessionId}`,
+        description: `Session ${hit.sessionId} · Thread ${hit.threadName}`,
+        hit,
+      })), { title: "Go to Paused Frame", placeHolder: "Choose a thread currently hitting this breakpoint" }))?.hit;
+      if (!hit) return;
+      try {
+        await session.customRequest("ddb.focusBreakpointHit", hit);
+      } catch (error) {
+        void vscode.window.showWarningMessage(`Could not focus breakpoint hit: ${String(error)}`);
+      }
+    }
+  ));
 
   context.subscriptions.push(vscode.commands.registerCommand(
     "ddbBreakpointsExplorer.openSource",

@@ -15,7 +15,7 @@ try {
   if (process.env.DDB_TEST_EXTENSION_DIRECTORY) {
     // VS Code attributes API permissions to the extension containing each file.
     fixtureDirectory = mkdtempSync(join(extensionDirectory, '.ddb-tests-'));
-    for (const name of ['canonical_ui.js', 'source_navigation.js', 'greeter_ui.js']) {
+    for (const name of ['canonical_ui.js', 'source_navigation.js', 'greeter_ui.js', 'breakpoint_hits.js']) {
       copyFileSync(resolve(__dirname, '../out/src/test/extension', name), join(fixtureDirectory, name));
     }
     testsPath = join(fixtureDirectory, suite);

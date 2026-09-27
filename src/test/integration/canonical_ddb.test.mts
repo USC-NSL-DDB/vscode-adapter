@@ -329,6 +329,12 @@ suite("Canonical DDB binary", function () {
 					assert.equal(coordinatedStops.some(event => event.body.threadId !== dapThreadId), false, "automatic peer stops must not cancel VS Code's breakpoint frame selection");
 					assert.equal(hitEvent.body.hitBreakpointIds.length, 1);
 					assert.ok(hitEvent.body.hitBreakpointIds[0] > 0);
+					const hitPanel = (await dap.request("ddb.getBreakpoints")).body.bkpts.find((bp: any) => bp.id === hitEvent.body.hitBreakpointIds[0]);
+					assert.equal(hitPanel.hits.length, 1, "only the actual GDB breakpoint owner belongs in the hit panel");
+					assert.equal(hitPanel.hits[0].threadId, dapThreadId);
+					assert.equal((await dap.request("ddb.focusBreakpointHit", hitPanel.hits[0])).success, true);
+					assert.equal(dap.events.at(-1)!.body.threadId, dapThreadId);
+					assert.ok(c.state.all("thread").every(item => item.state === "THREAD_STATE_STOPPED"), "navigation must preserve the stopped processes");
 					await c.complete(await c.client.call("DebuggerControlService.DeleteBreakpoint", { target: { broadcast: {} }, breakpointId: hit.breakpoint?.breakpointId }));
 				}
 				if (backend === "gdb") {

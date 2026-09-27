@@ -263,7 +263,11 @@ export class CanonicalDebugSession extends DebugSession {
 			body.preserveFocusHint = this.focusedStop !== undefined && this.focusedStop !== threadId;
 			if (!body.preserveFocusHint) this.focusedStop = threadId;
 		}
-		body.allThreadsStopped = this.connection!.state.all("thread").every(item => item.state === "THREAD_STATE_STOPPED");
+		// A later concurrent hit only updates its own thread. Reannouncing an
+		// all-thread stop cancels VS Code's pending selection of the first hit.
+		if (!body.preserveFocusHint || !this.focusedStop || this.focusedStop === threadId) {
+			body.allThreadsStopped = this.connection!.state.all("thread").every(item => item.state === "THREAD_STATE_STOPPED");
+		}
 		const location = state.location ?? thread.location;
 		if (!secondary && thread.sessionId && location?.path && location.line) {
 			const metadata = { session_id: this.model.sessionHandle(thread.sessionId), thread_id: this.model.threadHandle(threadId), file: location.path, line: location.line, level: 0 };
@@ -385,6 +389,21 @@ export class CanonicalDebugSession extends DebugSession {
 				status: (session.status ?? "SESSION_STATUS_UNSPECIFIED").replace("SESSION_STATUS_", "").toLowerCase(),
 				group: session.groupId ? { valid: true, id: this.model.groupHandles.put(session.groupId, session.groupId), hash: session.groupId } : undefined,
 			})) }));
+			return;
+		}
+		if (command === "ddb.focusBreakpointHit") {
+			await this.reply(response, async () => {
+				const hit = this.sidebar!.currentHits().find(hit => hit.breakpointId === args.breakpointId &&
+					hit.threadId === args.threadId && hit.sessionId === args.sessionId && hit.stopRevision === args.stopRevision);
+				if (!hit) throw new Error("This breakpoint hit is no longer paused. Refresh the breakpoint panel.");
+				const threadId = this.model.threadHandles.get(hit.threadId);
+				const state = this.connection!.state.all("executionState").find(state => state.target?.thread?.threadId === threadId)!;
+				// Explicit navigation asks the DAP client to select this stopped thread's
+				// top frame. It neither resumes execution nor interrupts other sessions.
+				this.focusedStop = threadId;
+				this.publishStopped(threadId, state, true);
+				return {};
+			});
 			return;
 		}
 		if (command === "ddb.frameMetadata") {

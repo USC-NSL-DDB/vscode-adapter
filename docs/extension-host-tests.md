@@ -46,7 +46,7 @@ DDB deployment.
 ## Test an extracted VSIX
 
 Set DDB_TEST_EXTENSION_DIRECTORY to the `extension` directory extracted from a
-VSIX to test its packaged runtime. The runner temporarily copies its three test
+VSIX to test its packaged runtime. The runner temporarily copies its four test
 files under that directory so VS Code attributes fixture API calls to the DDB
 extension. It removes those files afterward. The directory must be writable.
 The test asserts that VS Code loaded the requested extension path.
@@ -105,3 +105,18 @@ its selected group through the same paired breakpoint request so it can test RPC
 and stop behavior independently. Both scenarios use an isolated VS Code profile.
 Simultaneous independent breakpoint hits are covered by deterministic adapter
 unit tests; the greeter scenario hits the client and server in sequence.
+
+## Concurrent breakpoint hit panel
+
+The standard extension-host run also exercises the real canonical adapter with
+an in-memory backend state fixture. Two sessions hit one breakpoint while a third
+thread hits another breakpoint. The test checks parent, group and session markers,
+clicks a session's **Go to Paused Frame** button, chooses another session through
+the parent row's picker, and verifies VS Code's active stack frame changes.
+Resuming one thread must preserve other hits; resuming all threads must remove
+all hit actions and markers. Accumulated hit counts remain nonzero throughout.
+
+Set `DDB_HIT_UI_ONLY=1` to run just this fixture with the usual extension-host
+environment. It does not start a DDB server or use service discovery. Real GDB
+integration separately checks that only the actual breakpoint owner appears in
+the hit projection and that focusing it leaves every process stopped.

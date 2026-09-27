@@ -103,6 +103,11 @@
         "icon": "$(group-by-ref-type)"
       },
       {
+        "command": "ddbBreakpointsExplorer.focusHit",
+        "title": "Go to Paused Frame",
+        "icon": "$(debug-stackframe)"
+      },
+      {
         "command": "ddbBreakpointsExplorer.openSource",
         "title": "Go to Breakpoint Source",
         "icon": "$(go-to-file)"
@@ -688,8 +693,13 @@
       ],
       "view/item/context": [
         {
+          "command": "ddbBreakpointsExplorer.focusHit",
+          "when": "view == ddbBreakpointsExplorer && viewItem =~ /Hit$/",
+          "group": "inline@0"
+        },
+        {
           "command": "ddbBreakpointsExplorer.openSource",
-          "when": "view == ddbBreakpointsExplorer && viewItem == sourceBreakpointItem",
+          "when": "view == ddbBreakpointsExplorer && viewItem =~ /^sourceBreakpointItem/",
           "group": "inline@1"
         },
         {

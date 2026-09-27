@@ -75,7 +75,7 @@ Earlier investigation and regression details are retained in
 
 ## Validation results
 
-- Adapter unit tests: 118 passed.
+- Adapter unit tests: 122 passed.
 - Backend core tests: 322 passed, one ignored; HTTP and gRPC checks passed.
 - Canonical binary integration suite: 12 passed, including all variable modes,
   C++ nested containers, typed child assignment and caller-frame native console.
@@ -108,3 +108,22 @@ alone do not establish that a VSIX contains the expected runtime.
 The greeter VS Code scenario checks the initial stack, client/server highlights,
 caller-frame clicks, scopes and variables, source navigation and cleanup.
 See the package validation receipt for the exact artifact and test logs.
+
+## Current breakpoint hits
+
+The adapter derives panel hit markers from current stopped-thread ownership and
+canonical breakpoint IDs. It supports simultaneous hits across sessions and
+multiple hitting threads within a session. Session and group rows show only hits
+for their breakpoint; automatic pauses and historical counts do not create hits.
+File groups also aggregate current hits when the panel groups by file.
+
+**Go to Paused Frame** selects the actual stopped thread in VS Code, including
+its stack and variables. A picker disambiguates multiple hits. Requests carry the
+stop revision and are rejected if the target resumed or reached a different stop.
+No backend or SDK change is needed.
+
+A real VS Code fixture verifies concurrent indicators, navigation and clearing
+on resume through the canonical adapter. It also caught and now guards against
+later stop events cancelling the first hit's automatic frame selection. Later
+concurrent stop events update only their own thread. Real GDB integration verifies
+hit ownership and that navigation preserves stopped execution.

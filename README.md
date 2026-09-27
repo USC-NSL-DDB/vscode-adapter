@@ -80,6 +80,13 @@ Hover over a source breakpoint in **DDB Breakpoints** and click **Go to Breakpoi
 Source** to open its line. Distributed call boundaries include the caller's
 session name, and caller frames support source navigation and variable inspection.
 
+Currently hit breakpoints show **Hit** and a session count in the panel. Expand a
+group to see which sessions are paused there; those sessions have a yellow frame
+arrow. Hover or focus a hit row and use **Go to Paused Frame** to select its call
+frame and variables. Rows with several hits offer a session/thread picker.
+Indicators clear as each hitting thread resumes, even if other sessions remain
+stopped. Historical hit counts stay in the tooltip.
+
 Unavailable library source is fetched only when opening that frame. It no longer
 holds up the call stack. A file that DDB cannot retrieve still requires installing
 its source or configuring a source mapping.
