@@ -38,8 +38,11 @@ export async function testBreakpointHits(): Promise<void> {
 		client: {
 			async *subscribeOutput() {},
 			collect: async (method: string, args: any) => {
-				if (method === "DebuggerService.ListFrames") return [{ frameId: `${args.threadId}-frame`, functionName: args.threadId, location: { path: source, line: args.threadId === "other" ? 3 : 2 } }];
-				if (method === "DebuggerService.ListScopes") return [];
+				if (method === "DebuggerService.ListFrames") return [
+					{ frameId: `${args.threadId}-frame`, functionName: args.threadId, location: { path: source, line: args.threadId === "other" ? 3 : 2 } },
+					{ frameId: `${args.threadId}-caller`, level: 1, functionName: "caller", location: { path: source, line: 1 } },
+				];
+				if (method === "DebuggerService.ListScopes" || method === "DebuggerService.ListRegisters") return [];
 				throw new Error(`Unexpected fixture collection ${method}`);
 			},
 			call: async (method: string) => { assert.equal(method, "DebuggerControlService.SelectThread"); return {}; },
@@ -81,16 +84,26 @@ export async function testBreakpointHits(): Promise<void> {
 		await delay(400);
 		await until(() => ui(`${row('hits.c:2')}?.textContent.includes('Hit · 2 sessions') ?? false`), "shared breakpoint must show both current hits");
 		assert.ok(click("hits.c:2", ".monaco-tl-twistie"));
-		await until(() => ui(`!!(${row('[Group,')})`), "group must be rendered");
+		await until(() => ui(`!!(${row('workers')})`), "group must be rendered");
 		await delay(200);
-		assert.ok(ui(`${row('[Group,')}.textContent.includes('Hit · 2 sessions')`));
-		assert.ok(click("[Group,", ".monaco-tl-twistie"));
-		await until(() => ui(`!!(${row('] worker-b')})`), "session hit must be rendered");
+		assert.ok(ui(`${row('workers')}.textContent.includes('Hit · 2 sessions')`));
+		assert.ok(click("workers", ".monaco-tl-twistie"));
+		await until(() => ui(`!!(${row('worker-b')})`), "session hit must be rendered");
 		await delay(400);
-		assert.ok(ui(`${row('] worker-b')}.textContent.includes('Hit')`));
-		assert.ok(click("] worker-b", '[aria-label="Go to Paused Frame"]'));
+		assert.ok(ui(`${row('worker-b')}.textContent.includes('Hit')`));
+		assert.ok(ui(`${rows}.every(row => !/\\[(bkpt|Group|sid:)/.test(row.textContent))`), "tree labels must omit internal IDs and repeated type prefixes");
+		assert.ok(ui(`(() => { const row = Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row')).find(row => row.textContent.includes('worker-b: b')); if (!row) return false; if (row.getAttribute('aria-expanded') === 'true') row.querySelector('.monaco-tl-twistie').click(); return true; })()`));
+		await delay(200);
+		assert.ok(ui(`(() => { const pane = document.querySelector('[aria-label="Debug Call Stack"]')?.closest('.pane'); const header = pane?.querySelector('.pane-header'); if (!header) return false; header.click(); return true; })()`));
+		await delay(200);
+		assert.ok(click("worker-b", '[aria-label="Go to Paused Frame"]'));
 		await until(() => vscode.debug.activeStackItem instanceof vscode.DebugStackFrame && vscode.debug.activeStackItem.threadId === target.threadId, "hit button must focus the chosen session's frame");
 		assert.equal(vscode.window.activeTextEditor?.selection.start.line, 1);
+		await until(() => ui(`Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row[aria-selected="true"]')).some(row => row.textContent.includes('[breakpoint] b'))`), "hit navigation must reveal and select the matching call-stack row");
+		await vscode.commands.executeCommand("workbench.action.debug.callStackBottom");
+		await until(() => vscode.window.activeTextEditor?.selection.start.line === 0, "fixture must select a caller before returning to the hit");
+		assert.ok(click("worker-b", '[aria-label="Go to Paused Frame"]'));
+		await until(() => ui(`Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row[aria-selected="true"]')).some(row => row.textContent.includes('[breakpoint] b'))`), "repeated hit navigation must leave the caller and select the paused frame");
 		// Parent actions present every current hit and can navigate back to another session.
 		assert.ok(click("hits.c:2", '[aria-label="Go to Paused Frame"]'));
 		await until(() => ui(`document.querySelector('.quick-input-widget')?.textContent.includes('Go to Paused Frame') ?? false`), "concurrent hits must offer a choice");
@@ -100,18 +113,22 @@ export async function testBreakpointHits(): Promise<void> {
 		snapshot.executionStates![1].running = true;
 		adapter.update();
 		await until(() => ui(`${row('hits.c:2')}?.textContent.includes('Hit · 1 session') ?? false`), "resuming one hit must preserve the other session's marker");
-		await until(() => ui(`!(${row('] worker-b')})?.querySelector('[aria-label="Go to Paused Frame"]')`), "resumed session must lose its navigation action");
+		await until(() => ui(`!(${row('worker-b')})?.querySelector('[aria-label="Go to Paused Frame"]')`), "resumed session must lose its navigation action");
 		assert.ok(ui(`${row('hits.c:3')}.textContent.includes('Hit · 1 session')`), "another breakpoint in that session must remain marked");
 		await vscode.commands.executeCommand("ddbBreakpointsExplorer.toggleGroupByFile");
-		await until(() => ui(`${row('hits.c (2 breakpoints)')}?.textContent.includes('Hit · 2 sessions') ?? false`), "file grouping must preserve current hit summaries");
-		assert.ok(ui(`!!(${row('hits.c (2 breakpoints)')})?.querySelector('[aria-label="Go to Paused Frame"]')`));
+		await until(() => ui(`${row('hits.c')}?.textContent.includes('Hit · 2 sessions') ?? false`), "file grouping must preserve current hit summaries");
+		assert.ok(ui(`!!(${row('hits.c')})?.querySelector('[aria-label="Go to Paused Frame"]')`));
 		for (const thread of snapshot.threads!) thread.state = "THREAD_STATE_RUNNING";
 		for (const execution of snapshot.executionStates!) execution.running = true;
 		adapter.update();
 		await until(() => ui(`${rows}.every(row => !row.textContent.includes('Hit') && !row.querySelector('[aria-label="Go to Paused Frame"]'))`), "resuming all targets must clear every hit marker and action");
+		await until(() => ui(`!!document.querySelector('[aria-label="Show Flat Breakpoint List"]')`), "grouped view must offer the flat-list action");
+		await vscode.commands.executeCommand("ddbBreakpointsExplorer.showFlat");
+		await until(() => ui(`!!(${row('hits.c:2')})`), "flat-list action must restore filename and line labels");
+		await until(() => ui(`!!document.querySelector('[aria-label="Group Breakpoints by File"]')`), "flat view must offer grouping by file");
 		console.log("Concurrent breakpoint hit UI passed: parent/group/session indicators, frame focus, hit picker and resume cleanup");
 	} catch (error) {
-		console.error("Hit UI diagnostic", JSON.stringify(trace.slice(-25)));
+		console.error("Hit UI diagnostic", JSON.stringify({ calls: trace.slice(-10), stack: ui(`Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row')).map(row => ({text: row.textContent, selected: row.getAttribute('aria-selected'), expanded: row.getAttribute('aria-expanded')}))`) }));
 		throw error;
 	} finally {
 		if (session) await vscode.debug.stopDebugging(session);

@@ -76,6 +76,11 @@ lists them before paused peers. The top frame at the breakpoint has a
 `[breakpoint]` prefix. One hit receives automatic editor focus; concurrent hits
 remain labelled without repeatedly switching editors.
 
+The breakpoint panel shows filenames and target names first. Breakpoint, group
+and session IDs remain in tooltips. Group and session icons identify the target
+type; the toolbar switches between **Group Breakpoints by File** and **Show Flat
+Breakpoint List** without adding a mode label to the header.
+
 Hover over a source breakpoint in **DDB Breakpoints** and click **Go to Breakpoint
 Source** to open its line. Distributed call boundaries include the caller's
 session name, and caller frames support source navigation and variable inspection.
@@ -83,7 +88,8 @@ session name, and caller frames support source navigation and variable inspectio
 Currently hit breakpoints show **Hit** and a session count in the panel. Expand a
 group to see which sessions are paused there; those sessions have a yellow frame
 arrow. Hover or focus a hit row and use **Go to Paused Frame** to select its call
-frame and variables. Rows with several hits offer a session/thread picker.
+frame and variables. The action opens the Call Stack pane and reveals the selected
+row, including when the pane or target thread was collapsed. Rows with several hits offer a session/thread picker.
 Indicators clear as each hitting thread resumes, even if other sessions remain
 stopped. Historical hit counts stay in the tooltip.
 

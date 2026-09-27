@@ -351,9 +351,8 @@ class BreakpointsProvider
   // Update view description to show current mode
   private updateViewDescription(): void {
     if (this.treeView) {
-      this.treeView.description = this.isGroupedByFile
-        ? "Grouped by File"
-        : "Flat";
+      this.treeView.description = undefined;
+      void vscode.commands.executeCommand("setContext", "ddb.breakpointsGroupedByFile", this.isGroupedByFile);
     }
   }
 
@@ -404,7 +403,7 @@ class BreakpointsProvider
         (bp) =>
           new BreakpointItem(
             bp,
-            `:${bp.location.line}`, // Short form for grouped view
+            `Line ${bp.location.line}`, // Filename is already shown by the parent.
             bp.subbkpts.length > 0 || !!bp.hits?.length
               ? vscode.TreeItemCollapsibleState.Collapsed
               : vscode.TreeItemCollapsibleState.None
@@ -435,7 +434,7 @@ class BreakpointsProvider
       const fileName = path.basename(bp.location.src);
       return new BreakpointItem(
         bp,
-        `[bkpt ${bp.id}] ${fileName}:${bp.location.line}`,
+        bp.location.line > 0 ? `${fileName}:${bp.location.line}` : bp.location.src,
         bp.subbkpts.length > 0 || !!bp.hits?.length
           ? vscode.TreeItemCollapsibleState.Collapsed
           : vscode.TreeItemCollapsibleState.None
@@ -460,11 +459,11 @@ class BreakpointsProvider
       if (sub.type === "group") {
         targetId = sub.target_group!;
         const group = this.sessionManager.getGroup(targetId);
-        displayName = `[Group, grp_id: ${targetId}] ${group?.alias || `Group ${targetId}`}`;
+        displayName = group?.alias || `Group ${targetId}`;
       } else {
         targetId = sub.target_session!;
         const session = this.sessionManager.getSession(targetId);
-        displayName = `[Session, sid: ${targetId}] ${session?.alias || `Session ${targetId}`}`;
+        displayName = session?.alias || `Session ${targetId}`;
       }
 
       const sessions = sub.type === "group"
@@ -478,7 +477,7 @@ class BreakpointsProvider
       covered.add(hit.sessionId);
       const session = this.sessionManager.getSession(hit.sessionId);
       items.push(new SubBreakpointItem({ type: "session", id: -hit.sessionId, target_session: hit.sessionId },
-        `[Session, sid: ${hit.sessionId}] ${session?.alias ?? hit.sessionId}`, breakpoint,
+        session?.alias ?? `Session ${hit.sessionId}`, breakpoint,
         breakpoint.hits!.filter(item => item.sessionId === hit.sessionId)));
     }
     return items;
@@ -569,11 +568,12 @@ class BreakpointFileItem extends vscode.TreeItem {
     public readonly hits: ddb_api.BreakpointHit[]
   ) {
     super(
-      `${path.basename(filePath)} (${breakpointCount} breakpoint${breakpointCount !== 1 ? "s" : ""})`,
+      path.basename(filePath),
       vscode.TreeItemCollapsibleState.Collapsed
     );
     this.contextValue = "breakpointFileItem";
-    this.tooltip = new vscode.MarkdownString().appendText(filePath);
+    this.description = `${breakpointCount} breakpoint${breakpointCount === 1 ? "" : "s"}`;
+    this.tooltip = new vscode.MarkdownString().appendText(`${filePath}\n${this.description}`);
     this.iconPath = new vscode.ThemeIcon("file");
     showBreakpointHits(this, hits);
   }
@@ -637,11 +637,15 @@ class SubBreakpointItem extends vscode.TreeItem {
     this.contextValue =
       subbkpt.type === "group" ? "groupSubBkpt" : "sessionSubBkpt";
     this.iconPath = new vscode.ThemeIcon(
-      subbkpt.type === "group" ? "folder" : "debug"
+      subbkpt.type === "group" ? "organization" : "debug"
     );
+    this.description = subbkpt.type === "group" ? "Group" : "Session";
     const targetId =
       subbkpt.type === "group" ? subbkpt.target_group : subbkpt.target_session;
-    this.tooltip = new vscode.MarkdownString(`${subbkpt.type === "group" ? "Group" : "Session"} ID: ${targetId}`);
+    this.tooltip = new vscode.MarkdownString().appendText(
+      `${displayName}\n${this.description} ID: ${targetId}` +
+      (subbkpt.id > 0 ? `\nSub-breakpoint ID: ${subbkpt.id}` : "")
+    );
     showBreakpointHits(this, hits, subbkpt.type === "session");
   }
 }
@@ -655,13 +659,13 @@ class GroupSessionItem extends vscode.TreeItem {
     breakpoint: DDBBreakpoint
   ) {
     super(
-      `↳ [sid: ${session.sid}] ${session.alias || "unnamed"}`,
+      session.alias || `Session ${session.sid}`,
       vscode.TreeItemCollapsibleState.None
     );
     this.id = `breakpoint:${breakpoint.id}:group:${group.id}:session:${session.sid}`;
     this.hits = (breakpoint.hits ?? []).filter(hit => hit.sessionId === session.sid);
     this.contextValue = "groupSessionItem";
-    // this.iconPath = new vscode.ThemeIcon("debug");
+    this.iconPath = new vscode.ThemeIcon("debug");
     this.description = session.status;
     this.tooltip = new vscode.MarkdownString(
       `**Session ${session.sid}**\n\n` +
@@ -1011,6 +1015,9 @@ export function activate(context: vscode.ExtensionContext) {
       })), { title: "Go to Paused Frame", placeHolder: "Choose a thread currently hitting this breakpoint" }))?.hit;
       if (!hit) return;
       try {
+        // Open the view before the stop event arrives so VS Code can reveal and
+        // select its frame row, including when the Call Stack was collapsed.
+        await vscode.commands.executeCommand("workbench.debug.action.focusCallStackView");
         await session.customRequest("ddb.focusBreakpointHit", hit);
       } catch (error) {
         void vscode.window.showWarningMessage(`Could not focus breakpoint hit: ${String(error)}`);
@@ -1050,6 +1057,13 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(toggleBreakpointGroupingCommand);
+  context.subscriptions.push(vscode.commands.registerCommand(
+    "ddbBreakpointsExplorer.showFlat", () => {
+      if (!breakpointsProvider.isDebugSessionActive) return;
+      breakpointsProvider.resetToDefaultView();
+      breakpointsProvider.refresh();
+    }
+  ));
 
   registerSessionControls(vscode, context);
 }

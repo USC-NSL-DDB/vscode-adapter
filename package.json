@@ -119,8 +119,13 @@
       },
       {
         "command": "ddbBreakpointsExplorer.toggleGroupByFile",
-        "title": "Toggle Group by File",
+        "title": "Group Breakpoints by File",
         "icon": "$(group-by-ref-type)"
+      },
+      {
+        "command": "ddbBreakpointsExplorer.showFlat",
+        "title": "Show Flat Breakpoint List",
+        "icon": "$(list-flat)"
       },
       {
         "command": "ddbSessionsExplorer.showLogicalGroupDetails",
@@ -681,14 +686,29 @@
           "group": "navigation"
         },
         {
+          "command": "ddbBreakpointsExplorer.showFlat",
+          "when": "view == ddbBreakpointsExplorer && ddb.breakpointsGroupedByFile",
+          "group": "navigation"
+        },
+        {
           "command": "ddbBreakpointsExplorer.toggleGroupByFile",
-          "when": "view == ddbBreakpointsExplorer",
+          "when": "view == ddbBreakpointsExplorer && !ddb.breakpointsGroupedByFile",
           "group": "navigation"
         },
         {
           "command": "ddbBreakpointsExplorer.refresh",
           "when": "view == ddbBreakpointsExplorer",
           "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "ddbBreakpointsExplorer.toggleGroupByFile",
+          "when": "!ddb.breakpointsGroupedByFile"
+        },
+        {
+          "command": "ddbBreakpointsExplorer.showFlat",
+          "when": "ddb.breakpointsGroupedByFile"
         }
       ],
       "view/item/context": [

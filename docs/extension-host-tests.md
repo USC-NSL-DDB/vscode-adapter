@@ -120,3 +120,9 @@ Set `DDB_HIT_UI_ONLY=1` to run just this fixture with the usual extension-host
 environment. It does not start a DDB server or use service discovery. Real GDB
 integration separately checks that only the actual breakpoint owner appears in
 the hit projection and that focusing it leaves every process stopped.
+
+The hit-panel fixture also checks that navigation reveals and selects the actual
+rendered Call Stack row with both the pane and target thread initially collapsed.
+It selects a lower caller frame before repeating navigation to the paused frame.
+Tree labels omit internal ID prefixes, grouping controls switch their labels with
+the current mode, and switching back to the flat list restores filename/line rows.
