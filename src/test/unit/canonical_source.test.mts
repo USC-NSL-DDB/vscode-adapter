@@ -3,6 +3,17 @@ import type { DdbConnection } from "../../v2/connection.mjs";
 import { DdbInspection } from "../../v2/inspection.mjs";
 
 suite("Canonical source content", () => {
+	test("frames without source information open VS Code's source-unavailable view", async () => {
+		const connection = { state: { get: () => ({ sessionId: "session" }) }, client: {
+			collect: async () => [{ frameId: "frame", functionName: "library_wait", module: "libexample.so", location: { address: "0x1234" } }],
+			call: async () => assert.fail("a frame without source metadata cannot resolve a source file"),
+		} } as unknown as DdbConnection;
+		const model = new DdbInspection(connection);
+		const frame = (await model.stack({ threadId: model.threadHandle("thread") })).stackFrames[0];
+		assert.ok(frame.source?.sourceReference, "a selectable frame needs an explicit unavailable source");
+		await assert.rejects(model.readSource(frame.source.sourceReference), /No source information.*library_wait.*libexample.so.*0x1234/);
+	});
+
 	test("preserves line boundaries between canonical source pages", async () => {
 		const requests: any[] = [];
 		const connection = { client: { call: async (method: string, args: any) => {

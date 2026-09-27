@@ -14,6 +14,26 @@ async function until(predicate: () => boolean, detail: string) {
 
 suite("Canonical HTTP stream recovery", function () {
 	this.timeout(15000);
+	test("an admitted operation can finish after the SDK's default ten-second polling limit", async () => {
+		const started = Date.now();
+		const server = createServer((request, response) => {
+			response.setHeader("content-type", "application/json");
+			const method = request.url?.split("/").pop();
+			const value = method === "GetServerInfo" ? { serverInfo: { serverInstanceId: "server", apiVersions: ["v2"] } }
+				: method === "GetCapabilities" ? { capabilities: { serverInstanceId: "server", apiVersion: "v2", schemaVersion: "2.0" } }
+				: { operation: { operationId: "slow-op", state: Date.now() - started < 11000 ? "OPERATION_STATE_RUNNING" : "OPERATION_STATE_COMPLETED", result: { evaluation: { value: "42" } } } };
+			request.resume(); response.end(JSON.stringify(value));
+		});
+		await new Promise<void>(resolve => { server.listen(0, "127.0.0.1", resolve); });
+		const address = server.address(); assert.ok(address && typeof address !== "string");
+		const connection = await DdbConnection.connect({ endpoint: `http://127.0.0.1:${address.port}` });
+		try {
+			assert.equal((await connection.complete({ operation: { operationId: "slow-op", state: "OPERATION_STATE_ACCEPTED" } })).evaluation?.value, "42");
+		} finally {
+			await connection.close(); server.closeAllConnections();
+			await new Promise<void>(resolve => { server.close(() => resolve()); });
+		}
+	});
 	for (const restarted of [false, true]) {
 		test(restarted ? "terminates when recovery encounters a different server instance" : "reconnects output by cursor, reports loss, and rehydrates state after a replay gap", async () => {
 			let outputStream: ServerResponse | undefined;

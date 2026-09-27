@@ -13,7 +13,7 @@ export interface FrameContext {
 	boundary?: string;
 	boundaryLabel?: string;
 }
-interface SourceContext { reference?: string; location?: SourceLocation; sessionId?: string }
+interface SourceContext { reference?: string; location?: SourceLocation; sessionId?: string; unavailable?: string }
 interface VariableContext {
 	frame: FrameContext;
 	kind: "scope" | "variable" | "registers";
@@ -145,7 +145,13 @@ export class DdbInspection {
 				let source = sourceRequests.get(sourceKey);
 				if (!source) { source = this.stackSource(frame.location, entry.sessionId); sourceRequests.set(sourceKey, source); }
 
-				const resolvedSource = await source;
+				let resolvedSource = await source;
+				if (!resolvedSource && !boundaryOnly) {
+					const name = frame.functionName ?? frame.location?.address ?? "Unknown frame";
+					const details = [name, frame.module, frame.location?.address].filter(Boolean).join(" · ");
+					const unavailable = `No source information is available for ${details}. The binary may lack debug symbols. Build it with debug information to inspect its source.`;
+					resolvedSource = { name, sourceReference: this.sources.put({ unavailable }, `unavailable:${key}`) };
+				}
 				const hit = this.breakpointLocation(entry.threadId);
 				const atBreakpoint = hit?.path && hit.path === frame.location?.path && hit.line === frame.location?.line && (frame.level ?? 0) === 0;
 				const caller = boundaryOnly ? this.connection.state.get("session", entry.sessionId)?.displayName : undefined;
@@ -271,6 +277,7 @@ export class DdbInspection {
 		// Zero means a filesystem path, never an adapter handle.
 		if (!reference) throw new Error(`Source file ${source?.path ?? source?.name ?? "<unknown>"} is not available`);
 		const context = this.sources.get(reference);
+		if (context.unavailable) throw new Error(context.unavailable);
 		if (!context.reference) {
 			const resolved = await this.connection.client.call("DebuggerService.ResolveSource", {
 				target: { session: { sessionId: context.sessionId } }, location: context.location,

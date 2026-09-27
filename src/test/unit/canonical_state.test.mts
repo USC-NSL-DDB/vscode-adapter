@@ -49,6 +49,13 @@ suite("Canonical DDB state", () => {
 		assert.equal(state.get("session", "present")?.sessionId, "present");
 	});
 
+	test("operation failures explain the target cause instead of hiding it behind a generic summary", () => {
+		assert.throws(() => operationResult({ operationId: "op", state: "OPERATION_STATE_FAILED",
+			error: { message: "debugger command failed" },
+			targetOutcomes: [{ target: { session: { sessionId: "worker" } }, error: { message: "debugger command timed out for target" } }],
+		}), /debugger command timed out for target/);
+	});
+
 	test("failed, cancelled and partially successful operations reject", () => {
 		for (const state of ["OPERATION_STATE_FAILED", "OPERATION_STATE_CANCELLED", "OPERATION_STATE_RUNNING"]) {
 			assert.throws(() => operationResult({ operationId: "op", state }), DdbOperationError);

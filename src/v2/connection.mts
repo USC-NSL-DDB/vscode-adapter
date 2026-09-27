@@ -49,8 +49,8 @@ interface StartupReport {
 export class DdbOperationError extends Error {
 	constructor(readonly operation: Operation) {
 		const failures = operation.targetOutcomes?.filter(outcome => outcome.succeeded !== true);
-		const details = failures?.map(outcome => outcome.error?.message).filter(Boolean).join("; ");
-		super(operation.error?.message ?? (details || `DDB operation ${operation.operationId} ended as ${operation.state}`));
+		const details = [...new Set(failures?.map(outcome => outcome.error?.message).filter(Boolean))].join("; ");
+		super(details || operation.error?.message || `DDB operation ${operation.operationId} ended as ${operation.state}`);
 	}
 }
 
@@ -147,7 +147,10 @@ export class DdbConnection {
 		let operation = admission.operation;
 		if (!operation?.operationId) throw new DdbProtocolError("DDB omitted the admitted operation ID");
 		if (!["OPERATION_STATE_COMPLETED", "OPERATION_STATE_FAILED", "OPERATION_STATE_CANCELLED"].includes(operation.state ?? "")) {
-			operation = await this.client.waitOperation(operation.operationId);
+			// Admission is fast, but execution can include queued debugger commands
+			// with a 30-second backend deadline. Keep polling for their terminal
+			// result instead of reporting the SDK's unrelated 10-second limit.
+			operation = await this.client.waitOperation(operation.operationId, 60_000);
 		}
 		return operationResult(operation);
 	}
