@@ -718,6 +718,11 @@ class MyDebugAdapterTracker implements vscode.DebugAdapterTracker {
 
       if (message.event === "stopped") {
         autoScopeVariablesRefs.clear();
+        // A new stop replaces this thread's previous location, even when a
+        // short execution interval produced no separate continued event.
+        if (message.body?.threadId !== undefined) {
+          removeStoppedFramesByThread(message.body.threadId);
+        }
         // Handle breakpoint stops
         if (message.body?.reason === "breakpoint") {
           const breakpointInfo = (message as DebugProtocol.StoppedEvent).breakpointInfo;
@@ -757,11 +762,17 @@ class MyDebugAdapterTracker implements vscode.DebugAdapterTracker {
 
         // Clear frames for the continued thread
         const threadId = message.body?.threadId;
-        if (threadId !== undefined) {
-          removeStoppedFramesByThread(threadId);
-        } else if (message.body?.allThreadsContinued) {
+        if (message.body?.allThreadsContinued) {
           stoppedFramesMap.clear();
+        } else if (threadId !== undefined) {
+          removeStoppedFramesByThread(threadId);
         }
+        updateExecutionLineDecorations();
+      }
+      if (message.event === "thread" && message.body?.reason === "exited") {
+        // A target can finish before its running update reaches the client.
+        // Thread exit must clear its decoration independently of continue.
+        removeStoppedFramesByThread(message.body.threadId);
         updateExecutionLineDecorations();
       }
     }

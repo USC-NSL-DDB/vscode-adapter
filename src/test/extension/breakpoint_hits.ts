@@ -36,7 +36,7 @@ export async function testBreakpointHits(): Promise<void> {
 	const distributed = process.env.DDB_HIT_DISTRIBUTED === "1";
 	const connection = {
 		state, handshake: { capabilities: {} },
-		async *states() { state.hydrate(snapshot); yield { type: "snapshot", snapshot }; },
+		async *states() { state.hydrate(structuredClone(snapshot)); yield { type: "snapshot", snapshot }; },
 		client: {
 			async *subscribeOutput() {},
 			collect: async (method: string, args: any) => {
@@ -72,7 +72,7 @@ export async function testBreakpointHits(): Promise<void> {
 			this.sendResponse(response);
 			this.sendEvent({ type: "event", event: "initialized", seq: 0 });
 		}
-		update() { state.hydrate(snapshot); (this as any).stateChanged({ type: "event", event: {} }); }
+		update() { state.hydrate(structuredClone(snapshot)); (this as any).stateChanged({ type: "event", event: {} }); }
 	}
 	const adapter = new Fixture();
 	const factory = vscode.debug.registerDebugAdapterDescriptorFactory("ddb", { createDebugAdapterDescriptor: () => new vscode.DebugAdapterInlineImplementation({ onDidSendMessage: emitter.event, handleMessage: message => adapter.handleMessage(message), dispose() {} }) });
@@ -149,8 +149,43 @@ export async function testBreakpointHits(): Promise<void> {
 		await vscode.commands.executeCommand("ddbBreakpointsExplorer.showFlat");
 		await until(() => ui(`!!(${row('hits.c:2')})`), "flat-list action must restore filename and line labels");
 		await until(() => ui(`!!document.querySelector('[aria-label="Group Breakpoints by File"]')`), "flat view must offer grouping by file");
+		// A short-lived target may exit without a separately observed running event.
+		// Both labels share a line; deleting one thread must preserve its peer.
+		const executionText = () => ui(`Array.from(document.querySelectorAll('.monaco-editor .view-line span')).flatMap(e => [getComputedStyle(e, '::before').content, getComputedStyle(e, '::after').content]).join(' ')`) as string;
+		await vscode.window.showTextDocument(vscode.Uri.file(source));
+		for (const id of ["a", "b"]) {
+			snapshot.threads!.find(thread => thread.threadId === id)!.state = "THREAD_STATE_STOPPED";
+			const execution = snapshot.executionStates!.find(execution => execution.executionStateId === id)!;
+			execution.running = false; execution.revision = "2";
+		}
+		adapter.update();
+		const first = shared.hits.find((hit: any) => hit.threadName === "a")!;
+		const second = shared.hits.find((hit: any) => hit.threadName === "b")!;
+		await until(() => executionText().includes(`S${first.sessionId},T${first.threadId}`) && executionText().includes(`S${second.sessionId},T${second.threadId}`), "both stopped targets must decorate their shared source line");
+		snapshot.threads = snapshot.threads!.filter(thread => thread.threadId !== "b");
+		snapshot.executionStates = snapshot.executionStates!.filter(execution => execution.executionStateId !== "b");
+		adapter.update();
+		await until(() => executionText().includes(`Executing by: Session ${first.sessionId}, Thread ${first.threadId}`) && !executionText().includes(`T${second.threadId}`), "exiting client must clear its label while the server stays decorated");
+		// A fresh stop can replace the old stop without an intervening continue.
+		const owner = snapshot.threads!.find(thread => thread.threadId === "a")!;
+		owner.location = { path: source, line: 3 };
+		const ownerExecution = snapshot.executionStates!.find(execution => execution.executionStateId === "a")!;
+		ownerExecution.location = owner.location; ownerExecution.revision = "3";
+		adapter.update();
+		await until(() => ui(`Array.from(document.querySelectorAll('.monaco-editor .view-line')).some(line => line.textContent.includes('other_hit') && Array.from(line.querySelectorAll('span')).some(span => getComputedStyle(span, '::after').content.includes('Executing by:')))`), "new stop must decorate its new source line");
+		await until(() => (executionText().match(/Executing by:/g) ?? []).length === 1, "a new stop must remove the previous location");
+		const peer = snapshot.threads!.find(thread => thread.threadId === "other")!;
+		peer.state = "THREAD_STATE_STOPPED";
+		const peerExecution = snapshot.executionStates!.find(execution => execution.executionStateId === "other")!;
+		peerExecution.running = false; peerExecution.revision = "2";
+		adapter.update();
+		await until(() => executionText().includes("[2 threads]"), "continue-all test must have two decorated threads");
+		adapter.sendEvent({ type: "event", seq: 0, event: "continued", body: { threadId: first.threadId, allThreadsContinued: true } });
+		await until(() => !executionText().includes("Executing by:"), "continue-all must clear execution labels");
+		console.log("Execution decoration lifecycle passed: thread exit preserves peer, new stop replaces old location, continue-all clears labels");
 		console.log("Concurrent breakpoint hit UI passed: parent/group/session indicators, frame focus, hit picker and resume cleanup");
 	} catch (error) {
+		console.error("Execution lines", ui(`Array.from(document.querySelectorAll('.monaco-editor .view-line')).map(line => ({ text: line.textContent, labels: Array.from(line.querySelectorAll('span')).flatMap(span => [getComputedStyle(span, '::before').content, getComputedStyle(span, '::after').content]).filter(text => text.includes('Executing by:')) })).filter(line => line.labels.length)`));
 		console.error("Hit UI diagnostic", JSON.stringify({ calls: trace.slice(-10), stack: ui(`Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row')).map(row => ({text: row.textContent, selected: row.getAttribute('aria-selected'), expanded: row.getAttribute('aria-expanded')}))`) }));
 		throw error;
 	} finally {
