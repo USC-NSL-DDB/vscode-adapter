@@ -1,7 +1,7 @@
 import * as assert from "node:assert/strict";
 import * as vscode from "vscode";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
+import { ui } from "./ui_helpers";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -98,7 +98,7 @@ export async function testSourceNavigation(): Promise<void> {
 		}
 		assert.match(vscode.window.activeTextEditor.document.getText(), /missing\/library-build\/library.c/);
 		assert.ok(sourceResponses.every(response => response.success === false && response.body.error.showUser === false));
-		const popupErrors = JSON.parse(execFileSync(process.env.DDB_TEST_NODE!, [process.env.DDB_TEST_CDP_SCRIPT!, process.env.DDB_TEST_PROFILE!, `Array.from(document.querySelectorAll('.notifications-toasts .notification-list-item')).some(row => /source was not found|No source information|Source file .* is not available/.test(row.textContent))`], { encoding: "utf8" }));
+		const popupErrors = ui(`Array.from(document.querySelectorAll('.notifications-toasts .notification-list-item')).some(row => /source was not found|No source information|Source file .* is not available/.test(row.textContent))`);
 		assert.equal(popupErrors, false, "source failures must stay in the native unavailable-source document");
 		console.log("Unavailable-source UI passed: real DAP handlers, missing metadata and remote files, no popup errors");
 	} finally {

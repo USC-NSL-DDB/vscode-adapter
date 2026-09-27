@@ -1,12 +1,12 @@
 # Canonical adapter parity audit
 
-The migration branch is `codex/canonical-ddb-api`, descended from compatibility
-commit `8e7317b`. The runtime entrypoint loads `src/v2/session.mts`. It uses the
+The canonical adapter replaces the compatibility implementation at commit
+`8e7317b`. The runtime entrypoint loads `src/v2/session.mts`. It uses the
 vendored TypeScript SDK over authenticated API v2 HTTP, with separate state and
 output streams. The sidebar uses DAP requests and events through that connection.
 
-Use backend branch `codex/vscode-api-parity` at `b773bcf8` or a descendant. Its
-worktree is `/mnt/home/ybyan/projs/DDB-vscode-api-parity`; the DDB main worktree was not modified.
+Use a backend checkout containing `ea2fe491` or its descendants, including the
+local-variable inspection fix for GDB presentation frame filters.
 The unpatched 0.1.15 binary does not provide all required behavior.
 
 ## Enabled compatibility features
@@ -53,8 +53,7 @@ construct MI commands or manage backend variable objects.
 
 Run `npm test`, then `DDB_TEST_BINARY=/path/to/ddb npm run test:canonical`.
 [Extension-host instructions](extension-host-tests.md) cover testing an extracted
-VSIX in a dedicated VS Code profile. No marketplace publication or merge is part
-of this migration.
+VSIX in a dedicated VS Code profile. Marketplace publication is separate from local integration.
 
 Two integration-test timing assumptions were corrected. The GDB fixture now
 waits for both inferiors to reach main before attaching the all-stop adapter.
@@ -73,7 +72,7 @@ gate. TypeScript compilation, focused tests and runtime checks are the evidence.
 Earlier investigation and regression details are retained in
 [the migration log](canonical-api-migration.md).
 
-## Validation results
+## Historical migration validation
 
 - Adapter unit tests: 122 passed.
 - Backend core tests: 322 passed, one ignored; HTTP and gRPC checks passed.

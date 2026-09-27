@@ -1,6 +1,7 @@
+import { ui } from "./ui_helpers";
 import * as assert from "node:assert/strict";
 import * as vscode from "vscode";
-import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -24,7 +25,6 @@ export async function run(): Promise<void> {
 	const tracker = vscode.debug.registerDebugAdapterTrackerFactory("ddb", {
 		createDebugAdapterTracker: () => ({ onWillReceiveMessage: message => messages.push({ ...message, incoming: true }), onDidSendMessage: message => messages.push(message) }),
 	});
-	const ui = (expression: string) => JSON.parse(execFileSync(process.env.DDB_TEST_NODE!, [process.env.DDB_TEST_CDP_SCRIPT!, process.env.DDB_TEST_PROFILE!, expression], { encoding: "utf8" }));
 	let session: vscode.DebugSession | undefined;
 	const app = (name: string, args: string[]) => {
 		const child = spawn(join(workspace, "build", `greeter_${name}`), ["--ddb", ...args], { cwd: join(workspace, "build"), stdio: ["ignore", "pipe", "pipe"] });

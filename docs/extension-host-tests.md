@@ -46,7 +46,7 @@ DDB deployment.
 ## Test an extracted VSIX
 
 Set DDB_TEST_EXTENSION_DIRECTORY to the `extension` directory extracted from a
-VSIX to test its packaged runtime. The runner temporarily copies its four test
+VSIX to test its packaged runtime. The runner temporarily copies its test
 files under that directory so VS Code attributes fixture API calls to the DDB
 extension. It removes those files afterward. The directory must be writable.
 The test asserts that VS Code loaded the requested extension path.
@@ -89,7 +89,7 @@ DISPLAY=:191 \
 DDB_VSCODE_EXECUTABLE=/path/to/VSCode-linux-x64/code \
 DDB_TEST_BINARY=/path/to/ddb \
 DDB_TEST_EXTENSION_DIRECTORY=/tmp/extracted-vsix/extension \
-DDB_GREETER_WORKSPACE=/mnt/home/ybyan/codebase/grpc/examples/cpp/helloworld \
+DDB_GREETER_WORKSPACE=/path/to/grpc/examples/cpp/helloworld \
 npm run test:extension
 ```
 
@@ -126,3 +126,14 @@ rendered Call Stack row with both the pane and target thread initially collapsed
 It selects a lower caller frame before repeating navigation to the paused frame.
 Tree labels omit internal ID prefixes, grouping controls switch their labels with
 the current mode, and switching back to the flat list restores filename/line rows.
+
+## Session controls and execution annotations
+
+The standard suite clicks the rendered session controls with two real GDB
+processes. It resumes and pauses one process while its peer stays paused, then
+lets the client exit and verifies its execution annotation disappears.
+Use `DDB_SESSION_UI_ONLY=1` to run this scenario alone.
+
+The concurrent-hit fixture also checks thread exit, a replacement stop at a new
+line, and a continue-all event carrying a thread ID. Other paused threads retain
+their annotations.

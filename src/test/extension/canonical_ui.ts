@@ -1,3 +1,4 @@
+import { ui } from "./ui_helpers";
 import { testBreakpointHits } from "./breakpoint_hits";
 import { testSessionControls } from "./session_controls";
 import { testSourceNavigation } from "./source_navigation";
@@ -55,7 +56,6 @@ export async function run(): Promise<void> {
 		assert.equal(await vscode.debug.startDebugging(undefined, { type: "ddb", name: "Canonical UI test", request: "launch", ddbpath: process.env.DDB_TEST_BINARY, configFilePath: config, cwd: directory }), true);
 		await until(() => messages.some(message => message.type === "response" && message.command === "ddb.resolveSourceGroups"), "breakpoint selection must resolve source groups");
 		await delay(700);
-		const ui = (expression: string) => JSON.parse(execFileSync(process.env.DDB_TEST_NODE!, [process.env.DDB_TEST_CDP_SCRIPT!, process.env.DDB_TEST_PROFILE!, expression], { encoding: "utf8" }));
 		const togglePicker = (label: string) => assert.equal(ui(`(() => { const button = document.querySelector('.quick-input-widget [aria-label=' + ${JSON.stringify(JSON.stringify(label))} + ']'); if (!button) return false; button.click(); return true; })()`), true, label);
 		await vscode.commands.executeCommand("workbench.action.quickOpenSelectNext");
 		await vscode.commands.executeCommand("workbench.action.quickPickManyToggle");

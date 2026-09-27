@@ -12,7 +12,8 @@
   "publisher": "ddb",
   "icon": "images/ddbicon.webp",
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.80.0",
+    "node": ">=18"
   },
   "main": "./out/src/frontend/extension.js",
   "activationEvents": [

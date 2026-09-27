@@ -1,3 +1,4 @@
+import { ui } from "./ui_helpers";
 import * as assert from "node:assert/strict";
 import * as vscode from "vscode";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -13,7 +14,6 @@ export async function testSessionControls(): Promise<void> {
 	const tracker = vscode.debug.registerDebugAdapterTrackerFactory("ddb", {
 		createDebugAdapterTracker: () => ({ onWillReceiveMessage: message => messages.push(message), onDidSendMessage: message => messages.push(message) }),
 	});
-	const ui = (expression: string) => JSON.parse(execFileSync(process.env.DDB_TEST_NODE!, [process.env.DDB_TEST_CDP_SCRIPT!, process.env.DDB_TEST_PROFILE!, expression], { encoding: "utf8" }));
 	const until = async (predicate: () => boolean | Promise<boolean>, message: string) => {
 		const deadline = Date.now() + 10000;
 		while (!await predicate()) { assert.ok(Date.now() < deadline, message); await delay(50); }

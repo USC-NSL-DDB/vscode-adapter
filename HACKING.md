@@ -1,4 +1,17 @@
-# Working on code-debug itself
+# Working on the DDB adapter
+
+## Current canonical adapter toolchain
+
+Use Node.js 18 or newer to build and run the canonical adapter. The TypeScript
+SDK requires native `fetch`. Use Node.js 24 for extension-host UI tests, whose
+DevTools helper also uses native `WebSocket`.
+
+Start with the build instructions in [README.md](README.md) and the
+[extension-host test guide](docs/extension-host-tests.md). The inherited
+code-debug instructions below describe the legacy adapter and its historical
+Node.js 16 toolchain; they are not prerequisites for the canonical runtime.
+
+# Historical code-debug contributor guide
 
 This file is a work in progress to start gathering the information, ["take with
 a grain of salt"][grain_of_salt_idiom] and please: contribute.

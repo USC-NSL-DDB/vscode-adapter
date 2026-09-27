@@ -1,22 +1,22 @@
 # DDB debugger for VS Code
 
-This development branch migrates the extension to DDB's canonical API v2 and
+The extension uses DDB's canonical API v2 and
 TypeScript SDK. The adapter owns the backend connection; the sidebar communicates
 with it through VS Code's Debug Adapter Protocol.
 
 See the [feature audit and test evidence](docs/canonical-parity-audit.md)
 for the supported compatibility features and validation limits.
-The compatibility adapter remains on `codex/migrate-current-ddb`.
+Legacy MI implementation files are retained only for compatibility regression tests.
 
 ## Required DDB build
 
-Use DDB's `codex/vscode-api-parity` branch at commit `b773bcf8` or a descendant
-containing those fixes. The unpatched 0.1.15 binary lacks required stop metadata,
-function-breakpoint and hit-count behavior. The patched branch also fixes
+Use a DDB checkout containing commit `ea2fe491` or its descendants. The unpatched 0.1.15 binary lacks required stop metadata,
+function-breakpoint and hit-count behavior. These changes also fix
 GDB executable paths containing spaces, typed signal delivery, variable assignment,
-expandable evaluations, native frame-scoped console commands and debugger settings. API v2 and its SDK are preview APIs.
+expandable evaluations, native frame-scoped console commands and debugger settings. They also bypass presentation frame filters during local variable
+inspection to avoid a GDB 15.1 hang. API v2 and its SDK are preview APIs.
 
-Build from a separate DDB worktree. For example:
+Build DDB from its checkout. For example:
 
 ```sh
 cargo build --manifest-path /path/to/ddb-worktree/ddb/Cargo.toml \
@@ -118,6 +118,9 @@ the canonical connection. Managed launch discovers its endpoint; attach uses
 
 ## Build and test
 
+Node.js 18 or newer must be on the VS Code host's PATH. Extension-host UI tests
+use Node.js 24.
+
 ```sh
 npm ci
 npm test
@@ -131,8 +134,8 @@ and a two-session distributed mock topology. See
 [extension-host tests](docs/extension-host-tests.md) for real VS Code validation.
 
 Install the resulting VSIX using VS Code's **Extensions: Install from VSIX**
-command. The package version remains 0.0.11 during development; a package built
-from this branch has different requirements from the compatibility package.
+command. The package version remains 0.0.11; this canonical API build requires the backend
+changes listed above.
 
 ## Origin
 
