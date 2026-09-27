@@ -167,7 +167,7 @@ class SessionsProvider
       vscode.TreeItemCollapsibleState.Collapsed,
       true,
       session.status,
-      String(session.sid),
+      session.sid,
       {
         "Session Alias": String(session.alias),
         "Session ID": String(session.sid),
@@ -186,7 +186,7 @@ class SessionsProvider
         vscode.TreeItemCollapsibleState.Collapsed, // Still expandable for details
         true,
         session.status,
-        String(session.sid),
+        session.sid,
         {
           "Session Alias": String(session.alias),
           "Session ID": String(session.sid),
@@ -201,7 +201,7 @@ class SessionsProvider
       vscode.TreeItemCollapsibleState.Collapsed, // Still expandable for details
       true,
       session.status,
-      String(session.sid),
+      session.sid,
       {
         "Session Alias": String(session.alias),
         "Session ID": String(session.sid),
@@ -520,13 +520,15 @@ class LogicalGroupItem extends vscode.TreeItem {
   }
 }
 
+export type SessionControlItem = Pick<SessionItem, "sessionId">;
+
 class SessionItem extends vscode.TreeItem {
   constructor(
     public readonly label: string,
     public readonly collapsibleState: vscode.TreeItemCollapsibleState,
     public readonly showStatus: boolean,
     public readonly status?: string,
-    public readonly sessionId?: string,
+    public readonly sessionId?: number,
     public readonly sessionDetails?: any
   ) {
     super(label, collapsibleState);

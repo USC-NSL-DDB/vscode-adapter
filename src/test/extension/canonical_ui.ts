@@ -1,4 +1,5 @@
 import { testBreakpointHits } from "./breakpoint_hits";
+import { testSessionControls } from "./session_controls";
 import { testSourceNavigation } from "./source_navigation";
 import * as assert from "node:assert/strict";
 import * as vscode from "vscode";
@@ -18,6 +19,7 @@ async function until(predicate: () => boolean | Promise<boolean>, description: s
 
 /** Run with VS Code's --extensionTestsPath, not the Node-only test runner. */
 export async function run(): Promise<void> {
+	if (process.env.DDB_SESSION_UI_ONLY) return testSessionControls();
 	if (process.env.DDB_HIT_UI_ONLY) return testBreakpointHits();
 	assert.ok(process.env.DDB_TEST_BINARY, "Set DDB_TEST_BINARY");
 	const directory = await mkdtemp(join(tmpdir(), "ddb-extension-test-"));
@@ -140,6 +142,7 @@ export async function run(): Promise<void> {
 		process.off("unhandledRejection", onUnhandled);
 		await rm(directory, { recursive: true, force: true });
 	}
+	await testSessionControls();
 	await testSourceNavigation();
 	await testBreakpointHits();
 

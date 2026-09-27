@@ -2,6 +2,7 @@ import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { DebugProtocol } from "vscode-debugprotocol";
+import { DdbApiError } from "@ddb-debugger/api-client";
 import type { Frame, Variable, Target, DistributedFrame, SourceLocation } from "@ddb-debugger/api-client";
 import { DdbConnection } from "./connection.mjs";
 import { Handles } from "./handles.mjs";
@@ -278,6 +279,17 @@ export class DdbInspection {
 		if (!reference) throw new Error(`Source file ${source?.path ?? source?.name ?? "<unknown>"} is not available`);
 		const context = this.sources.get(reference);
 		if (context.unavailable) throw new Error(context.unavailable);
+		try { return await this.readSourceContent(context); }
+		catch (error) {
+			if (error instanceof DdbApiError && error.detail.code === "DDB_ERROR_CODE_NOT_FOUND") {
+				const path = context.location?.path ?? source?.path ?? source?.name ?? "<unknown>";
+				throw new Error(`Source file ${path} is not available. Install the matching source files or configure pathSubstitutions to map the build path to your local checkout.`);
+			}
+			throw error;
+		}
+	}
+
+	private async readSourceContent(context: SourceContext): Promise<DebugProtocol.SourceResponse["body"]> {
 		if (!context.reference) {
 			const resolved = await this.connection.client.call("DebuggerService.ResolveSource", {
 				target: { session: { sessionId: context.sessionId } }, location: context.location,

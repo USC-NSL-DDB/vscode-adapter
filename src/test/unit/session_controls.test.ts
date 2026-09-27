@@ -16,6 +16,14 @@ function fixture(answer = "Yes") {
 }
 
 suite("Session sidebar controls", () => {
+ test("missing or invalid session targets cannot become broadcast commands", async () => {
+  const f = fixture();
+  for (const item of [undefined, {}, { sessionId: "7" }, { sessionId: 0 }, { sessionId: NaN }]) {
+   for (const command of f.commands.values()) await command(item as any);
+  }
+  assert.deepStrictEqual(f.requests, []);
+  assert.strictEqual(f.errors.length, 20);
+ });
  test("confirmed kill terminates the selected inferior", async () => {
   const f = fixture();
   await f.commands.get("ddbSessionsExplorer.killSession")!({ sessionId: 7 });

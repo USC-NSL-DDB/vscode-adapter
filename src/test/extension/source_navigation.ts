@@ -1,6 +1,7 @@
 import * as assert from "node:assert/strict";
 import * as vscode from "vscode";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -10,13 +11,24 @@ export async function testSourceNavigation(): Promise<void> {
 	let sourceReads = 0;
 	let sourcePath: string | undefined;
 	let unavailable = false;
+	let missingPath: string | undefined;
 	const root = vscode.extensions.getExtension("ddb.ddb-debugger")!.extensionPath;
 	const { DdbInspection } = await import(pathToFileURL(join(root, "out/src/v2/inspection.mjs")).href);
+	const { CanonicalDebugSession } = await import(pathToFileURL(join(root, "out/src/v2/session.mjs")).href);
+	const { DdbApiError } = await import(pathToFileURL(join(root, "node_modules/@ddb-debugger/api-client/dist/client.js")).href);
 	const inspection = new DdbInspection({ state: { get: () => ({ sessionId: "session" }) }, client: {
-		collect: async () => [{ frameId: "library", functionName: "library_wait", module: "libexample.so", location: { address: "0x1234" } }],
+		call: async () => { throw new DdbApiError(404, { code: "DDB_ERROR_CODE_NOT_FOUND", message: "source was not found" }); },
+		collect: async () => [{ frameId: "library", functionName: "library_wait", module: "libexample.so", location: { path: missingPath, address: "0x1234" } }],
 	} });
-	const missingStack = await inspection.stack({ threadId: inspection.threadHandle("thread") });
+	let missingStack = await inspection.stack({ threadId: inspection.threadHandle("thread") });
 	const emitter = new vscode.EventEmitter<any>();
+	const sourceResponses: any[] = [];
+	class SourceAdapter extends CanonicalDebugSession {
+		handleMessage(message: any) { this.dispatchRequest(message); }
+		sendResponse(response: any) { sourceResponses.push(response); emitter.fire(response); }
+	}
+	const sourceAdapter = new SourceAdapter();
+	Object.assign(sourceAdapter, { inspection });
 	let sequence = 0;
 	const event = (name: string, body?: object) => emitter.fire({ seq: ++sequence, type: "event", event: name, body });
 	const factory = vscode.debug.registerDebugAdapterDescriptorFactory("ddb", {
@@ -32,10 +44,7 @@ export async function testSourceNavigation(): Promise<void> {
 					case "scopes": body = { scopes: [] }; break;
 					case "source": {
 						sourceReads++;
-						if (unavailable) {
-							try { await inspection.readSource(message.arguments.sourceReference); }
-							catch (error) { emitter.fire({ seq: ++sequence, type: "response", request_seq: message.seq, command: message.command, success: false, message: String(error) }); return; }
-						}
+						if (unavailable) { sourceAdapter.handleMessage(message); return; }
 						assert.equal(message.arguments.sourceReference, 7); body = { content, mimeType: "text/x-c" }; break;
 					}
 					case "ddb.status": body = { status: "up" }; break;
@@ -77,7 +86,21 @@ export async function testSourceNavigation(): Promise<void> {
 		assert.equal(vscode.window.activeTextEditor.document.uri.scheme, "debug");
 		assert.match(vscode.window.activeTextEditor.document.getText(), /Could not load source/);
 		assert.ok(vscode.debug.activeStackItem instanceof vscode.DebugStackFrame);
-		console.log("Unavailable-source UI passed: native debug error document and selectable frame");
+		assert.ok(sourceResponses.length);
+		assert.ok(sourceResponses.every(response => response.success === false && response.body.error.showUser === false));
+		missingPath = "/missing/library-build/library.c";
+		inspection.invalidate();
+		missingStack = await inspection.stack({ threadId: inspection.threadHandle("thread") });
+		event("stopped", { reason: "breakpoint", threadId: 1, allThreadsStopped: true });
+		const remoteDeadline = Date.now() + 10000;
+		while (!vscode.window.activeTextEditor?.document.getText().includes("pathSubstitutions")) {
+			assert.ok(Date.now() < remoteDeadline, "unavailable remote file must explain how to locate matching sources"); await delay(50);
+		}
+		assert.match(vscode.window.activeTextEditor.document.getText(), /missing\/library-build\/library.c/);
+		assert.ok(sourceResponses.every(response => response.success === false && response.body.error.showUser === false));
+		const popupErrors = JSON.parse(execFileSync(process.env.DDB_TEST_NODE!, [process.env.DDB_TEST_CDP_SCRIPT!, process.env.DDB_TEST_PROFILE!, `Array.from(document.querySelectorAll('.notifications-toasts .notification-list-item')).some(row => /source was not found|No source information|Source file .* is not available/.test(row.textContent))`], { encoding: "utf8" }));
+		assert.equal(popupErrors, false, "source failures must stay in the native unavailable-source document");
+		console.log("Unavailable-source UI passed: real DAP handlers, missing metadata and remote files, no popup errors");
 	} finally {
 		if (session) await vscode.debug.stopDebugging(session);
 		factory.dispose(); emitter.dispose();

@@ -1,6 +1,6 @@
 import type * as VSCode from "vscode";
+import type { SessionControlItem } from "./DDBViewProvider";
 
-type SessionItem = { sessionId: number };
 type Host = Pick<typeof VSCode, "commands" | "window" | "debug">;
 
 /** Capture the owning debug session before a dialog can change focus. */
@@ -11,6 +11,16 @@ export function registerSessionControls(vscode: Host, context: Pick<VSCode.Exten
     void vscode.window.showErrorMessage("No active DDB debug session");
     return undefined;
   };
+  const activeTarget = (item?: SessionControlItem) => {
+    const session = activeSession();
+    if (!session) return undefined;
+    const sessionId = item?.sessionId;
+    if (typeof sessionId !== "number" || !Number.isSafeInteger(sessionId) || sessionId <= 0) {
+      void vscode.window.showErrorMessage("Select a process in the DDB Sessions panel.");
+      return undefined;
+    }
+    return { session, sessionId };
+  };
   const request = async (session: VSCode.DebugSession, command: string, args: object) => {
     try {
       await session.customRequest(command, args);
@@ -20,32 +30,34 @@ export function registerSessionControls(vscode: Host, context: Pick<VSCode.Exten
   };
 
   for (const command of ["pause", "continue"] as const) {
-    context.subscriptions.push(vscode.commands.registerCommand(`ddbSessionsExplorer.${command}Session`, async (item: SessionItem) => {
-      const session = activeSession();
-      if (session) await request(session, command, { sessionId: item.sessionId });
+    context.subscriptions.push(vscode.commands.registerCommand(`ddbSessionsExplorer.${command}Session`, async (item?: SessionControlItem) => {
+      const target = activeTarget(item);
+      if (target) await request(target.session, command, { sessionId: target.sessionId });
     }));
   }
 
-  context.subscriptions.push(vscode.commands.registerCommand("ddbSessionsExplorer.killSession", async (item: SessionItem) => {
-    const session = activeSession();
-    if (!session) return;
+  context.subscriptions.push(vscode.commands.registerCommand("ddbSessionsExplorer.killSession", async (item?: SessionControlItem) => {
+    const target = activeTarget(item);
+    if (!target) return;
+    const { session, sessionId } = target;
     try {
       const answer = await vscode.window.showWarningMessage(
-        `Are you sure you want to kill session ${item.sessionId}? This will terminate the process.`,
+        `Are you sure you want to kill session ${sessionId}? This will terminate the process.`,
         { modal: true }, "Yes", "No"
       );
-      if (answer === "Yes") await request(session, "send-signal", { sessionId: item.sessionId, signal: "SIGKILL" });
+      if (answer === "Yes") await request(session, "send-signal", { sessionId, signal: "SIGKILL" });
     } catch (error) {
       void vscode.window.showErrorMessage(`Could not confirm session termination: ${error}`);
     }
   }));
 
-  context.subscriptions.push(vscode.commands.registerCommand("ddbSessionsExplorer.sendSignal", async (item: SessionItem) => {
-    const session = activeSession();
-    if (!session) return;
+  context.subscriptions.push(vscode.commands.registerCommand("ddbSessionsExplorer.sendSignal", async (item?: SessionControlItem) => {
+    const target = activeTarget(item);
+    if (!target) return;
+    const { session, sessionId } = target;
     interface SignalItem extends VSCode.QuickPickItem { signalName: string }
     const picker = vscode.window.createQuickPick<SignalItem>();
-    picker.title = `Send Signal to Session ${item.sessionId}`;
+    picker.title = `Send Signal to Session ${sessionId}`;
     picker.placeholder = "Loading available signals...";
     picker.busy = true;
     picker.enabled = false;
@@ -64,11 +76,11 @@ export function registerSessionControls(vscode: Host, context: Pick<VSCode.Exten
       if (closed || picker.busy) return;
       const selected = picker.selectedItems[0];
       close();
-      if (selected) await request(session, "send-signal", { sessionId: item.sessionId, signal: selected.signalName });
+      if (selected) await request(session, "send-signal", { sessionId, signal: selected.signalName });
     }));
     picker.show();
     try {
-      const response = await session.customRequest("list-signals", { sessionId: item.sessionId });
+      const response = await session.customRequest("list-signals", { sessionId });
       if (closed) return;
       picker.items = response.signals.map((signal: any) => ({
         label: signal.name,

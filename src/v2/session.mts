@@ -337,10 +337,10 @@ export class CanonicalDebugSession extends DebugSession {
 		await this.reply(response, () => this.model.stack(args, this.distributed));
 	}
 	protected override async scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): Promise<void> {
-		await this.reply(response, () => this.model.scopes(args.frameId));
+		await this.reply(response, () => this.model.scopes(args.frameId), false);
 	}
 	protected override async variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments): Promise<void> {
-		await this.reply(response, () => this.model.listVariables(args));
+		await this.reply(response, () => this.model.listVariables(args), false);
 	}
 	protected override async evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): Promise<void> {
 		await this.reply(response, async () => {
@@ -350,13 +350,13 @@ export class CanonicalDebugSession extends DebugSession {
 			if (frame && !frame.frame.frameId) throw new Error("Select an executable stack frame to run a console command");
 			const target = frame ? { thread: { threadId: frame.threadId } } : { currentThread: {} };
 			return { result: await this.commands!.run(args.expression, target, frame), variablesReference: 0 };
-		});
+		}, args.context === "repl");
 	}
 	protected override async setVariableRequest(response: DebugProtocol.SetVariableResponse, args: DebugProtocol.SetVariableArguments): Promise<void> {
 		await this.reply(response, () => this.model.setVariable(args));
 	}
 	protected override async sourceRequest(response: DebugProtocol.SourceResponse, args: DebugProtocol.SourceArguments): Promise<void> {
-		await this.reply(response, () => this.model.readSource(args.sourceReference, args.source));
+		await this.reply(response, () => this.model.readSource(args.sourceReference, args.source), false);
 	}
 
 	private breakpointPair(seq: number) {
@@ -553,11 +553,15 @@ export class CanonicalDebugSession extends DebugSession {
 		});
 	}
 
-	protected async reply(response: DebugProtocol.Response, work: () => Promise<object | undefined | void>): Promise<void> {
+	protected async reply(response: DebugProtocol.Response, work: () => Promise<object | undefined | void>, showUser = true): Promise<void> {
 		try {
 			const body = await work();
 			if (body !== undefined) response.body = body;
 			this.sendResponse(response);
-		} catch (error) { this.sendErrorResponse(response, 1, error instanceof Error ? error.message : String(error)); }
+		} catch (error) {
+			// Source and inspection views already render their failures inline. A
+			// missing file or out-of-scope watch is not a popup on every frame change.
+			this.sendErrorResponse(response, { id: 1, format: error instanceof Error ? error.message : String(error), showUser });
+		}
 	}
 }
