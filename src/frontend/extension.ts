@@ -273,11 +273,35 @@ async function promptForSessions(
 		let ungroupedSessions: ddb_api.Session[];
 
 		// Configuration requests can arrive before activeDebugSession is set.
-		void Promise.all([
-			debugSession.customRequest("ddb.getSessions"),
-			debugSession.customRequest("ddb.resolveSourceGroups", { src: src_path }),
-		])
-			.then(([sessionResponse, groupResponse]) => {
+		const loadTargets = async () => {
+			let sessionResponse = await debugSession.customRequest("ddb.getSessions");
+			// Starting sessions may not have joined their logical groups yet.
+			// Wait for an available target, without blocking ready sessions.
+			while (
+				!closed &&
+				sessionResponse.sessions?.length &&
+				sessionResponse.sessions.every(
+					(session: ddb_api.Session) => session.status === "starting",
+				)
+			) {
+				await new Promise((resolve) => setTimeout(resolve, 100));
+				if (closed) return;
+				sessionResponse = await debugSession.customRequest("ddb.getSessions");
+			}
+			if (closed) return;
+			sessionResponse.sessions = sessionResponse.sessions?.filter(
+				(session: ddb_api.Session) => session.status !== "starting",
+			);
+			const groupResponse = await debugSession.customRequest(
+				"ddb.resolveSourceGroups",
+				{ src: src_path },
+			);
+			return [sessionResponse, groupResponse];
+		};
+		void loadTargets()
+			.then((responses) => {
+				if (!responses) return;
+				const [sessionResponse, groupResponse] = responses;
 				sessions = sessionResponse.sessions;
 				groups = groupResponse.grps;
 

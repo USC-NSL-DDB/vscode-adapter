@@ -1,0 +1,12 @@
+Framework: grpc
+FrameFilter:
+  filter_preset: [cpp-stdlib, protobuf-gen, ddb-runtime]
+ServiceDiscovery:
+  Broker:
+    hostname: 127.0.0.1
+    managed:
+      type: mosquitto
+Conf:
+  on_exit: kill
+  Debugger:
+    backend: lldb

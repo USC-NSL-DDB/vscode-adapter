@@ -1,9 +1,11 @@
 import { ui } from "./ui_helpers";
+import { once } from "node:events";
 import * as assert from "node:assert/strict";
 import * as vscode from "vscode";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, cp, readFile, writeFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -32,6 +34,8 @@ export async function run(): Promise<void> {
 	}
 	const messages: any[] = [];
 	const children: ChildProcess[] = [];
+	const appOutput: Record<string, string> = {};
+	let broker: ChildProcess | undefined;
 	const tracker = vscode.debug.registerDebugAdapterTrackerFactory("ddb", {
 		createDebugAdapterTracker: () => ({
 			onWillReceiveMessage: (message) =>
@@ -40,6 +44,8 @@ export async function run(): Promise<void> {
 		}),
 	});
 	let session: vscode.DebugSession | undefined;
+	let failed = false;
+	let failure: unknown;
 	const app = (name: string, args: string[]) => {
 		const child = spawn(
 			join(workspace, "build", `greeter_${name}`),
@@ -47,8 +53,13 @@ export async function run(): Promise<void> {
 			{ cwd: join(workspace, "build"), stdio: ["ignore", "pipe", "pipe"] },
 		);
 		children.push(child);
-		child.stdout!.on("data", () => {});
-		child.stderr!.on("data", () => {});
+		const capture = (data: Buffer) => {
+			appOutput[name] = ((appOutput[name] ?? "") + data.toString()).slice(
+				-8000,
+			);
+		};
+		child.stdout!.on("data", capture);
+		child.stderr!.on("data", capture);
 		return child;
 	};
 	let breakpointSequence = 1000000;
@@ -91,10 +102,33 @@ export async function run(): Promise<void> {
 			join(directory, "mosquitto.conf"),
 			"listener 28883 127.0.0.1\nallow_anonymous true\npersistence false\n",
 		);
+		// Own the isolated test broker directly. The production managed-broker
+		// cleanup currently kills all Mosquitto processes on the host.
+		broker = spawn("mosquitto", ["-c", join(directory, "mosquitto.conf")], {
+			stdio: "ignore",
+		});
+		await once(broker, "spawn");
+		await until(async () => {
+			assert.equal(broker!.exitCode, null, "isolated broker must stay running");
+			const socket = createConnection({ host: "127.0.0.1", port: 28883 });
+			try {
+				await once(socket, "connect");
+				return true;
+			} catch {
+				return false;
+			} finally {
+				socket.destroy();
+			}
+		}, "isolated broker must accept connections");
+		await mkdir("/tmp/ddb/service_discovery", { recursive: true });
+		await writeFile(
+			discoveryFile,
+			"tcp://127.0.0.1:28883\nservice_discovery/report\n\n",
+		);
 		const config = join(directory, "ddb.yaml");
 		await writeFile(
 			config,
-			`Framework: grpc\nFrameFilter:\n  filter_preset: [cpp-stdlib, protobuf-gen, ddb-runtime]\nServiceDiscovery:\n  Broker:\n    hostname: 127.0.0.1\n    port: 28883\n    managed:\n      type: mosquitto\n      config_path: ${directory}/mosquitto.conf\nConf:\n  auto_shutdown: false\n  on_exit: kill\n  base_dir: ${directory}/base\n  log_dir: ${directory}/logs\n`,
+			`Framework: grpc\nFrameFilter:\n  filter_preset: [cpp-stdlib, protobuf-gen, ddb-runtime]\nServiceDiscovery:\n  Broker:\n    hostname: 127.0.0.1\n    port: 28883\nConf:\n  Debugger:\n    backend: ${process.env.DDB_TEST_BACKEND ?? "gdb"}\n  auto_shutdown: false\n  on_exit: kill\n  base_dir: ${directory}/base\n  log_dir: ${directory}/logs\n`,
 		);
 		assert.equal(
 			await vscode.debug.startDebugging(undefined, {
@@ -195,6 +229,11 @@ export async function run(): Promise<void> {
 			f.name.includes("GreeterClient::SayHello"),
 		);
 		assert.ok(caller, "distributed stack must include the caller");
+		assert.equal(
+			caller.source?.path,
+			join(workspace, "greeter_client.cc"),
+			`caller frame must identify its source: ${JSON.stringify(caller)}`,
+		);
 		assert.ok(
 			stack.stackFrames.some((f: any) =>
 				/distributed call boundary.*Caller: greeter_client/.test(f.name),
@@ -215,11 +254,24 @@ export async function run(): Promise<void> {
 		await vscode.commands.executeCommand(
 			"workbench.action.debug.callStackBottom",
 		);
+		const callerVisible = () =>
+			ui(
+				`Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row')).some(row => row.textContent.includes('GreeterClient::SayHello'))`,
+			);
+		// LLDB may expose more startup/library frames below the caller than GDB.
+		// Reveal earlier rows through the same navigation a user can perform.
+		for (
+			let step = 0;
+			step < stack.stackFrames.length && !callerVisible();
+			step++
+		) {
+			await vscode.commands.executeCommand(
+				"workbench.action.debug.callStackUp",
+			);
+			await delay(100);
+		}
 		await until(
-			() =>
-				ui(
-					`Array.from(document.querySelectorAll('.monaco-list-row')).some(row => row.textContent.includes('GreeterClient::SayHello'))`,
-				),
+			callerVisible,
 			"caller must be present in the rendered VS Code call stack",
 		);
 		await vscode.window.showTextDocument(
@@ -227,20 +279,21 @@ export async function run(): Promise<void> {
 		);
 		assert.equal(
 			ui(
-				`(() => { const row = Array.from(document.querySelectorAll('.monaco-list-row')).find(row => row.textContent.includes('GreeterClient::SayHello')); if (!row) return false; row.dispatchEvent(new MouseEvent('click', { bubbles: true })); return true; })()`,
+				`(() => { const row = Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row')).find(row => row.textContent.includes('GreeterClient::SayHello')); if (!row) return false; row.dispatchEvent(new MouseEvent('click', { bubbles: true })); return true; })()`,
 			),
 			true,
 		);
 		await until(
 			() =>
 				vscode.window.activeTextEditor?.document.uri.fsPath ===
-				join(workspace, "greeter_client.cc"),
-			"clicking the remote caller frame must open the caller source",
+					join(workspace, "greeter_client.cc") &&
+				vscode.debug.activeStackItem instanceof vscode.DebugStackFrame &&
+				vscode.debug.activeStackItem.frameId === caller.id,
+			"clicking the remote caller frame must select it and open its source",
 		);
-		await vscode.commands.executeCommand("ddbBreakpointsExplorer.refresh");
 		await vscode.commands.executeCommand("ddbBreakpointsExplorer.focus");
-		// Allow the asynchronous tree refresh to replace rows rendered before focus.
-		await delay(400);
+		// Let VS Code finish fetching tree items before sending the inline action.
+		await delay(1500);
 		const sourceAction = `Array.from(document.querySelectorAll('[aria-label="DDB Breakpoints"] .monaco-list-row')).find(row => row.textContent.includes('greeter_server.cc:59'))?.querySelector('.codicon-go-to-file')`;
 		await until(
 			() => ui(`!!(${sourceAction})`),
@@ -283,50 +336,86 @@ export async function run(): Promise<void> {
 			"Greeter VS Code UI passed: client/server highlights, breakpoint thread labels, caller selection, source navigation, variable inspection and inferior cleanup",
 		);
 	} catch (error) {
-		const item = vscode.debug.activeStackItem;
-		const diagnostic = {
-			editor: vscode.window.activeTextEditor?.document.uri.toString(),
-			selection: vscode.window.activeTextEditor?.selection,
-			active:
-				item instanceof vscode.DebugStackFrame
-					? { threadId: item.threadId, frameId: item.frameId }
-					: undefined,
-			calls: messages
-				.filter((m) => ["stackTrace", "scopes", "source"].includes(m.command))
-				.slice(-30)
-				.map((m) => ({
-					command: m.command,
-					type: m.type,
-					args: m.arguments,
-					success: m.success,
-					message: m.message,
-					frames: m.body?.stackFrames?.slice(0, 3),
-				})),
-		};
-		Object.assign(diagnostic, {
-			breakpointRow: ui(
-				`Array.from(document.querySelectorAll('[aria-label="DDB Breakpoints"] .monaco-list-row')).find(row => row.textContent.includes('greeter_server.cc:59'))?.outerHTML ?? ''`,
-			),
-			tree: ui(
-				`Array.from(document.querySelectorAll('.monaco-list')).map(node => ({ label: node.getAttribute('aria-label'), parent: node.parentElement?.parentElement?.className, text: node.textContent.slice(0, 2500) }))`,
-			),
-		});
-		await writeFile(
-			"/tmp/ddb-greeter-ui-failure.json",
-			JSON.stringify(diagnostic, null, 2),
-		);
-		console.error(
-			"Greeter UI diagnostic saved to /tmp/ddb-greeter-ui-failure.json",
-		);
-		throw error;
+		failed = true;
+		failure = error;
+		try {
+			await cp(directory, "/tmp/ddb-greeter-failure", { recursive: true });
+			const item = vscode.debug.activeStackItem;
+			const diagnostic = {
+				appOutput,
+				editor: vscode.window.activeTextEditor?.document.uri.toString(),
+				selection: vscode.window.activeTextEditor?.selection,
+				active:
+					item instanceof vscode.DebugStackFrame
+						? { threadId: item.threadId, frameId: item.frameId }
+						: undefined,
+				calls: messages
+					.filter((m) => ["stackTrace", "scopes", "source"].includes(m.command))
+					.slice(-30)
+					.map((m) => ({
+						command: m.command,
+						type: m.type,
+						args: m.arguments,
+						success: m.success,
+						message: m.message,
+						frames: m.body?.stackFrames?.slice(0, 80),
+					})),
+			};
+			Object.assign(diagnostic, {
+				breakpointRow: ui(
+					`Array.from(document.querySelectorAll('[aria-label="DDB Breakpoints"] .monaco-list-row')).find(row => row.textContent.includes('greeter_server.cc:59'))?.outerHTML ?? ''`,
+				),
+				tree: ui(
+					`Array.from(document.querySelectorAll('.monaco-list')).map(node => ({ label: node.getAttribute('aria-label'), parent: node.parentElement?.parentElement?.className, text: Array.from(node.querySelectorAll('.monaco-list-row')).map(row => row.textContent).join('\\n').slice(0, 8000) }))`,
+				),
+			});
+			await writeFile(
+				"/tmp/ddb-greeter-ui-failure.json",
+				JSON.stringify(diagnostic, null, 2),
+			);
+			console.error(
+				"Greeter UI diagnostic saved to /tmp/ddb-greeter-ui-failure.json",
+			);
+		} catch (diagnosticError) {
+			console.error(
+				"Could not save greeter failure diagnostics",
+				diagnosticError,
+			);
+		}
 	} finally {
-		if (session) await vscode.debug.stopDebugging(session);
-		for (const child of children)
-			if (child.exitCode === null && child.signalCode === null)
-				child.kill("SIGKILL");
-		tracker.dispose();
-		if (discovery) await writeFile(discoveryFile, discovery);
-		else await rm(discoveryFile, { force: true });
-		await rm(directory, { recursive: true, force: true });
+		try {
+			try {
+				if (session) await vscode.debug.stopDebugging(session);
+			} finally {
+				try {
+					const cleanup = await Promise.allSettled(
+						[...children, ...(broker ? [broker] : [])].map(async (child) => {
+							if (child.exitCode !== null || child.signalCode !== null) return;
+							const exited = once(child, "exit", {
+								signal: AbortSignal.timeout(2000),
+							});
+							child.kill("SIGKILL");
+							await exited;
+						}),
+					);
+					for (const result of cleanup)
+						if (result.status === "rejected")
+							console.error("Greeter child cleanup failed", result.reason);
+				} finally {
+					tracker.dispose();
+					if (discovery) await writeFile(discoveryFile, discovery);
+					else await rm(discoveryFile, { force: true });
+					await rm(directory, { recursive: true, force: true });
+				}
+			}
+		} catch (cleanupError) {
+			if (!failed) {
+				failed = true;
+				failure = cleanupError;
+			} else {
+				console.error("Greeter cleanup failed", cleanupError);
+			}
+		}
 	}
+	if (failed) throw failure;
 }

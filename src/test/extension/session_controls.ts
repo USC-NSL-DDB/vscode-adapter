@@ -39,7 +39,7 @@ export async function testSessionControls(): Promise<void> {
 		execFileSync("cc", ["-g", "-O0", source, "-o", binary]);
 		await writeFile(
 			config,
-			`Framework: unspecified\nConf:\n  auto_shutdown: false\n  on_exit: kill\n  base_dir: ${directory}/base\n  log_dir: ${directory}/logs\n  Debugger:\n    backend: gdb\nStaticSessions:\n` +
+			`Framework: unspecified\nConf:\n  auto_shutdown: false\n  on_exit: kill\n  base_dir: ${directory}/base\n  log_dir: ${directory}/logs\n  Debugger:\n    backend: ${process.env.DDB_TEST_BACKEND ?? "gdb"}\nStaticSessions:\n` +
 				["server", "client"]
 					.map(
 						(name, i) =>

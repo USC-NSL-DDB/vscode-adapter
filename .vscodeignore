@@ -34,3 +34,4 @@ scripts/test-vscode-cdp.cjs
 
 # The receipt records this archive hash and stays beside the package.
 ddb-native-api-validation.txt
+ddb-lldb-validation.txt

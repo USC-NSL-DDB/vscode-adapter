@@ -78,6 +78,7 @@ try {
 			env: {
 				...process.env,
 				OTEL_SDK_DISABLED: "true",
+				DEBUGINFOD_URLS: "",
 				DDB_TEST_PROFILE: profile,
 				DDB_TEST_CDP_SCRIPT: resolve(__dirname, "test-vscode-cdp.cjs"),
 				DDB_TEST_NODE: process.execPath,

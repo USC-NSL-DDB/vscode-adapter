@@ -81,8 +81,8 @@ This selects the greeter scenario instead of the C fixture. The current test
 expects the client RPC at `greeter_client.cc:70` and the server handler at
 `greeter_server.cc:59`. It uses `mosquitto` on port 28883 and gRPC on port 50059.
 Stop other local DDB discovery/broker sessions before this test. The test saves
-and restores `/tmp/ddb/service_discovery/config`; DDB's managed broker cleanup
-currently affects other Mosquitto processes on the host.
+and restores `/tmp/ddb/service_discovery/config`. It owns an isolated broker
+process and shuts down only that process.
 
 ```sh
 DISPLAY=:191 \
@@ -129,11 +129,23 @@ the current mode, and switching back to the flat list restores filename/line row
 
 ## Session controls and execution annotations
 
-The standard suite clicks the rendered session controls with two real GDB
-processes. It resumes and pauses one process while its peer stays paused, then
+The standard suite clicks the rendered session controls with two real debugger
+processes, using GDB by default or the selected LLDB backend. It resumes and pauses one process while its peer stays paused, then
 lets the client exit and verifies its execution annotation disappears.
 Use `DDB_SESSION_UI_ONLY=1` to run this scenario alone.
 
 The concurrent-hit fixture also checks thread exit, a replacement stop at a new
 line, and a continue-all event carrying a thread ID. Other paused threads retain
 their annotations.
+
+## LLDB
+
+Set `DDB_TEST_BACKEND=lldb` for the real C/session fixtures or the instrumented
+gRPC greeter scenario. The concurrent-hit fixture uses deterministic state and
+is independent of the selected debugger. Test launches clear `DEBUGINFOD_URLS`
+so symbol-server availability does not affect startup.
+
+Use LLDB 20 or later for the existing GCC-built greeter binaries. Ubuntu's LLDB
+18 rejects their `DW_FORM_data16` debug information and cannot resolve the source
+breakpoints. Verify `lldb --version` on every target host, including through SSH.
+The manual configuration templates are in [examples/grpc](../examples/grpc/README.md).

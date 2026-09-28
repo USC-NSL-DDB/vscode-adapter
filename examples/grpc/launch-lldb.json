@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "DDB: gRPC with LLDB",
+      "type": "ddb",
+      "request": "launch",
+      "ddbpath": "/absolute/path/to/lldb-branch/ddb",
+      "configFilePath": "${workspaceFolder}/.ddb/dbg_grpc_lldb.yaml",
+      "cwd": "${workspaceFolder}",
+      "distributedStack": true,
+      "valuesFormatting": "prettyPrinters",
+      "env": { "DEBUGINFOD_URLS": "" }
+    }
+  ]
+}

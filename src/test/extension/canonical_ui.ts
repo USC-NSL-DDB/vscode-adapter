@@ -88,7 +88,7 @@ export async function run(): Promise<void> {
 				join(directory, "base"),
 			)}\n  log_dir: ${JSON.stringify(
 				join(directory, "logs"),
-			)}\n  Debugger:\n    backend: gdb\nStaticSessions:\n  - tag: ui\n    alias: ui\n    hash: ui-group\n    pid: 4501\n    start_mode: binary\n    binary_path: ${JSON.stringify(
+			)}\n  Debugger:\n    backend: ${process.env.DDB_TEST_BACKEND ?? "gdb"}\nStaticSessions:\n  - tag: ui\n    alias: ui\n    hash: ui-group\n    pid: 4501\n    start_mode: binary\n    binary_path: ${JSON.stringify(
 				executable,
 			)}\n    stop_at_entry: true\n`,
 		);

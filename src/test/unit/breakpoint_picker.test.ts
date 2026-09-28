@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { runInNewContext } from "node:vm";
 
-function pickerFixture(request: () => Promise<unknown>) {
+function pickerFixture(request: (command: string) => Promise<unknown>) {
 	let hide = () => {};
 	let disposed = false;
 	let lateWrites = 0;
@@ -83,6 +83,48 @@ suite("Breakpoint picker request lifecycle", () => {
 		await new Promise((resolve) => setImmediate(resolve));
 		assert.equal(fixture.lateWrites(), 0);
 		assert.deepEqual(fixture.errors, []);
+	});
+
+	test("waits for session activation before resolving groups", async () => {
+		const commands: string[] = [];
+		let requests = 0;
+		const fixture = pickerFixture(async (command) => {
+			commands.push(command);
+			if (command === "ddb.getSessions")
+				return {
+					sessions: [
+						{ sid: 1, status: ++requests === 1 ? "starting" : "stopped" },
+					],
+				};
+			// Cancelling here keeps this test focused on discovery ordering.
+			fixture.cancel();
+			return { grps: [] };
+		});
+		assert.equal(await fixture.start(), undefined);
+		assert.deepEqual(commands, [
+			"ddb.getSessions",
+			"ddb.getSessions",
+			"ddb.resolveSourceGroups",
+		]);
+		assert.equal(fixture.lateWrites(), 0);
+	});
+
+	test("does not wait for an unrelated starting session when a target is ready", async () => {
+		const commands: string[] = [];
+		const fixture = pickerFixture(async (command) => {
+			commands.push(command);
+			if (command === "ddb.getSessions")
+				return {
+					sessions: [
+						{ sid: 1, status: "stopped" },
+						{ sid: 2, status: "starting" },
+					],
+				};
+			fixture.cancel();
+			return { grps: [] };
+		});
+		assert.equal(await fixture.start(), undefined);
+		assert.deepEqual(commands, ["ddb.getSessions", "ddb.resolveSourceGroups"]);
 	});
 
 	test("discovery failure closes the picker and completes selection", async () => {
