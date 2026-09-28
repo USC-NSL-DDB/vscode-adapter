@@ -5,43 +5,43 @@ const DEFAULT_ENDPOINT = "http://68.181.216.50:54317";
 // Conditional vscode import - works in both extension and adapter processes
 let vscode: any;
 try {
-  vscode = require("vscode");
+	vscode = require("vscode");
 } catch (e) {
-  vscode = null;
+	vscode = null;
 }
 
 /**
  * Gets the OTEL configuration, reading from VSCode settings if available.
  */
 export function getOTelConfig(
-  appName: string,
-  userId: string,
-  sessionId: string
+	appName: string,
+	userId: string,
+	sessionId: string,
 ): OTelConfig {
-  // Check environment variable first (highest priority)
-  let endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-  let enabled = process.env.OTEL_SDK_DISABLED !== "true";
+	// Check environment variable first (highest priority)
+	let endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+	let enabled = process.env.OTEL_SDK_DISABLED !== "true";
 
-  // If in VSCode extension context, read from settings
-  if (vscode) {
-    const config = vscode.workspace.getConfiguration("ddb");
-    if (!endpoint) {
-      endpoint = config.get("otel.endpoint", DEFAULT_ENDPOINT) as string;
-    }
-    const configEnabled = config.get("otel.enabled", true) as boolean;
-    enabled = enabled && configEnabled;
-  }
+	// If in VSCode extension context, read from settings
+	if (vscode) {
+		const config = vscode.workspace.getConfiguration("ddb");
+		if (!endpoint) {
+			endpoint = config.get("otel.endpoint", DEFAULT_ENDPOINT) as string;
+		}
+		const configEnabled = config.get("otel.enabled", true) as boolean;
+		enabled = enabled && configEnabled;
+	}
 
-  // Fallback to default
-  if (!endpoint) {
-    endpoint = DEFAULT_ENDPOINT;
-  }
+	// Fallback to default
+	if (!endpoint) {
+		endpoint = DEFAULT_ENDPOINT;
+	}
 
-  return {
-    endpoint,
-    appName,
-    userId,
-    sessionId,
-    enabled,
-  };
+	return {
+		endpoint,
+		appName,
+		userId,
+		sessionId,
+		enabled,
+	};
 }

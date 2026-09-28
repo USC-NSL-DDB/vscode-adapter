@@ -16,33 +16,34 @@ import { SubBkpt, SubBkptType } from "../backend/backend";
 import { getOTelConfig } from "../common/otel/config";
 import { backendTelemetryArguments } from "../common/ddb_launch_telemetry";
 import { OTelService } from "../common/otel";
-import {
-  getOrCreateUserId,
-  generateSessionId,
-} from "../common/user_session";
+import { getOrCreateUserId, generateSessionId } from "../common/user_session";
 
 // Helper functions to extract groupIds/sessionIds from subbkpts for display
 // These work with both SubBkpt (DAP format) and SubBreakpoint (API format)
-function extractGroupIds(subbkpts: SubBkpt[] | SubBreakpoint[] | undefined): number[] {
-  if (!subbkpts) return [];
-  return subbkpts
-    .filter(s => s.type === "group")
-    .map(s => {
-      // Handle both formats: SubBkpt uses 'target', SubBreakpoint uses 'target_group'
-      if ('target' in s) return (s as SubBkpt).target;
-      return (s as SubBreakpoint).target_group!;
-    });
+function extractGroupIds(
+	subbkpts: SubBkpt[] | SubBreakpoint[] | undefined,
+): number[] {
+	if (!subbkpts) return [];
+	return subbkpts
+		.filter((s) => s.type === "group")
+		.map((s) => {
+			// Handle both formats: SubBkpt uses 'target', SubBreakpoint uses 'target_group'
+			if ("target" in s) return (s as SubBkpt).target;
+			return (s as SubBreakpoint).target_group!;
+		});
 }
 
-function extractSessionIds(subbkpts: SubBkpt[] | SubBreakpoint[] | undefined): number[] {
-  if (!subbkpts) return [];
-  return subbkpts
-    .filter(s => s.type === "session")
-    .map(s => {
-      // Handle both formats: SubBkpt uses 'target', SubBreakpoint uses 'target_session'
-      if ('target' in s) return (s as SubBkpt).target;
-      return (s as SubBreakpoint).target_session!;
-    });
+function extractSessionIds(
+	subbkpts: SubBkpt[] | SubBreakpoint[] | undefined,
+): number[] {
+	if (!subbkpts) return [];
+	return subbkpts
+		.filter((s) => s.type === "session")
+		.map((s) => {
+			// Handle both formats: SubBkpt uses 'target', SubBreakpoint uses 'target_session'
+			if ("target" in s) return (s as SubBkpt).target;
+			return (s as SubBreakpoint).target_session!;
+		});
 }
 // class GDBDebugAdapterTracker implements vscode.DebugAdapterTracker {
 // 	private stateEmitter: vscode.EventEmitter<any>;
@@ -78,44 +79,44 @@ function extractSessionIds(subbkpts: SubBkpt[] | SubBreakpoint[] | undefined): n
 // }
 // Map breakpoint ID to session selection (groups and individual sessions)
 declare module "vscode-debugprotocol" {
-  namespace DebugProtocol {
-    interface SourceBreakpoint {
-      source: {
-        path: string;
-        name: string;
-      };
-      subbkpts?: SubBkpt[];
-      transactionId?: number;
-      sessionAliases?: string[];
-    }
-    interface Breakpoint {
-      subbkpts?: SubBkpt[];
-    }
-    interface SetBreakpointsArguments {
-      transactionId?: number;
-    }
-    interface SetBreakpointsResponse {
-      transactionId?: number;
-    }
-  }
+	namespace DebugProtocol {
+		interface SourceBreakpoint {
+			source: {
+				path: string;
+				name: string;
+			};
+			subbkpts?: SubBkpt[];
+			transactionId?: number;
+			sessionAliases?: string[];
+		}
+		interface Breakpoint {
+			subbkpts?: SubBkpt[];
+		}
+		interface SetBreakpointsArguments {
+			transactionId?: number;
+		}
+		interface SetBreakpointsResponse {
+			transactionId?: number;
+		}
+	}
 }
 
 declare module "vscode" {
-  interface Breakpoint {
-    subbkpts?: SubBkpt[];
-    processing?: boolean;
-    transactionId?: number;
-  }
+	interface Breakpoint {
+		subbkpts?: SubBkpt[];
+		processing?: boolean;
+		transactionId?: number;
+	}
 }
 
 interface BreakpointTarget {
-  subbkpts: SubBkpt[];
+	subbkpts: SubBkpt[];
 }
 
 interface StoppedFrameInfo {
-  sessionId: number;
-  threadId: number;
-  frameLevel: number;
+	sessionId: number;
+	threadId: number;
+	frameLevel: number;
 }
 
 const breakpointSelectionsMap = new Map<string, BreakpointTarget>();
@@ -128,840 +129,880 @@ const stoppedFramesMap = new Map<string, StoppedFrameInfo[]>();
 const autoScopeVariablesRefs = new Set<number>();
 
 function getBreakpointId(bp: vscode.Breakpoint): string {
-  // VSCode doesn't expose an ID directly, but you can generate one based on its properties
-  if (bp instanceof vscode.SourceBreakpoint) {
-    // Convert URI to file system path
-    const filePath = vscode.Uri.parse(bp.location.uri.toString()).fsPath;
-    // Normalize the path to ensure consistency
-    const normalizedPath = path.normalize(filePath);
-    return `${normalizedPath}:${bp.location.range.start.line + 1}`;
-  } else if (bp instanceof vscode.FunctionBreakpoint) {
-    return bp.functionName;
-  } else {
-    return ""; // Handle other breakpoint types if necessary
-  }
+	// VSCode doesn't expose an ID directly, but you can generate one based on its properties
+	if (bp instanceof vscode.SourceBreakpoint) {
+		// Convert URI to file system path
+		const filePath = vscode.Uri.parse(bp.location.uri.toString()).fsPath;
+		// Normalize the path to ensure consistency
+		const normalizedPath = path.normalize(filePath);
+		return `${normalizedPath}:${bp.location.range.start.line + 1}`;
+	} else if (bp instanceof vscode.FunctionBreakpoint) {
+		return bp.functionName;
+	} else {
+		return ""; // Handle other breakpoint types if necessary
+	}
 }
 
 function getBreakpointIdFromDAP(
-  bp: DebugProtocol.SourceBreakpoint,
-  dapPath: string
+	bp: DebugProtocol.SourceBreakpoint,
+	dapPath: string,
 ): string {
-  // Normalize the DAP path to ensure consistency
-  const normalizedPath = path.normalize(dapPath);
-  return `${normalizedPath}:${bp.line}`;
+	// Normalize the DAP path to ensure consistency
+	const normalizedPath = path.normalize(dapPath);
+	return `${normalizedPath}:${bp.line}`;
 }
 
 function associateBreakpointWithSelection(
-  bp: vscode.Breakpoint,
-  selection: BreakpointTarget
+	bp: vscode.Breakpoint,
+	selection: BreakpointTarget,
 ) {
-  const bpId = getBreakpointId(bp);
-  breakpointSelectionsMap.set(bpId, selection);
+	const bpId = getBreakpointId(bp);
+	breakpointSelectionsMap.set(bpId, selection);
 }
 
 function addStoppedFrame(file: string, line: number, info: StoppedFrameInfo) {
-  const key = `${path.normalize(file)}:${line}`;
-  if (!stoppedFramesMap.has(key)) {
-    stoppedFramesMap.set(key, []);
-  }
-  // Avoid duplicates
-  const frames = stoppedFramesMap.get(key)!;
-  const exists = frames.some(f =>
-    f.sessionId === info.sessionId && f.threadId === info.threadId
-  );
-  if (!exists) {
-    frames.push(info);
-  }
+	const key = `${path.normalize(file)}:${line}`;
+	if (!stoppedFramesMap.has(key)) {
+		stoppedFramesMap.set(key, []);
+	}
+	// Avoid duplicates
+	const frames = stoppedFramesMap.get(key)!;
+	const exists = frames.some(
+		(f) => f.sessionId === info.sessionId && f.threadId === info.threadId,
+	);
+	if (!exists) {
+		frames.push(info);
+	}
 }
 
 function removeStoppedFramesByThread(threadId: number) {
-  for (const [key, frames] of stoppedFramesMap) {
-    const filtered = frames.filter(f => f.threadId !== threadId);
-    if (filtered.length === 0) {
-      stoppedFramesMap.delete(key);
-    } else {
-      stoppedFramesMap.set(key, filtered);
-    }
-  }
+	for (const [key, frames] of stoppedFramesMap) {
+		const filtered = frames.filter((f) => f.threadId !== threadId);
+		if (filtered.length === 0) {
+			stoppedFramesMap.delete(key);
+		} else {
+			stoppedFramesMap.set(key, filtered);
+		}
+	}
 }
 
 // Define a custom QuickPickItem type that can hold our session data
 interface SessionQuickPickItem extends vscode.QuickPickItem {
-  sessionId?: number; // Session ID (number, optional for group headers)
-  groupId?: number; // Used to identify group ids
-  isGroupHeader?: boolean; // Distinguish group headers from session items
+	sessionId?: number; // Session ID (number, optional for group headers)
+	groupId?: number; // Used to identify group ids
+	isGroupHeader?: boolean; // Distinguish group headers from session items
 }
 
 // Return type for session selection - unified SubBkpt array (DAP format)
 interface SessionSelection {
-  subbkpts: SubBkpt[];
+	subbkpts: SubBkpt[];
 }
 
 async function promptForSessions(
-  source: DebugProtocol.Source,
-  debugSession: vscode.DebugSession
+	source: DebugProtocol.Source,
+	debugSession: vscode.DebugSession,
 ): Promise<SessionSelection | undefined> {
-  if (!source || !source.path) {
-    vscode.window.showErrorMessage("Invalid source for breakpoint.");
-    return undefined;
-  }
-  const src_path = path.normalize(source.path);
-  return new Promise(async (resolve) => {
-    const quickPick = vscode.window.createQuickPick<SessionQuickPickItem>();
-    quickPick.canSelectMany = true;
+	if (!source || !source.path) {
+		vscode.window.showErrorMessage("Invalid source for breakpoint.");
+		return undefined;
+	}
+	const src_path = path.normalize(source.path);
+	return new Promise((resolve) => {
+		const quickPick = vscode.window.createQuickPick<SessionQuickPickItem>();
+		quickPick.canSelectMany = true;
 
-    // Create cancel button
-    const cancelButton: vscode.QuickInputButton = {
-      iconPath: new vscode.ThemeIcon("close"),
-      tooltip: "Cancel",
-    };
+		// Create cancel button
+		const cancelButton: vscode.QuickInputButton = {
+			iconPath: new vscode.ThemeIcon("close"),
+			tooltip: "Cancel",
+		};
 
-    // Show immediately with loading state
-    quickPick.busy = true;
-    quickPick.enabled = false;
-    quickPick.placeholder = "Loading sessions and groups...";
-    quickPick.items = [
-      {
-        label: "$(loading~spin) Loading...",
-        description: "Fetching sessions and logical groups",
-        detail: "This may take a moment",
-      } as SessionQuickPickItem,
-    ];
-    quickPick.buttons = [cancelButton];
-    quickPick.ignoreFocusOut = true; // Keep open during loading
-    quickPick.show();
+		// Show immediately with loading state
+		quickPick.busy = true;
+		quickPick.enabled = false;
+		quickPick.placeholder = "Loading sessions and groups...";
+		quickPick.items = [
+			{
+				label: "$(loading~spin) Loading...",
+				description: "Fetching sessions and logical groups",
+				detail: "This may take a moment",
+			} as SessionQuickPickItem,
+		];
+		quickPick.buttons = [cancelButton];
+		quickPick.ignoreFocusOut = true; // Keep open during loading
+		quickPick.show();
 
-    let accepted = false;
-    let timedOut = false;
+		let accepted = false;
+		let timedOut = false;
+		let closed = false;
 
-    // Set up 30 second timeout
-    const timeoutId = setTimeout(() => {
-      timedOut = true;
-      quickPick.dispose();
-      vscode.window.showWarningMessage(
-        "Loading sessions timed out after 30 seconds. Please try again or check your connection."
-      );
-      resolve(undefined);
-    }, 30000);
+		// Set up 30 second timeout
+		const timeoutId = setTimeout(() => {
+			timedOut = true;
+			quickPick.dispose();
+			vscode.window.showWarningMessage(
+				"Loading sessions timed out after 30 seconds. Please try again or check your connection.",
+			);
+			resolve(undefined);
+		}, 30000);
 
-    // Handle cancel button click during loading
-    const cancelDisposable = quickPick.onDidTriggerButton((button) => {
-      if (button === cancelButton) {
-        clearTimeout(timeoutId);
-        quickPick.dispose();
-        resolve(undefined);
-      }
-    });
+		// Handle cancel button click during loading
+		const cancelDisposable = quickPick.onDidTriggerButton((button) => {
+			if (button === cancelButton) {
+				clearTimeout(timeoutId);
+				quickPick.dispose();
+				resolve(undefined);
+			}
+		});
 
-    // Handle early dismissal during loading
-    quickPick.onDidHide(() => {
-      clearTimeout(timeoutId);
-      quickPick.dispose();
-      if (!accepted && !timedOut) {
-        resolve(undefined);
-      }
-    });
+		// Handle early dismissal during loading
+		quickPick.onDidHide(() => {
+			closed = true;
+			clearTimeout(timeoutId);
+			quickPick.dispose();
+			if (!accepted && !timedOut) {
+				resolve(undefined);
+			}
+		});
 
-    // Fetch data asynchronously
-    let groups: ddb_api.LogicalGroup[];
-    let sessions: ddb_api.Session[];
-    let groupMap: Map<number, ddb_api.LogicalGroup>;
-    let groupedSessions: Map<number, ddb_api.Session[]>;
-    let ungroupedSessions: ddb_api.Session[];
+		// Fetch data asynchronously
+		let groups: ddb_api.LogicalGroup[];
+		let sessions: ddb_api.Session[];
+		let groupMap: Map<number, ddb_api.LogicalGroup>;
+		let groupedSessions: Map<number, ddb_api.Session[]>;
+		let ungroupedSessions: ddb_api.Session[];
 
-    try {
-      // Configuration requests can arrive before activeDebugSession is set.
-      const [sessionResponse, groupResponse] = await Promise.all([
-        debugSession.customRequest("ddb.getSessions"),
-        debugSession.customRequest("ddb.resolveSourceGroups", { src: src_path }),
-      ]);
-      sessions = sessionResponse.sessions;
-      groups = groupResponse.grps;
+		// Configuration requests can arrive before activeDebugSession is set.
+		void Promise.all([
+			debugSession.customRequest("ddb.getSessions"),
+			debugSession.customRequest("ddb.resolveSourceGroups", { src: src_path }),
+		])
+			.then(([sessionResponse, groupResponse]) => {
+				sessions = sessionResponse.sessions;
+				groups = groupResponse.grps;
 
-      // Clear timeout since loading succeeded
-      clearTimeout(timeoutId);
+				// Clear timeout since loading succeeded
+				clearTimeout(timeoutId);
 
-      if (timedOut) {
-        return; // Already handled by timeout
-      }
+				if (closed) {
+					return; // The picker was cancelled or timed out
+				}
 
-      if (!sessions || sessions.length === 0) {
-        quickPick.dispose();
-        vscode.window.showInformationMessage("No debug sessions available.");
-        resolve({ subbkpts: [] });
-        return;
-      }
+				if (!sessions || sessions.length === 0) {
+					quickPick.dispose();
+					vscode.window.showInformationMessage("No debug sessions available.");
+					resolve({ subbkpts: [] });
+					return;
+				}
 
-      // Build data structures
-      groupMap = new Map();
-      for (const group of groups) {
-        groupMap.set(group.id, group);
-      }
+				// Build data structures
+				groupMap = new Map();
+				for (const group of groups) {
+					groupMap.set(group.id, group);
+				}
 
-      groupedSessions = new Map();
-      ungroupedSessions = sessions.filter(session => !session.group?.valid);
+				groupedSessions = new Map();
+				ungroupedSessions = sessions.filter((session) => !session.group?.valid);
 
-      for (const group of groups) {
-        const groupId = group.id;
-        if (groupId !== undefined) {
-          const sess = sessions.filter(session => session.group?.valid && session.group.id === groupId);
-          groupedSessions.set(groupId, sess);
-        }
-      }
+				for (const group of groups) {
+					const groupId = group.id;
+					if (groupId !== undefined) {
+						const sess = sessions.filter(
+							(session) => session.group?.valid && session.group.id === groupId,
+						);
+						groupedSessions.set(groupId, sess);
+					}
+				}
 
-      // Data loaded - update UI state
-      quickPick.busy = false;
-      quickPick.enabled = true;
-      quickPick.ignoreFocusOut = false;
+				// Data loaded - update UI state
+				quickPick.busy = false;
+				quickPick.enabled = true;
+				quickPick.ignoreFocusOut = false;
 
-      // Remove cancel button, add toggle button
-      cancelDisposable.dispose();
-    } catch (error) {
-      clearTimeout(timeoutId);
-      quickPick.dispose();
-      vscode.window.showErrorMessage(`Failed to load sessions: ${error}`);
-      resolve(undefined);
-      return;
-    }
+				// Remove cancel button, add toggle button
+				cancelDisposable.dispose();
 
-    let isGroupsView = true; // Start with Groups view
+				let isGroupsView = true; // Start with Groups view
 
-    // Track selected groups across view switches
-    const selectedGroupIds = new Set<number>();
-    const selectedSessionIds = new Set<number>();
+				// Track selected groups across view switches
+				const selectedGroupIds = new Set<number>();
+				const selectedSessionIds = new Set<number>();
 
-    // Build items for Groups view (shows only logical groups)
-    function buildGroupItems(): SessionQuickPickItem[] {
-      const items: SessionQuickPickItem[] = [];
-      const sortedGroupIds = Array.from(groupedSessions.keys()).sort(
-        (a, b) => a - b
-      );
+				// Build items for Groups view (shows only logical groups)
+				function buildGroupItems(): SessionQuickPickItem[] {
+					const items: SessionQuickPickItem[] = [];
+					const sortedGroupIds = Array.from(groupedSessions.keys()).sort(
+						(a, b) => a - b,
+					);
 
-      for (const groupId of sortedGroupIds) {
-        const group = groupMap.get(groupId);
-        const sessionList = groupedSessions.get(groupId)!;
+					for (const groupId of sortedGroupIds) {
+						const group = groupMap.get(groupId);
+						const sessionList = groupedSessions.get(groupId)!;
 
-        const groupItem: SessionQuickPickItem = {
-          label: `$(folder) ${group?.alias || `Group ${groupId}`}`,
-          description: `(${sessionList.length} sessions)`,
-          detail: group
-            ? `Group ID: ${group.id} | Hash: ${group.hash}`
-            : undefined,
-          groupId: groupId,
-          isGroupHeader: true,
-        };
-        items.push(groupItem);
-      }
+						const groupItem: SessionQuickPickItem = {
+							label: `$(folder) ${group?.alias || `Group ${groupId}`}`,
+							description: `(${sessionList.length} sessions)`,
+							detail: group
+								? `Group ID: ${group.id} | Hash: ${group.hash}`
+								: undefined,
+							groupId: groupId,
+							isGroupHeader: true,
+						};
+						items.push(groupItem);
+					}
 
-      // Add separator for ungrouped sessions info (not selectable)
-      if (ungroupedSessions.length > 0) {
-        items.push({
-          label: "Ungrouped Sessions",
-          kind: vscode.QuickPickItemKind.Separator,
-        } as SessionQuickPickItem);
-        items.push({
-          label: `$(info) ${ungroupedSessions.length} ungrouped sessions (switch to Sessions view to select)`,
-          description: "",
-          detail: "Ungrouped sessions can only be selected individually",
-        } as SessionQuickPickItem);
-      }
+					// Add separator for ungrouped sessions info (not selectable)
+					if (ungroupedSessions.length > 0) {
+						items.push({
+							label: "Ungrouped Sessions",
+							kind: vscode.QuickPickItemKind.Separator,
+						} as SessionQuickPickItem);
+						items.push({
+							label: `$(info) ${ungroupedSessions.length} ungrouped sessions (switch to Sessions view to select)`,
+							description: "",
+							detail: "Ungrouped sessions can only be selected individually",
+						} as SessionQuickPickItem);
+					}
 
-      return items;
-    }
+					return items;
+				}
 
-    // Build items for Sessions view (shows all individual sessions)
-    function buildSessionItems(): SessionQuickPickItem[] {
-      const items: SessionQuickPickItem[] = [];
-      const sortedGroupIds = Array.from(groupedSessions.keys()).sort(
-        (a, b) => a - b
-      );
+				// Build items for Sessions view (shows all individual sessions)
+				function buildSessionItems(): SessionQuickPickItem[] {
+					const items: SessionQuickPickItem[] = [];
+					const sortedGroupIds = Array.from(groupedSessions.keys()).sort(
+						(a, b) => a - b,
+					);
 
-      // Add grouped sessions
-      for (const groupId of sortedGroupIds) {
-        const group = groupMap.get(groupId);
-        const sessionList = groupedSessions.get(groupId)!;
+					// Add grouped sessions
+					for (const groupId of sortedGroupIds) {
+						const group = groupMap.get(groupId);
+						const sessionList = groupedSessions.get(groupId)!;
 
-        // Add group separator
-        const groupSelected = selectedGroupIds.has(groupId);
-        items.push({
-          label: groupSelected
-            ? `Group: ${group?.alias || `${groupId}`}`
-            : `Group: ${group?.alias || `${groupId}`}`,
-          kind: vscode.QuickPickItemKind.Separator,
-        } as SessionQuickPickItem);
+						// Add group separator
+						const groupSelected = selectedGroupIds.has(groupId);
+						items.push({
+							label: groupSelected
+								? `Group: ${group?.alias || `${groupId}`}`
+								: `Group: ${group?.alias || `${groupId}`}`,
+							kind: vscode.QuickPickItemKind.Separator,
+						} as SessionQuickPickItem);
 
-        // Add sessions under this group
-        for (const session of sessionList) {
-          const sessionItem: SessionQuickPickItem = {
-            label: `$(debug) ${session.alias || "UNKNOWN"}`,
-            description: groupSelected
-              ? "Group Breakpoint (parent group selected)"
-              : "Session Breakpoint",
-            detail: `Session ID: ${session.sid} | Status: ${session.status} | Tag: ${session.tag}`,
-            sessionId: session.sid,
-            groupId: groupId,
-          };
-          items.push(sessionItem);
-        }
-      }
+						// Add sessions under this group
+						for (const session of sessionList) {
+							const sessionItem: SessionQuickPickItem = {
+								label: `$(debug) ${session.alias || "UNKNOWN"}`,
+								description: groupSelected
+									? "Group Breakpoint (parent group selected)"
+									: "Session Breakpoint",
+								detail: `Session ID: ${session.sid} | Status: ${session.status} | Tag: ${session.tag}`,
+								sessionId: session.sid,
+								groupId: groupId,
+							};
+							items.push(sessionItem);
+						}
+					}
 
-      // Add ungrouped sessions
-      if (ungroupedSessions.length > 0) {
-        items.push({
-          label: "Ungrouped Sessions",
-          kind: vscode.QuickPickItemKind.Separator,
-        } as SessionQuickPickItem);
+					// Add ungrouped sessions
+					if (ungroupedSessions.length > 0) {
+						items.push({
+							label: "Ungrouped Sessions",
+							kind: vscode.QuickPickItemKind.Separator,
+						} as SessionQuickPickItem);
 
-        for (const session of ungroupedSessions) {
-          const sessionItem: SessionQuickPickItem = {
-            label: `$(debug) ${session.alias || "UNKNOWN"}`,
-            description: "Session Breakpoint",
-            detail: `Session ID: ${session.sid} | Status: ${session.status} | Tag: ${session.tag}`,
-            sessionId: session.sid,
-            groupId: -1,
-          };
-          items.push(sessionItem);
-        }
-      }
+						for (const session of ungroupedSessions) {
+							const sessionItem: SessionQuickPickItem = {
+								label: `$(debug) ${session.alias || "UNKNOWN"}`,
+								description: "Session Breakpoint",
+								detail: `Session ID: ${session.sid} | Status: ${session.status} | Tag: ${session.tag}`,
+								sessionId: session.sid,
+								groupId: -1,
+							};
+							items.push(sessionItem);
+						}
+					}
 
-      return items;
-    }
+					return items;
+				}
 
-    // Update the view
-    function updateView() {
-      if (isGroupsView) {
-        quickPick.placeholder =
-          "Select logical groups (use toggle to switch to Sessions view)";
-        quickPick.items = buildGroupItems();
+				// Update the view
+				function updateView() {
+					if (isGroupsView) {
+						quickPick.placeholder =
+							"Select logical groups (use toggle to switch to Sessions view)";
+						quickPick.items = buildGroupItems();
 
-        // Restore selected groups
-        const items = quickPick.items.filter(
-          (item) => item.isGroupHeader && selectedGroupIds.has(item.groupId!)
-        );
-        quickPick.selectedItems = items;
-      } else {
-        quickPick.placeholder =
-          "Select individual sessions (use toggle to switch to Groups view)";
-        quickPick.items = buildSessionItems();
+						// Restore selected groups
+						const items = quickPick.items.filter(
+							(item) =>
+								item.isGroupHeader && selectedGroupIds.has(item.groupId!),
+						);
+						quickPick.selectedItems = items;
+					} else {
+						quickPick.placeholder =
+							"Select individual sessions (use toggle to switch to Groups view)";
+						quickPick.items = buildSessionItems();
 
-        // Restore selected sessions (excluding those whose group is selected)
-        const items = quickPick.items.filter(
-          (item) =>
-            item.sessionId !== undefined &&
-            selectedSessionIds.has(item.sessionId)
-        );
-        quickPick.selectedItems = items;
-      }
-    }
+						// Restore selected sessions (excluding those whose group is selected)
+						const items = quickPick.items.filter(
+							(item) =>
+								item.sessionId !== undefined &&
+								selectedSessionIds.has(item.sessionId),
+						);
+						quickPick.selectedItems = items;
+					}
+				}
 
-    // Function to create toggle button based on current view
-    function createToggleButton(): vscode.QuickInputButton {
-      return {
-        iconPath: new vscode.ThemeIcon(
-          isGroupsView ? "list-flat" : "list-tree"
-        ),
-        tooltip: isGroupsView
-          ? "Switch to Sessions view"
-          : "Switch to Groups view",
-      };
-    }
+				// Function to create toggle button based on current view
+				function createToggleButton(): vscode.QuickInputButton {
+					return {
+						iconPath: new vscode.ThemeIcon(
+							isGroupsView ? "list-flat" : "list-tree",
+						),
+						tooltip: isGroupsView
+							? "Switch to Sessions view"
+							: "Switch to Groups view",
+					};
+				}
 
-    // Set toggle button (after loading)
-    quickPick.buttons = [createToggleButton()];
+				// Set toggle button (after loading)
+				quickPick.buttons = [createToggleButton()];
 
-    // Handle toggle button click (replace cancel handler)
-    quickPick.onDidTriggerButton(() => {
-      // Save current selections before switching
-      if (isGroupsView) {
-        // Save selected groups
-        for (const item of quickPick.selectedItems) {
-          if (item.isGroupHeader && item.groupId !== undefined) {
-            selectedGroupIds.add(item.groupId);
-          }
-        }
-      } else {
-        // Save selected sessions
-        selectedSessionIds.clear();
-        for (const item of quickPick.selectedItems) {
-          if (item.sessionId !== undefined && !item.isGroupHeader) {
-            selectedSessionIds.add(item.sessionId);
-          }
-        }
-      }
+				// Handle toggle button click (replace cancel handler)
+				quickPick.onDidTriggerButton(() => {
+					// Save current selections before switching
+					if (isGroupsView) {
+						// Save selected groups
+						for (const item of quickPick.selectedItems) {
+							if (item.isGroupHeader && item.groupId !== undefined) {
+								selectedGroupIds.add(item.groupId);
+							}
+						}
+					} else {
+						// Save selected sessions
+						selectedSessionIds.clear();
+						for (const item of quickPick.selectedItems) {
+							if (item.sessionId !== undefined && !item.isGroupHeader) {
+								selectedSessionIds.add(item.sessionId);
+							}
+						}
+					}
 
-      // Toggle view
-      isGroupsView = !isGroupsView;
+					// Toggle view
+					isGroupsView = !isGroupsView;
 
-      // Update button by recreating it
-      quickPick.buttons = [createToggleButton()];
+					// Update button by recreating it
+					quickPick.buttons = [createToggleButton()];
 
-      // Rebuild items
-      updateView();
-    });
+					// Rebuild items
+					updateView();
+				});
 
-    // Handle selection changes
-    quickPick.onDidChangeSelection((selected) => {
-      if (isGroupsView) {
-        // In Groups view, track selected groups
-        selectedGroupIds.clear();
-        for (const item of selected) {
-          if (item.isGroupHeader && item.groupId !== undefined) {
-            selectedGroupIds.add(item.groupId);
-          }
-        }
-      } else {
-        // In Sessions view, track selected sessions
-        selectedSessionIds.clear();
-        for (const item of selected) {
-          if (item.sessionId !== undefined) {
-            selectedSessionIds.add(item.sessionId);
-          }
-        }
-      }
-    });
+				// Handle selection changes
+				quickPick.onDidChangeSelection((selected) => {
+					if (isGroupsView) {
+						// In Groups view, track selected groups
+						selectedGroupIds.clear();
+						for (const item of selected) {
+							if (item.isGroupHeader && item.groupId !== undefined) {
+								selectedGroupIds.add(item.groupId);
+							}
+						}
+					} else {
+						// In Sessions view, track selected sessions
+						selectedSessionIds.clear();
+						for (const item of selected) {
+							if (item.sessionId !== undefined) {
+								selectedSessionIds.add(item.sessionId);
+							}
+						}
+					}
+				});
 
-    // Handle accept
-    quickPick.onDidAccept(() => {
-      accepted = true;
+				// Handle accept
+				quickPick.onDidAccept(() => {
+					accepted = true;
 
-      // Build final selection as SubBkpt array (DAP format)
-      const subbkpts: SubBkpt[] = [];
+					// Build final selection as SubBkpt array (DAP format)
+					const subbkpts: SubBkpt[] = [];
 
-      // Add selected groups
-      for (const groupId of selectedGroupIds) {
-        subbkpts.push({ type: SubBkptType.Group, target: groupId });
-      }
+					// Add selected groups
+					for (const groupId of selectedGroupIds) {
+						subbkpts.push({ type: SubBkptType.Group, target: groupId });
+					}
 
-      // Only include sessions that are NOT covered by a selected group
-      for (const sid of selectedSessionIds) {
-        const session = sessions.find((s) => s.sid === sid);
-        if (session) {
-          const sessionGroupId = session.group?.valid ? session.group.id : -1;
-          // Include if ungrouped OR if parent group is not selected
-          if (sessionGroupId === -1 || !selectedGroupIds.has(sessionGroupId)) {
-            subbkpts.push({ type: SubBkptType.Session, target: sid });
-          }
-        }
-      }
+					// Only include sessions that are NOT covered by a selected group
+					for (const sid of selectedSessionIds) {
+						const session = sessions.find((s) => s.sid === sid);
+						if (session) {
+							const sessionGroupId = session.group?.valid
+								? session.group.id
+								: -1;
+							// Include if ungrouped OR if parent group is not selected
+							if (
+								sessionGroupId === -1 ||
+								!selectedGroupIds.has(sessionGroupId)
+							) {
+								subbkpts.push({ type: SubBkptType.Session, target: sid });
+							}
+						}
+					}
 
-      quickPick.dispose();
-      resolve({ subbkpts });
-    });
+					quickPick.dispose();
+					resolve({ subbkpts });
+				});
 
-    // Note: onDidHide is already set up earlier to handle dismissal during loading
-    // and will also handle dismissal after data is loaded
+				// Note: onDidHide is already set up earlier to handle dismissal during loading
+				// and will also handle dismissal after data is loaded
 
-    // Initialize view with loaded data (QuickPick is already shown during loading)
-    updateView();
-  });
+				// Initialize view with loaded data (QuickPick is already shown during loading)
+				updateView();
+			})
+			.catch((error) => {
+				if (closed) return;
+				clearTimeout(timeoutId);
+				quickPick.dispose();
+				vscode.window.showErrorMessage(`Failed to load sessions: ${error}`);
+				resolve(undefined);
+			});
+	});
 }
 
 function convertToVSCodeBreakpoint(bp: any, source: any): vscode.Breakpoint {
-  const uri = vscode.Uri.parse(source.path);
-  const location = new vscode.Location(
-    uri,
-    new vscode.Position(bp.line - 1, bp.column ? bp.column - 1 : 0)
-  );
-  return new vscode.SourceBreakpoint(
-    location,
-    bp.enabled,
-    bp.condition,
-    bp.hitCondition,
-    bp.logMessage
-  );
+	const uri = vscode.Uri.parse(source.path);
+	const location = new vscode.Location(
+		uri,
+		new vscode.Position(bp.line - 1, bp.column ? bp.column - 1 : 0),
+	);
+	return new vscode.SourceBreakpoint(
+		location,
+		bp.enabled,
+		bp.condition,
+		bp.hitCondition,
+		bp.logMessage,
+	);
 }
 
-async function handleSetBreakpoints(message: any, session: vscode.DebugSession, isClosing: () => boolean) {
-  console.log("Handling setBreakpoints message: ", message);
-  console.log("debug0", message.arguments);
-  const messageArguments =
-    message.arguments as DebugProtocol.SetBreakpointsArguments;
-  const breakpoints = messageArguments.breakpoints;
-  const source = messageArguments.source;
-  console.log("debug1", breakpoints);
-  if (!breakpoints || !source || !source.path) {
-    return;
-  }
+async function handleSetBreakpoints(
+	message: any,
+	session: vscode.DebugSession,
+	isClosing: () => boolean,
+) {
+	const messageArguments =
+		message.arguments as DebugProtocol.SetBreakpointsArguments;
+	const breakpoints = messageArguments.breakpoints;
+	const source = messageArguments.source;
+	if (!breakpoints || !source || !source.path) {
+		return;
+	}
 
-  // Track breakpoints to actually send to the debug adapter
-  const breakpointsToSend: DebugProtocol.SourceBreakpoint[] = [];
+	// Track breakpoints to actually send to the debug adapter
+	const breakpointsToSend: DebugProtocol.SourceBreakpoint[] = [];
 
-  for (const bp of breakpoints) {
-    // Check if the breakpoint already has a selection
-    const bkptLinePathId = getBreakpointIdFromDAP(bp, source.path);
-    let existingSelection = breakpointSelectionsMap.get(bkptLinePathId);
+	for (const bp of breakpoints) {
+		// Check if the breakpoint already has a selection
+		const bkptLinePathId = getBreakpointIdFromDAP(bp, source.path);
+		let existingSelection = breakpointSelectionsMap.get(bkptLinePathId);
 
-    if (
-      !existingSelection ||
-      existingSelection.subbkpts.length === 0
-    ) {
-      const selection: SessionSelection | undefined = await promptForSessions(source, session);
-      console.log("debug2", selection);
+		if (!existingSelection || existingSelection.subbkpts.length === 0) {
+			const selection: SessionSelection | undefined = await promptForSessions(
+				source,
+				session,
+			);
 
-      const noSelection = (!selection) || selection.subbkpts.length === 0;
+			const noSelection = !selection || selection.subbkpts.length === 0;
 
-      if (noSelection) {
-        // User cancelled / select none - remove the breakpoint from UI
-        console.log(
-          "User cancelled session selection, removing breakpoint:",
-          bkptLinePathId
-        );
+			if (noSelection) {
+				// User cancelled / select none - remove the breakpoint from UI
+				console.log(
+					"User cancelled session selection, removing breakpoint:",
+					bkptLinePathId,
+				);
 
-        const allBreakpoints = vscode.debug.breakpoints;
-        const bpToRemove = allBreakpoints.find((vsbp) => {
-          if (vsbp instanceof vscode.SourceBreakpoint) {
-            return getBreakpointId(vsbp) === bkptLinePathId;
-          }
-          return false;
-        });
+				const allBreakpoints = vscode.debug.breakpoints;
+				const bpToRemove = allBreakpoints.find((vsbp) => {
+					if (vsbp instanceof vscode.SourceBreakpoint) {
+						return getBreakpointId(vsbp) === bkptLinePathId;
+					}
+					return false;
+				});
 
-        if (bpToRemove) {
-          vscode.debug.removeBreakpoints([bpToRemove]);
-        }
+				if (bpToRemove) {
+					vscode.debug.removeBreakpoints([bpToRemove]);
+				}
 
-        // Clean up the map entry
-        breakpointSelectionsMap.delete(bkptLinePathId);
+				// Clean up the map entry
+				breakpointSelectionsMap.delete(bkptLinePathId);
 
-        // Skip this breakpoint - don't send to debug adapter
-        continue;
-      } else {
-        existingSelection = selection;
-      }
+				// Skip this breakpoint - don't send to debug adapter
+				continue;
+			} else {
+				existingSelection = selection;
+			}
 
-      // Update the map with the selection
-      breakpointSelectionsMap.set(bkptLinePathId, existingSelection);
-    }
+			// Update the map with the selection
+			breakpointSelectionsMap.set(bkptLinePathId, existingSelection);
+		}
 
-    console.log("debug4", existingSelection);
-    // Assign subbkpts to the breakpoint
-    bp.subbkpts = existingSelection.subbkpts;
+		// Assign subbkpts to the breakpoint
+		bp.subbkpts = existingSelection.subbkpts;
 
-    // Add to the list of breakpoints to send
-    breakpointsToSend.push(bp);
-  }
+		// Add to the list of breakpoints to send
+		breakpointsToSend.push(bp);
+	}
 
-  // updateInlineDecorations();
+	// updateInlineDecorations();
 
-  // Send the modified setBreakpoints request to the debug adapter
-  message.arguments.breakpoints = breakpointsToSend;
-  const response: DebugProtocol.SetBreakpointsResponse =
-    await session.customRequest("setSessionBreakpoints", message);
-  if (isClosing()) return;
-  console.log("debug5", response);
-  // add sessionids to vscode breakpoints
-  for (const vscodebp of vscode.debug.breakpoints) {
-    if (vscodebp instanceof vscode.SourceBreakpoint) {
-      const bpLine = vscodebp.location.range.start.line + 1;
-      const bpUri = vscodebp.location.uri.toString();
-      //@ts-ignore
-      const found = response.breakpoints.find(
-        (bp: DebugProtocol.Breakpoint) =>
-          bp.line === bpLine &&
-          bp.source?.path &&
-          bpUri.endsWith(bp.source.path)
-      );
-      if (found) {
-        // Update the map with data from backend response (source of truth for decorations)
-        const bpId = getBreakpointId(vscodebp);
-        breakpointSelectionsMap.set(bpId, { subbkpts: found.subbkpts ?? [] });
-        vscodebp.processing = false;
-      }
-    }
-  }
-  // Refresh BreakpointManager to update the breakpoints panel
-  if (vscode.debug.activeDebugSession?.id === session.id) await BreakpointManager.getInstance().immediateUpdateAll();
-  updateInlineDecorations();
+	// Send the modified setBreakpoints request to the debug adapter
+	message.arguments.breakpoints = breakpointsToSend;
+	const response: DebugProtocol.SetBreakpointsResponse["body"] =
+		await session.customRequest("setSessionBreakpoints", message);
+	if (isClosing()) return;
+
+	// add sessionids to vscode breakpoints
+	for (const vscodebp of vscode.debug.breakpoints) {
+		if (vscodebp instanceof vscode.SourceBreakpoint) {
+			const bpLine = vscodebp.location.range.start.line + 1;
+			const bpUri = vscodebp.location.uri.toString();
+			const found = response.breakpoints.find(
+				(bp: DebugProtocol.Breakpoint) =>
+					bp.line === bpLine &&
+					bp.source?.path &&
+					bpUri.endsWith(bp.source.path),
+			);
+			if (found) {
+				// Update the map with data from backend response (source of truth for decorations)
+				const bpId = getBreakpointId(vscodebp);
+				breakpointSelectionsMap.set(bpId, { subbkpts: found.subbkpts ?? [] });
+				vscodebp.processing = false;
+			}
+		}
+	}
+	// Refresh BreakpointManager to update the breakpoints panel
+	if (vscode.debug.activeDebugSession?.id === session.id)
+		await BreakpointManager.getInstance().immediateUpdateAll();
+	updateInlineDecorations();
 }
 
 class MyDebugAdapterTrackerFactory
-  implements vscode.DebugAdapterTrackerFactory {
-  createDebugAdapterTracker(
-    session: vscode.DebugSession
-  ): vscode.ProviderResult<vscode.DebugAdapterTracker> {
-    return new MyDebugAdapterTracker(session);
-  }
+	implements vscode.DebugAdapterTrackerFactory
+{
+	createDebugAdapterTracker(
+		session: vscode.DebugSession,
+	): vscode.ProviderResult<vscode.DebugAdapterTracker> {
+		return new MyDebugAdapterTracker(session);
+	}
 }
 class MyDebugAdapterTracker implements vscode.DebugAdapterTracker {
-  private closing = false;
-  constructor(private readonly session: vscode.DebugSession) {}
-  onWillStopSession() { this.closing = true; }
-  async onWillReceiveMessage(message: any) {
-    if (message.command === "disconnect" || message.command === "terminate") this.closing = true;
-    if (message.command === "setBreakpoints") {
-      try { await handleSetBreakpoints(message, this.session, () => this.closing); }
-      catch (error) {
-        if (!this.closing) vscode.window.showErrorMessage(`Could not update DDB breakpoints: ${String(error)}`);
-      }
-    }
-    if (message.command === "variables") {
-      const varRef = message.arguments?.variablesReference;
-      if (varRef !== undefined && !autoScopeVariablesRefs.has(varRef)) {
-        OTelService.log_trace(`[activity] expand_variable variablesReference=${varRef}`);
-      }
-    }
-  }
-  async onDidSendMessage(message: any) {
-    if (message.command === "setSessionBreakpoints") {
-      // Intercept the setBreakpoints request
-      // updateBreakpointDecorations();
-      // updateInlineDecorations();
-    }
-    if (message.command === "scopes" && message.type === "response" && message.body?.scopes) {
-      for (const scope of message.body.scopes) {
-        if (scope.variablesReference !== undefined) {
-          autoScopeVariablesRefs.add(scope.variablesReference);
-        }
-      }
-    }
-    if (message.type === "event") {
-      console.log("Received event ", message, message.body?.threadId);
+	private closing = false;
+	constructor(private readonly session: vscode.DebugSession) {}
+	onWillStopSession() {
+		this.closing = true;
+	}
+	async onWillReceiveMessage(message: any) {
+		if (message.command === "disconnect" || message.command === "terminate")
+			this.closing = true;
+		if (message.command === "setBreakpoints") {
+			try {
+				await handleSetBreakpoints(message, this.session, () => this.closing);
+			} catch (error) {
+				if (!this.closing)
+					vscode.window.showErrorMessage(
+						`Could not update DDB breakpoints: ${String(error)}`,
+					);
+			}
+		}
+		if (message.command === "variables") {
+			const varRef = message.arguments?.variablesReference;
+			if (varRef !== undefined && !autoScopeVariablesRefs.has(varRef)) {
+				OTelService.log_trace(
+					`[activity] expand_variable variablesReference=${varRef}`,
+				);
+			}
+		}
+	}
+	async onDidSendMessage(message: any) {
+		if (message.command === "setSessionBreakpoints") {
+			// Intercept the setBreakpoints request
+			// updateBreakpointDecorations();
+			// updateInlineDecorations();
+		}
+		if (
+			message.command === "scopes" &&
+			message.type === "response" &&
+			message.body?.scopes
+		) {
+			for (const scope of message.body.scopes) {
+				if (scope.variablesReference !== undefined) {
+					autoScopeVariablesRefs.add(scope.variablesReference);
+				}
+			}
+		}
+		if (message.type === "event") {
+			console.log("Received event ", message, message.body?.threadId);
 
-      if (message.event === "stopped") {
-        autoScopeVariablesRefs.clear();
-        // A new stop replaces this thread's previous location, even when a
-        // short execution interval produced no separate continued event.
-        if (message.body?.threadId !== undefined) {
-          removeStoppedFramesByThread(message.body.threadId);
-        }
-        // Handle breakpoint stops
-        if (message.body?.reason === "breakpoint") {
-          const breakpointInfo = (message as DebugProtocol.StoppedEvent).breakpointInfo;
-          if (breakpointInfo) {
-            const bpId = `${path.normalize(breakpointInfo.file)}:${breakpointInfo.line}`;
-            if (!breakpointHitSessionMap.has(bpId)) {
-              breakpointHitSessionMap.set(bpId, []);
-            }
-            breakpointHitSessionMap.get(bpId)?.push(breakpointInfo.session_id);
-            updateInlineDecorations();
+			if (message.event === "stopped") {
+				autoScopeVariablesRefs.clear();
+				// A new stop replaces this thread's previous location, even when a
+				// short execution interval produced no separate continued event.
+				if (message.body?.threadId !== undefined) {
+					removeStoppedFramesByThread(message.body.threadId);
+				}
+				// Handle breakpoint stops
+				if (message.body?.reason === "breakpoint") {
+					const breakpointInfo = (message as DebugProtocol.StoppedEvent)
+						.breakpointInfo;
+					if (breakpointInfo) {
+						const bpId = `${path.normalize(breakpointInfo.file)}:${
+							breakpointInfo.line
+						}`;
+						if (!breakpointHitSessionMap.has(bpId)) {
+							breakpointHitSessionMap.set(bpId, []);
+						}
+						breakpointHitSessionMap.get(bpId)?.push(breakpointInfo.session_id);
+						updateInlineDecorations();
 
-            // Track stopped frame for execution line decoration
-            addStoppedFrame(breakpointInfo.file, breakpointInfo.line, {
-              sessionId: breakpointInfo.session_id,
-              threadId: (breakpointInfo as any).thread_id ?? message.body?.threadId ?? 0,
-              frameLevel: 0,
-            });
-          }
-        }
+						// Track stopped frame for execution line decoration
+						addStoppedFrame(breakpointInfo.file, breakpointInfo.line, {
+							sessionId: breakpointInfo.session_id,
+							threadId:
+								(breakpointInfo as any).thread_id ??
+								message.body?.threadId ??
+								0,
+							frameLevel: 0,
+						});
+					}
+				}
 
-        // Handle step/other stops with stoppedFrameInfo
-        const stoppedFrameInfo = (message as any).body?.stoppedFrameInfo;
-        if (stoppedFrameInfo && stoppedFrameInfo.file) {
-          addStoppedFrame(stoppedFrameInfo.file, stoppedFrameInfo.line, {
-            sessionId: stoppedFrameInfo.session_id,
-            threadId: stoppedFrameInfo.thread_id,
-            frameLevel: stoppedFrameInfo.level ?? 0,
-          });
-        }
+				// Handle step/other stops with stoppedFrameInfo
+				const stoppedFrameInfo = (message as any).body?.stoppedFrameInfo;
+				if (stoppedFrameInfo && stoppedFrameInfo.file) {
+					addStoppedFrame(stoppedFrameInfo.file, stoppedFrameInfo.line, {
+						sessionId: stoppedFrameInfo.session_id,
+						threadId: stoppedFrameInfo.thread_id,
+						frameLevel: stoppedFrameInfo.level ?? 0,
+					});
+				}
 
-        updateExecutionLineDecorations();
-      }
-      if (message.event === "continued") {
-        autoScopeVariablesRefs.clear();
-        breakpointHitSessionMap.clear();
-        updateInlineDecorations();
+				updateExecutionLineDecorations();
+			}
+			if (message.event === "continued") {
+				autoScopeVariablesRefs.clear();
+				breakpointHitSessionMap.clear();
+				updateInlineDecorations();
 
-        // Clear frames for the continued thread
-        const threadId = message.body?.threadId;
-        if (message.body?.allThreadsContinued) {
-          stoppedFramesMap.clear();
-        } else if (threadId !== undefined) {
-          removeStoppedFramesByThread(threadId);
-        }
-        updateExecutionLineDecorations();
-      }
-      if (message.event === "thread" && message.body?.reason === "exited") {
-        // A target can finish before its running update reaches the client.
-        // Thread exit must clear its decoration independently of continue.
-        removeStoppedFramesByThread(message.body.threadId);
-        updateExecutionLineDecorations();
-      }
-    }
-
-  }
+				// Clear frames for the continued thread
+				const threadId = message.body?.threadId;
+				if (message.body?.allThreadsContinued) {
+					stoppedFramesMap.clear();
+				} else if (threadId !== undefined) {
+					removeStoppedFramesByThread(threadId);
+				}
+				updateExecutionLineDecorations();
+			}
+			if (message.event === "thread" && message.body?.reason === "exited") {
+				// A target can finish before its running update reaches the client.
+				// Thread exit must clear its decoration independently of continue.
+				removeStoppedFramesByThread(message.body.threadId);
+				updateExecutionLineDecorations();
+			}
+		}
+	}
 }
 
 function getSessionIdsFromBreakpoint(bp: vscode.SourceBreakpoint): string[] {
-  // Extract session IDs from the breakpoint's condition
-  if (bp.condition && bp.condition.startsWith("Sessions: ")) {
-    return bp.condition
-      .substring("Sessions: ".length)
-      .split(", ")
-      .map((id) => id.trim());
-  }
-  return [];
+	// Extract session IDs from the breakpoint's condition
+	if (bp.condition && bp.condition.startsWith("Sessions: ")) {
+		return bp.condition
+			.substring("Sessions: ".length)
+			.split(", ")
+			.map((id) => id.trim());
+	}
+	return [];
 }
 
 const inlineDecorationType = vscode.window.createTextEditorDecorationType({
-  backgroundColor: "rgba(0, 255, 255, 0.1)", // Light cyan background
-  before: {
-    contentText: "$(debug-breakpoint) ", // Breakpoint icon
-    color: "#00CCCC", // Darker cyan for text
-    fontWeight: "normal",
-    fontStyle: "normal",
-    margin: "0 8px 0 0",
-  },
-  after: {
-    contentText: " ", // Space to extend background
-    margin: "0 0 0 8px",
-  },
-  rangeBehavior: vscode.DecorationRangeBehavior.ClosedOpen,
+	backgroundColor: "rgba(0, 255, 255, 0.1)", // Light cyan background
+	before: {
+		contentText: "$(debug-breakpoint) ", // Breakpoint icon
+		color: "#00CCCC", // Darker cyan for text
+		fontWeight: "normal",
+		fontStyle: "normal",
+		margin: "0 8px 0 0",
+	},
+	after: {
+		contentText: " ", // Space to extend background
+		margin: "0 0 0 8px",
+	},
+	rangeBehavior: vscode.DecorationRangeBehavior.ClosedOpen,
 });
 
 // Decoration type for showing stopped frame info at execution lines
-const executionLineDecorationType = vscode.window.createTextEditorDecorationType({
-  rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
-});
+const executionLineDecorationType =
+	vscode.window.createTextEditorDecorationType({
+		rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
+	});
 
 function updateInlineDecorations() {
-  // Update decorations for all visible text editors
-  vscode.window.visibleTextEditors.forEach((editor) => {
-    updateEditorDecorations(editor);
-  });
+	// Update decorations for all visible text editors
+	vscode.window.visibleTextEditors.forEach((editor) => {
+		updateEditorDecorations(editor);
+	});
 }
 function updateEditorDecorations(editor: vscode.TextEditor) {
-  const decorations: vscode.DecorationOptions[] = [];
-  const activeSession = vscode.debug.activeDebugSession;
-  if (!activeSession || activeSession.type !== "ddb") {
-    editor.setDecorations(inlineDecorationType, []);
-    return;
-  }
-  for (const bp of vscode.debug.breakpoints) {
-    if (
-      bp instanceof vscode.SourceBreakpoint &&
-      bp.location.uri.toString() === editor.document.uri.toString()
-    ) {
-      const line = bp.location.range.start.line;
-      const range = new vscode.Range(
-        line,
-        0,
-        line,
-        editor.document.lineAt(line).text.length
-      );
+	const decorations: vscode.DecorationOptions[] = [];
+	const activeSession = vscode.debug.activeDebugSession;
+	if (!activeSession || activeSession.type !== "ddb") {
+		editor.setDecorations(inlineDecorationType, []);
+		return;
+	}
+	for (const bp of vscode.debug.breakpoints) {
+		if (
+			bp instanceof vscode.SourceBreakpoint &&
+			bp.location.uri.toString() === editor.document.uri.toString()
+		) {
+			const line = bp.location.range.start.line;
+			const range = new vscode.Range(
+				line,
+				0,
+				line,
+				editor.document.lineAt(line).text.length,
+			);
 
-      let statusText: string;
-      let backgroundColor: string;
-      let foregroundColor: string;
+			let statusText: string;
+			let backgroundColor: string;
+			let foregroundColor: string;
 
-      // Look up subbkpts from the map (source of truth) - VSCode breakpoint objects don't support custom properties
-      const bpId = getBreakpointId(bp);
-      const selection = breakpointSelectionsMap.get(bpId);
+			// Look up subbkpts from the map (source of truth) - VSCode breakpoint objects don't support custom properties
+			const bpId = getBreakpointId(bp);
+			const selection = breakpointSelectionsMap.get(bpId);
 
-      if (bp.processing) {
-        statusText = "⟳ Processing...";
-        backgroundColor = "rgba(255, 165, 0, 0.2)"; // Light orange background
-        foregroundColor = "#D68000"; // Darker orange text
-      } else {
-        const groupIds = extractGroupIds(selection?.subbkpts);
-        const sessionIds = extractSessionIds(selection?.subbkpts);
-        const groupPart = groupIds.length ? `Groups: ${groupIds.join(", ")}` : "";
-        const sessionPart = sessionIds.length ? `Sessions: ${sessionIds.join(", ")}` : "";
-        const separator = groupPart && sessionPart ? " | " : "";
-        // const hitSessionId = breakpointHitSessionMap.get(bpId);
-        // hitSessionId?.sort((a, b) => a - b);
-        // const hitPart = hitSessionId != null ? ` | Hit by Session: ${hitSessionId}` : "";
-        statusText = `✓ ${groupPart}${separator}${sessionPart}`;
-        backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
-        foregroundColor = "#008000"; // Darker green text
-        // if (hitSessionId != null) {
-        //   backgroundColor = "rgba(255, 100, 100, 0.2)"; // Light red for hit breakpoint
-        //   foregroundColor = "#CC0000"; // Red text
-        // } else {
-        //   backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
-        //   foregroundColor = "#008000"; // Darker green text
-        // }
-      }
+			if (bp.processing) {
+				statusText = "⟳ Processing...";
+				backgroundColor = "rgba(255, 165, 0, 0.2)"; // Light orange background
+				foregroundColor = "#D68000"; // Darker orange text
+			} else {
+				const groupIds = extractGroupIds(selection?.subbkpts);
+				const sessionIds = extractSessionIds(selection?.subbkpts);
+				const groupPart = groupIds.length
+					? `Groups: ${groupIds.join(", ")}`
+					: "";
+				const sessionPart = sessionIds.length
+					? `Sessions: ${sessionIds.join(", ")}`
+					: "";
+				const separator = groupPart && sessionPart ? " | " : "";
+				// const hitSessionId = breakpointHitSessionMap.get(bpId);
+				// hitSessionId?.sort((a, b) => a - b);
+				// const hitPart = hitSessionId != null ? ` | Hit by Session: ${hitSessionId}` : "";
+				statusText = `✓ ${groupPart}${separator}${sessionPart}`;
+				backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
+				foregroundColor = "#008000"; // Darker green text
+				// if (hitSessionId != null) {
+				//   backgroundColor = "rgba(255, 100, 100, 0.2)"; // Light red for hit breakpoint
+				//   foregroundColor = "#CC0000"; // Red text
+				// } else {
+				//   backgroundColor = "rgba(0, 204, 0, 0.2)"; // Light green background
+				//   foregroundColor = "#008000"; // Darker green text
+				// }
+			}
 
-      const groupIdsDisplay = extractGroupIds(selection?.subbkpts);
-      const sessionIdsDisplay = extractSessionIds(selection?.subbkpts);
-      const decoration = {
-        range: range,
-        hoverMessage: new vscode.MarkdownString(
-          `**Breakpoint Info**\n- Line: ${bp.location.range.start.line + 1
-          }\n- Column: ${bp.location.range.start.character
-          }\n- Group IDs: ${groupIdsDisplay.join(", ") || "none"
-          }\n- Session IDs: ${sessionIdsDisplay.join(", ") || "none"}`
-        ),
-        renderOptions: {
-          before: {
-            contentText: statusText,
-            color: foregroundColor,
-            fontWeight: "bold",
-            margin: "0 8px 0 0",
-          },
-          backgroundColor: backgroundColor,
-          isWholeLine: true,
-        },
-      };
-      decorations.push(decoration);
-    }
-  }
-  editor.setDecorations(inlineDecorationType, decorations);
+			const groupIdsDisplay = extractGroupIds(selection?.subbkpts);
+			const sessionIdsDisplay = extractSessionIds(selection?.subbkpts);
+			const decoration = {
+				range: range,
+				hoverMessage: new vscode.MarkdownString(
+					`**Breakpoint Info**\n- Line: ${
+						bp.location.range.start.line + 1
+					}\n- Column: ${bp.location.range.start.character}\n- Group IDs: ${
+						groupIdsDisplay.join(", ") || "none"
+					}\n- Session IDs: ${sessionIdsDisplay.join(", ") || "none"}`,
+				),
+				renderOptions: {
+					before: {
+						contentText: statusText,
+						color: foregroundColor,
+						fontWeight: "bold",
+						margin: "0 8px 0 0",
+					},
+					backgroundColor: backgroundColor,
+					isWholeLine: true,
+				},
+			};
+			decorations.push(decoration);
+		}
+	}
+	editor.setDecorations(inlineDecorationType, decorations);
 }
 
 function updateExecutionLineDecorations() {
-  vscode.window.visibleTextEditors.forEach((editor) => {
-    updateEditorExecutionDecorations(editor);
-  });
+	vscode.window.visibleTextEditors.forEach((editor) => {
+		updateEditorExecutionDecorations(editor);
+	});
 }
 
 function updateEditorExecutionDecorations(editor: vscode.TextEditor) {
-  const decorations: vscode.DecorationOptions[] = [];
-  const activeSession = vscode.debug.activeDebugSession;
+	const decorations: vscode.DecorationOptions[] = [];
+	const activeSession = vscode.debug.activeDebugSession;
 
-  if (!activeSession || activeSession.type !== "ddb") {
-    editor.setDecorations(executionLineDecorationType, []);
-    return;
-  }
+	if (!activeSession || activeSession.type !== "ddb") {
+		editor.setDecorations(executionLineDecorationType, []);
+		return;
+	}
 
-  const editorPath = path.normalize(editor.document.uri.fsPath);
+	const editorPath = path.normalize(editor.document.uri.fsPath);
 
-  for (const [key, frames] of stoppedFramesMap) {
-    // Split on last colon to handle paths with colons (e.g., C:\path\file.ts:10)
-    const lastColonIndex = key.lastIndexOf(":");
-    if (lastColonIndex === -1) continue;
+	for (const [key, frames] of stoppedFramesMap) {
+		// Split on last colon to handle paths with colons (e.g., C:\path\file.ts:10)
+		const lastColonIndex = key.lastIndexOf(":");
+		if (lastColonIndex === -1) continue;
 
-    const filePath = key.substring(0, lastColonIndex);
-    const lineStr = key.substring(lastColonIndex + 1);
+		const filePath = key.substring(0, lastColonIndex);
+		const lineStr = key.substring(lastColonIndex + 1);
 
-    if (path.normalize(filePath) !== editorPath) continue;
+		if (path.normalize(filePath) !== editorPath) continue;
 
-    const lineNum = parseInt(lineStr);
-    const line = lineNum - 1; // VSCode is 0-indexed
-    if (line < 0 || line >= editor.document.lineCount) continue;
+		const lineNum = parseInt(lineStr);
+		const line = lineNum - 1; // VSCode is 0-indexed
+		if (line < 0 || line >= editor.document.lineCount) continue;
 
-    const lineText = editor.document.lineAt(line);
-    const range = new vscode.Range(line, lineText.text.length, line, lineText.text.length);
+		const lineText = editor.document.lineAt(line);
+		const range = new vscode.Range(
+			line,
+			lineText.text.length,
+			line,
+			lineText.text.length,
+		);
 
-    const sortedFrames = [...frames].sort((a, b) =>
-      a.sessionId - b.sessionId || a.threadId - b.threadId
-    );
+		const sortedFrames = [...frames].sort(
+			(a, b) => a.sessionId - b.sessionId || a.threadId - b.threadId,
+		);
 
-    let label: string;
-    if (sortedFrames.length === 1) {
-      const f = sortedFrames[0];
-      label = `Session ${f.sessionId}, Thread ${f.threadId}`;
-    } else {
-      const labelParts = sortedFrames.map(f =>
-        `S${f.sessionId},T${f.threadId}`
-      );
-      label = `[${sortedFrames.length} threads] ${labelParts.join(" ⋅ ")}`;
-    }
+		let label: string;
+		if (sortedFrames.length === 1) {
+			const f = sortedFrames[0];
+			label = `Session ${f.sessionId}, Thread ${f.threadId}`;
+		} else {
+			const labelParts = sortedFrames.map(
+				(f) => `S${f.sessionId},T${f.threadId}`,
+			);
+			label = `[${sortedFrames.length} threads] ${labelParts.join(" ⋅ ")}`;
+		}
 
-    decorations.push({
-      range,
-      renderOptions: {
-        after: {
-          contentText: `Executing by: ${label} `,
-          color: "#D4A017",
-          fontStyle: "italic",
-          fontWeight: "500",
-          margin: "0 2em 0 2em",
-        }
-      }
-    });
-  }
+		decorations.push({
+			range,
+			renderOptions: {
+				after: {
+					contentText: `Executing by: ${label} `,
+					color: "#D4A017",
+					fontStyle: "italic",
+					fontWeight: "500",
+					margin: "0 2em 0 2em",
+				},
+			},
+		});
+	}
 
-  editor.setDecorations(executionLineDecorationType, decorations);
+	editor.setDecorations(executionLineDecorationType, decorations);
 }
 
 const trasactionId = 0;
@@ -969,294 +1010,319 @@ const trasactionId = 0;
 let stackFrameStatusBar: vscode.StatusBarItem;
 
 export async function activate(context: vscode.ExtensionContext) {
-  logger.info("Starting gdb adapter extension.......");
+	logger.info("Starting gdb adapter extension.......");
 
-  // Create status bar item for stack frame display
-  stackFrameStatusBar = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Left,
-    -1
-  );
-  stackFrameStatusBar.name = "Current Stack Frame";
-  context.subscriptions.push(stackFrameStatusBar);
+	// Create status bar item for stack frame display
+	stackFrameStatusBar = vscode.window.createStatusBarItem(
+		vscode.StatusBarAlignment.Left,
+		-1,
+	);
+	stackFrameStatusBar.name = "Current Stack Frame";
+	context.subscriptions.push(stackFrameStatusBar);
 
-  // Initialize OpenTelemetry
-  try {
-    const userId = await getOrCreateUserId();
-    const sessionId = generateSessionId();
-    const otel = OTelService.initialize("ddb-ext", userId, sessionId);
+	// Initialize OpenTelemetry
+	try {
+		const userId = await getOrCreateUserId();
+		const sessionId = generateSessionId();
+		const otel = OTelService.initialize("ddb-ext", userId, sessionId);
 
-    // Register shutdown handler
-    context.subscriptions.push({
-      dispose: async () => {
-        await otel.shutdown();
-      },
-    });
+		// Register shutdown handler
+		context.subscriptions.push({
+			dispose: async () => {
+				await otel.shutdown();
+			},
+		});
 
-    logger.info(`[OTel] VSCode Extension Host initialized with userId=${userId}, sessionId=${sessionId}`);
-    OTelService.log_info(`[OTel] VSCode Extension Host initialized with userId=${userId}, sessionId=${sessionId}`);
-  } catch (error) {
-    logger.error("[OTel] Failed to initialize OpenTelemetry:", error);
-  }
+		logger.info(
+			`[OTel] VSCode Extension Host initialized with userId=${userId}, sessionId=${sessionId}`,
+		);
+		OTelService.log_info(
+			`[OTel] VSCode Extension Host initialized with userId=${userId}, sessionId=${sessionId}`,
+		);
+	} catch (error) {
+		logger.error("[OTel] Failed to initialize OpenTelemetry:", error);
+	}
 
-  vscode.debug.onDidStartDebugSession((session) => {
-    console.log("Debug session started: ", session);
-    breakpointSelectionsMap.clear();
-    breakpointHitSessionMap.clear();
-    stoppedFramesMap.clear();
-  });
+	vscode.debug.onDidStartDebugSession((session) => {
+		console.log("Debug session started: ", session);
+		breakpointSelectionsMap.clear();
+		breakpointHitSessionMap.clear();
+		stoppedFramesMap.clear();
+	});
 
-  context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor(() => {
-      updateInlineDecorations();
-      updateExecutionLineDecorations();
-    })
-  );
+	context.subscriptions.push(
+		vscode.window.onDidChangeActiveTextEditor(() => {
+			updateInlineDecorations();
+			updateExecutionLineDecorations();
+		}),
+	);
 
-  // Update decorations when the visible editors change
-  context.subscriptions.push(
-    vscode.window.onDidChangeVisibleTextEditors(() => {
-      updateInlineDecorations();
-      updateExecutionLineDecorations();
-    })
-  );
+	// Update decorations when the visible editors change
+	context.subscriptions.push(
+		vscode.window.onDidChangeVisibleTextEditors(() => {
+			updateInlineDecorations();
+			updateExecutionLineDecorations();
+		}),
+	);
 
-  // Update decorations when breakpoints change
-  context.subscriptions.push(
-    vscode.debug.onDidChangeBreakpoints((event) => {
-      console.log("Breakpoints changed: ", event);
-      event.added.forEach(async (bp) => {
-        // const selectedSessions = await promptForSessions();
-        bp.processing = true;
-        bp.transactionId = trasactionId;
-        bp.subbkpts = [];  // Initialize subbkpts on the breakpoint object
-        breakpointSelectionsMap.set(getBreakpointId(bp), {
-          subbkpts: [],
-        });
-      });
-      event.removed.forEach((bp) => {
-        breakpointSelectionsMap.delete(getBreakpointId(bp));
-      });
-      updateInlineDecorations();
-    })
-  );
-  // Clear decorations when debug session ends
-  context.subscriptions.push(
-    vscode.debug.onDidTerminateDebugSession((session) => {
-      if (session.type === "ddb") {
-        // Only remove source breakpoints configured with this DDB session's targets.
-        const selectedBreakpoints = vscode.debug.breakpoints.filter(bp =>
-          bp instanceof vscode.SourceBreakpoint &&
-          (breakpointSelectionsMap.get(getBreakpointId(bp))?.subbkpts.length ?? 0) > 0
-        );
-        vscode.debug.removeBreakpoints(selectedBreakpoints);
+	// Update decorations when breakpoints change
+	context.subscriptions.push(
+		vscode.debug.onDidChangeBreakpoints((event) => {
+			console.log("Breakpoints changed: ", event);
+			event.added.forEach(async (bp) => {
+				// const selectedSessions = await promptForSessions();
+				bp.processing = true;
+				bp.transactionId = trasactionId;
+				bp.subbkpts = []; // Initialize subbkpts on the breakpoint object
+				breakpointSelectionsMap.set(getBreakpointId(bp), {
+					subbkpts: [],
+				});
+			});
+			event.removed.forEach((bp) => {
+				breakpointSelectionsMap.delete(getBreakpointId(bp));
+			});
+			updateInlineDecorations();
+		}),
+	);
+	// Clear decorations when debug session ends
+	context.subscriptions.push(
+		vscode.debug.onDidTerminateDebugSession((session) => {
+			if (session.type === "ddb") {
+				// Only remove source breakpoints configured with this DDB session's targets.
+				const selectedBreakpoints = vscode.debug.breakpoints.filter(
+					(bp) =>
+						bp instanceof vscode.SourceBreakpoint &&
+						(breakpointSelectionsMap.get(getBreakpointId(bp))?.subbkpts
+							.length ?? 0) > 0,
+				);
+				vscode.debug.removeBreakpoints(selectedBreakpoints);
 
-        // Clear the maps
-        breakpointSelectionsMap.clear();
-        breakpointHitSessionMap.clear();
-        stoppedFramesMap.clear();
-        stackFrameStatusBar.hide();
-      }
-      updateInlineDecorations();
-      updateExecutionLineDecorations();
-    })
-  );
+				// Clear the maps
+				breakpointSelectionsMap.clear();
+				breakpointHitSessionMap.clear();
+				stoppedFramesMap.clear();
+				stackFrameStatusBar.hide();
+			}
+			updateInlineDecorations();
+			updateExecutionLineDecorations();
+		}),
+	);
 
-  // Update decorations when switching between debug sessions
-  context.subscriptions.push(
-    vscode.debug.onDidChangeActiveDebugSession(() => {
-      updateInlineDecorations();
-      updateExecutionLineDecorations();
-    })
-  );
+	// Update decorations when switching between debug sessions
+	context.subscriptions.push(
+		vscode.debug.onDidChangeActiveDebugSession(() => {
+			updateInlineDecorations();
+			updateExecutionLineDecorations();
+		}),
+	);
 
-  // Update status bar when user focuses a different stack frame or thread
-  context.subscriptions.push(
-    vscode.debug.onDidChangeActiveStackItem((stackItem) => {
-      if (vscode.debug.activeDebugSession?.type !== "ddb") {
-        stackFrameStatusBar.hide();
-        return;
-      }
-      if (stackItem instanceof vscode.DebugStackFrame) {
-        const frameId = stackItem.frameId;
-        const activeSession = vscode.debug.activeDebugSession!;
-        void activeSession.customRequest("ddb.frameMetadata", { frameId }).then(metadata => {
-          if (vscode.debug.activeDebugSession?.id !== activeSession.id || vscode.debug.activeStackItem !== stackItem) return;
-          stackFrameStatusBar.text = `$(debug-stackframe) Session ${metadata.session_id} | Thread ${metadata.thread_id}, Frame ${metadata.level}`;
-          stackFrameStatusBar.tooltip = `Session: ${metadata.session_id}\nThread: ${metadata.thread_id}\nFrame Level: ${metadata.level}`;
-          stackFrameStatusBar.show();
-        }, () => stackFrameStatusBar.hide());
-      } else if (stackItem instanceof vscode.DebugThread) {
-        stackFrameStatusBar.text = `$(debug-stackframe) Thread ${stackItem.threadId}`;
-        stackFrameStatusBar.tooltip = `Thread ${stackItem.threadId}`;
-        stackFrameStatusBar.show();
-      } else {
-        stackFrameStatusBar.hide();
-      }
-    })
-  );
+	// Update status bar when user focuses a different stack frame or thread
+	context.subscriptions.push(
+		vscode.debug.onDidChangeActiveStackItem((stackItem) => {
+			if (vscode.debug.activeDebugSession?.type !== "ddb") {
+				stackFrameStatusBar.hide();
+				return;
+			}
+			if (stackItem instanceof vscode.DebugStackFrame) {
+				const frameId = stackItem.frameId;
+				const activeSession = vscode.debug.activeDebugSession!;
+				void activeSession.customRequest("ddb.frameMetadata", { frameId }).then(
+					(metadata) => {
+						if (
+							vscode.debug.activeDebugSession?.id !== activeSession.id ||
+							vscode.debug.activeStackItem !== stackItem
+						)
+							return;
+						stackFrameStatusBar.text = `$(debug-stackframe) Session ${metadata.session_id} | Thread ${metadata.thread_id}, Frame ${metadata.level}`;
+						stackFrameStatusBar.tooltip = `Session: ${metadata.session_id}\nThread: ${metadata.thread_id}\nFrame Level: ${metadata.level}`;
+						stackFrameStatusBar.show();
+					},
+					() => stackFrameStatusBar.hide(),
+				);
+			} else if (stackItem instanceof vscode.DebugThread) {
+				stackFrameStatusBar.text = `$(debug-stackframe) Thread ${stackItem.threadId}`;
+				stackFrameStatusBar.tooltip = `Thread ${stackItem.threadId}`;
+				stackFrameStatusBar.show();
+			} else {
+				stackFrameStatusBar.hide();
+			}
+		}),
+	);
 
-  // Command to jump to the currently focused stack frame
-  context.subscriptions.push(
-    vscode.commands.registerCommand("ddb.jumpToFocusedFrame", async () => {
-      const activeSession = vscode.debug.activeDebugSession;
-      if (!activeSession || activeSession.type !== "ddb") {
-        vscode.window.showWarningMessage("No active DDB debug session");
-        return;
-      }
+	// Command to jump to the currently focused stack frame
+	context.subscriptions.push(
+		vscode.commands.registerCommand("ddb.jumpToFocusedFrame", async () => {
+			const activeSession = vscode.debug.activeDebugSession;
+			if (!activeSession || activeSession.type !== "ddb") {
+				vscode.window.showWarningMessage("No active DDB debug session");
+				return;
+			}
 
-      const activeStackItem = vscode.debug.activeStackItem;
-      if (!activeStackItem) {
-        vscode.window.showWarningMessage("No stack frame is currently focused");
-        return;
-      }
+			const activeStackItem = vscode.debug.activeStackItem;
+			if (!activeStackItem) {
+				vscode.window.showWarningMessage("No stack frame is currently focused");
+				return;
+			}
 
-      if (activeStackItem instanceof vscode.DebugStackFrame) {
-        const frameId = activeStackItem.frameId;
-        const threadId = activeStackItem.threadId;
+			if (activeStackItem instanceof vscode.DebugStackFrame) {
+				const frameId = activeStackItem.frameId;
+				const threadId = activeStackItem.threadId;
 
-        try {
-          // Request stack trace from debug adapter
-          const stackResponse = await activeSession.customRequest("stackTrace", {
-            threadId: threadId,
-            startFrame: 0,
-            levels: 100,
-          });
+				try {
+					// Request stack trace from debug adapter
+					const stackResponse = await activeSession.customRequest(
+						"stackTrace",
+						{
+							threadId: threadId,
+							startFrame: 0,
+							levels: 100,
+						},
+					);
 
-          // Find the frame matching our frameId
-          const frame = stackResponse.stackFrames?.find(
-            (f: { id: number }) => f.id === frameId
-          );
+					// Find the frame matching our frameId
+					const frame = stackResponse.stackFrames?.find(
+						(f: { id: number }) => f.id === frameId,
+					);
 
-          if (frame?.source && (frame.source.path || frame.source.sourceReference > 0)) {
-            const sourcePath = frame.source.path;
-            const uri = frame.source.sourceReference > 0
-              ? vscode.debug.asDebugSourceUri(frame.source, activeSession)
-              : sourcePath.includes("://")
-                ? vscode.Uri.parse(sourcePath)
-                : vscode.Uri.file(sourcePath);
-            const line = Math.max(0, (frame.line ?? 1) - 1); // VSCode uses 0-based lines
-            const column = Math.max(0, (frame.column ?? 1) - 1);
+					if (
+						frame?.source &&
+						(frame.source.path || frame.source.sourceReference > 0)
+					) {
+						const sourcePath = frame.source.path;
+						const uri =
+							frame.source.sourceReference > 0
+								? vscode.debug.asDebugSourceUri(frame.source, activeSession)
+								: sourcePath.includes("://")
+									? vscode.Uri.parse(sourcePath)
+									: vscode.Uri.file(sourcePath);
+						const line = Math.max(0, (frame.line ?? 1) - 1); // VSCode uses 0-based lines
+						const column = Math.max(0, (frame.column ?? 1) - 1);
 
-            await vscode.commands.executeCommand("vscode.open", uri, {
-              selection: new vscode.Range(line, column, line, column),
-            });
-          } else {
-            vscode.window.showWarningMessage(  
-              "Could not find source for the focused stack frame"
-            ); 
-          }
-        } catch (error) {
-          vscode.window.showErrorMessage(`Failed to jump to frame: ${error}`);
-        }
-      } else if (activeStackItem instanceof vscode.DebugThread) {
-        vscode.window.showInformationMessage(
-          "Please select a specific stack frame, not just a thread"
-        );
-      }
-    })
-  );
+						await vscode.commands.executeCommand("vscode.open", uri, {
+							selection: new vscode.Range(line, column, line, column),
+						});
+					} else {
+						vscode.window.showWarningMessage(
+							"Could not find source for the focused stack frame",
+						);
+					}
+				} catch (error) {
+					vscode.window.showErrorMessage(`Failed to jump to frame: ${error}`);
+				}
+			} else if (activeStackItem instanceof vscode.DebugThread) {
+				vscode.window.showInformationMessage(
+					"Please select a specific stack frame, not just a thread",
+				);
+			}
+		}),
+	);
 
-  // Internal commands for DDBViewProvider to trigger decoration updates
-  context.subscriptions.push(
-    vscode.commands.registerCommand("ddb.internal.updateDecorations", () => {
-      updateInlineDecorations();
-    })
-  );
+	// Internal commands for DDBViewProvider to trigger decoration updates
+	context.subscriptions.push(
+		vscode.commands.registerCommand("ddb.internal.updateDecorations", () => {
+			updateInlineDecorations();
+		}),
+	);
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "ddb.internal.syncBreakpointSelections",
-      (breakpoints: ddb_api.DDBBreakpoint[]) => {
-        // Rebuild breakpointSelectionsMap from DDBBreakpoint data
-        for (const bp of breakpoints) {
-          const bpId = `${path.normalize(bp.location.src)}:${bp.location.line}`;
-          const subbkpts: SubBkpt[] = bp.subbkpts.map((sub) => ({
-            type: sub.type as SubBkptType,
-            target:
-              sub.type === "group" ? sub.target_group! : sub.target_session!,
-          }));
-          breakpointSelectionsMap.set(bpId, { subbkpts });
-        }
-      }
-    )
-  );
+	context.subscriptions.push(
+		vscode.commands.registerCommand(
+			"ddb.internal.syncBreakpointSelections",
+			(breakpoints: ddb_api.DDBBreakpoint[]) => {
+				// Rebuild breakpointSelectionsMap from DDBBreakpoint data
+				for (const bp of breakpoints) {
+					const bpId = `${path.normalize(bp.location.src)}:${bp.location.line}`;
+					const subbkpts: SubBkpt[] = bp.subbkpts.map((sub) => ({
+						type: sub.type as SubBkptType,
+						target:
+							sub.type === "group" ? sub.target_group! : sub.target_session!,
+					}));
+					breakpointSelectionsMap.set(bpId, { subbkpts });
+				}
+			},
+		),
+	);
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "ddb.internal.removeBreakpointSelection",
-      (bpId: string) => {
-        const allBreakpoints = vscode.debug.breakpoints;
-        const bpToRemove = allBreakpoints.find((vsbp) => {
-          if (vsbp instanceof vscode.SourceBreakpoint) {
-            return getBreakpointId(vsbp) === bpId;
-          }
-          return false;
-        });
+	context.subscriptions.push(
+		vscode.commands.registerCommand(
+			"ddb.internal.removeBreakpointSelection",
+			(bpId: string) => {
+				const allBreakpoints = vscode.debug.breakpoints;
+				const bpToRemove = allBreakpoints.find((vsbp) => {
+					if (vsbp instanceof vscode.SourceBreakpoint) {
+						return getBreakpointId(vsbp) === bpId;
+					}
+					return false;
+				});
 
-        // VS Code excludes disabled breakpoints from setBreakpoints. Their
-        // backend removal must preserve the editor entry and target selection.
-        if (bpToRemove && !bpToRemove.enabled) return;
-        breakpointSelectionsMap.delete(bpId);
-        if (bpToRemove) {
-          vscode.debug.removeBreakpoints([bpToRemove]);
-        }
-      }
-    )
-  );
+				// VS Code excludes disabled breakpoints from setBreakpoints. Their
+				// backend removal must preserve the editor entry and target selection.
+				if (bpToRemove && !bpToRemove.enabled) return;
+				breakpointSelectionsMap.delete(bpId);
+				if (bpToRemove) {
+					vscode.debug.removeBreakpoints([bpToRemove]);
+				}
+			},
+		),
+	);
 
-  context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider("ddb", {
-    async resolveDebugConfiguration(_folder, config) {
-      // The adapter runs in a separate Node process without the vscode module.
-      config.pairedBreakpointRequests = true;
-      if (config.request === "launch" && !config.apiEndpoint) {
-        const telemetry = getOTelConfig("ddb", "", "");
-        if (telemetry.enabled) {
-          telemetry.userId = await getOrCreateUserId();
-          telemetry.sessionId = generateSessionId();
-          config.debugger_args = backendTelemetryArguments(config.debugger_args ?? [], telemetry);
-        }
-      }
-      return config;
-    },
-  }));
+	context.subscriptions.push(
+		vscode.debug.registerDebugConfigurationProvider("ddb", {
+			async resolveDebugConfiguration(_folder, config) {
+				// The adapter runs in a separate Node process without the vscode module.
+				config.pairedBreakpointRequests = true;
+				if (config.request === "launch" && !config.apiEndpoint) {
+					const telemetry = getOTelConfig("ddb", "", "");
+					if (telemetry.enabled) {
+						telemetry.userId = await getOrCreateUserId();
+						telemetry.sessionId = generateSessionId();
+						config.debugger_args = backendTelemetryArguments(
+							config.debugger_args ?? [],
+							telemetry,
+						);
+					}
+				}
+				return config;
+			},
+		}),
+	);
 
-  vscode.debug.registerDebugAdapterTrackerFactory(
-    "ddb",
-    new MyDebugAdapterTrackerFactory()
-  );
-  ddbviewactivate(context);
-  // const rootPath =
-  // 	vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
-  // 		? vscode.workspace.workspaceFolders[0].uri.fsPath
-  // 		: undefined;
-  // const ddbViewProvider=new DDBViewProvider(rootPath)
-  // vscode.window.registerTreeDataProvider(
-  // 	'nodeDependencies',
-  // 	ddbViewProvider
-  // );
-  // vscode.debug.registerDebugAdapterTrackerFactory("gdb", {
-  // 	createDebugAdapterTracker(session) {
-  // 		return new GDBDebugAdapterTracker(session)
-  // 	},
-  // })
-  // context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider("debugmemory", new MemoryContentProvider()));
-  // context.subscriptions.push(vscode.commands.registerCommand("code-debug.examineMemoryLocation", examineMemory));
-  // context.subscriptions.push(vscode.commands.registerCommand("code-debug.getFileNameNoExt", () => {
-  // 	if (!vscode.window.activeTextEditor || !vscode.window.activeTextEditor.document || !vscode.window.activeTextEditor.document.fileName) {
-  // 		vscode.window.showErrorMessage("No editor with valid file name active");
-  // 		return;
-  // 	}
-  // 	const fileName = vscode.window.activeTextEditor.document.fileName;
-  // 	const ext = path.extname(fileName);
-  // 	return fileName.substring(0, fileName.length - ext.length);
-  // }));
-  // context.subscriptions.push(vscode.commands.registerCommand("code-debug.getFileBasenameNoExt", () => {
-  // 	if (!vscode.window.activeTextEditor || !vscode.window.activeTextEditor.document || !vscode.window.activeTextEditor.document.fileName) {
-  // 		vscode.window.showErrorMessage("No editor with valid file name active");
-  // 		return;
-  // 	}
-  // 	const fileName = path.basename(vscode.window.activeTextEditor.document.fileName);
-  // 	const ext = path.extname(fileName);
-  // 	return fileName.substring(0, fileName.length - ext.length);
-  // }));
+	vscode.debug.registerDebugAdapterTrackerFactory(
+		"ddb",
+		new MyDebugAdapterTrackerFactory(),
+	);
+	ddbviewactivate(context);
+	// const rootPath =
+	// 	vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+	// 		? vscode.workspace.workspaceFolders[0].uri.fsPath
+	// 		: undefined;
+	// const ddbViewProvider=new DDBViewProvider(rootPath)
+	// vscode.window.registerTreeDataProvider(
+	// 	'nodeDependencies',
+	// 	ddbViewProvider
+	// );
+	// vscode.debug.registerDebugAdapterTrackerFactory("gdb", {
+	// 	createDebugAdapterTracker(session) {
+	// 		return new GDBDebugAdapterTracker(session)
+	// 	},
+	// })
+	// context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider("debugmemory", new MemoryContentProvider()));
+	// context.subscriptions.push(vscode.commands.registerCommand("code-debug.examineMemoryLocation", examineMemory));
+	// context.subscriptions.push(vscode.commands.registerCommand("code-debug.getFileNameNoExt", () => {
+	// 	if (!vscode.window.activeTextEditor || !vscode.window.activeTextEditor.document || !vscode.window.activeTextEditor.document.fileName) {
+	// 		vscode.window.showErrorMessage("No editor with valid file name active");
+	// 		return;
+	// 	}
+	// 	const fileName = vscode.window.activeTextEditor.document.fileName;
+	// 	const ext = path.extname(fileName);
+	// 	return fileName.substring(0, fileName.length - ext.length);
+	// }));
+	// context.subscriptions.push(vscode.commands.registerCommand("code-debug.getFileBasenameNoExt", () => {
+	// 	if (!vscode.window.activeTextEditor || !vscode.window.activeTextEditor.document || !vscode.window.activeTextEditor.document.fileName) {
+	// 		vscode.window.showErrorMessage("No editor with valid file name active");
+	// 		return;
+	// 	}
+	// 	const fileName = path.basename(vscode.window.activeTextEditor.document.fileName);
+	// 	const ext = path.extname(fileName);
+	// 	return fileName.substring(0, fileName.length - ext.length);
+	// }));
 }

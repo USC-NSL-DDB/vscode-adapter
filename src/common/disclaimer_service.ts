@@ -9,12 +9,12 @@ const NEVER_SHOW_AGAIN_BUTTON = "Never Show Again";
  * Checks if the disclaimer should be shown based on user preference.
  */
 export function shouldShowDisclaimer(): boolean {
-  const config = vscode.workspace.getConfiguration("ddb");
-  const neverShowAgain = config.get<boolean>(
-    "disclaimer.neverShowAgain",
-    false
-  );
-  return !neverShowAgain;
+	const config = vscode.workspace.getConfiguration("ddb");
+	const neverShowAgain = config.get<boolean>(
+		"disclaimer.neverShowAgain",
+		false,
+	);
+	return !neverShowAgain;
 }
 
 /**
@@ -22,29 +22,29 @@ export function shouldShowDisclaimer(): boolean {
  * Non-blocking - debug session continues while notification is visible.
  */
 export async function showDisclaimerIfNeeded(): Promise<void> {
-  if (!shouldShowDisclaimer()) {
-    return;
-  }
+	if (!shouldShowDisclaimer()) {
+		return;
+	}
 
-  const result = await vscode.window.showInformationMessage(
-    DISCLAIMER_TEXT,
-    DISMISS_BUTTON,
-    NEVER_SHOW_AGAIN_BUTTON
-  );
+	const result = await vscode.window.showInformationMessage(
+		DISCLAIMER_TEXT,
+		DISMISS_BUTTON,
+		NEVER_SHOW_AGAIN_BUTTON,
+	);
 
-  if (result === NEVER_SHOW_AGAIN_BUTTON) {
-    await suppressDisclaimer();
-  }
+	if (result === NEVER_SHOW_AGAIN_BUTTON) {
+		await suppressDisclaimer();
+	}
 }
 
 /**
  * Persists the user's choice to never show the disclaimer again.
  */
 async function suppressDisclaimer(): Promise<void> {
-  const config = vscode.workspace.getConfiguration("ddb");
-  await config.update(
-    "disclaimer.neverShowAgain",
-    true,
-    vscode.ConfigurationTarget.Global
-  );
+	const config = vscode.workspace.getConfiguration("ddb");
+	await config.update(
+		"disclaimer.neverShowAgain",
+		true,
+		vscode.ConfigurationTarget.Global,
+	);
 }

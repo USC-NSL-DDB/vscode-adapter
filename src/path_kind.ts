@@ -16,8 +16,7 @@ export abstract class PathKind {
 
 	public normalizeDir(p: string): string {
 		p = this.normalize(p);
-		if (! p.endsWith(this.path.sep))
-			p = this.path.join(p, this.path.sep);
+		if (!p.endsWith(this.path.sep)) p = this.path.join(p, this.path.sep);
 		return p;
 	}
 
@@ -34,10 +33,11 @@ export class PathWin32 extends PathKind {
 	protected readonly path: typeof Path.posix | typeof Path.win32 = Path.win32;
 	public readonly caseSensitive: boolean = false;
 	private static instance: PathWin32;
-	private constructor() { super(); }
+	private constructor() {
+		super();
+	}
 	public static getInstance(): PathWin32 {
-		if (! this.instance)
-			this.instance = new PathWin32();
+		if (!this.instance) this.instance = new PathWin32();
 		return this.instance;
 	}
 }
@@ -46,10 +46,11 @@ export class PathPosix extends PathKind {
 	protected readonly path: typeof Path.posix | typeof Path.win32 = Path.posix;
 	public readonly caseSensitive: boolean = true;
 	private static instance: PathPosix;
-	private constructor() { super(); }
+	private constructor() {
+		super();
+	}
 	public static getInstance(): PathPosix {
-		if (! this.instance)
-			this.instance = new PathPosix();
+		if (!this.instance) this.instance = new PathPosix();
 		return this.instance;
 	}
 }

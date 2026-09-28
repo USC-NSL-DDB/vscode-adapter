@@ -2,9 +2,9 @@ import { DDBBreakpoint, getBreakpoints } from "./ddb_dap_api";
 
 let vscode: any;
 try {
-  vscode = require("vscode");
+	vscode = require("vscode");
 } catch (e) {
-  vscode = null;
+	vscode = null;
 }
 
 /**
@@ -53,510 +53,515 @@ type PendingUpdate = "all" | "breakpoints";
  * ```
  */
 export class BreakpointManager {
-  // ============================================================================
-  // Singleton Instance
-  // ============================================================================
-  private static instance: BreakpointManager | null = null;
+	// ============================================================================
+	// Singleton Instance
+	// ============================================================================
+	private static instance: BreakpointManager | null = null;
 
-  /**
-   * Get the singleton instance of BreakpointManager.
-   * Does not auto-initialize - caller must explicitly start auto-refresh when needed.
-   */
-  public static getInstance(): BreakpointManager {
-    if (!BreakpointManager.instance) {
-      BreakpointManager.instance = new BreakpointManager();
-    }
-    return BreakpointManager.instance;
-  }
+	/**
+	 * Get the singleton instance of BreakpointManager.
+	 * Does not auto-initialize - caller must explicitly start auto-refresh when needed.
+	 */
+	public static getInstance(): BreakpointManager {
+		if (!BreakpointManager.instance) {
+			BreakpointManager.instance = new BreakpointManager();
+		}
+		return BreakpointManager.instance;
+	}
 
-  /**
-   * Reset the singleton instance.
-   * Useful for testing purposes.
-   */
-  public static resetInstance(): void {
-    if (BreakpointManager.instance) {
-      BreakpointManager.instance.dispose();
-      BreakpointManager.instance = null;
-    }
-  }
+	/**
+	 * Reset the singleton instance.
+	 * Useful for testing purposes.
+	 */
+	public static resetInstance(): void {
+		if (BreakpointManager.instance) {
+			BreakpointManager.instance.dispose();
+			BreakpointManager.instance = null;
+		}
+	}
 
-  // ============================================================================
-  // Data Caches
-  // ============================================================================
-  private breakpointsById: Map<number, DDBBreakpoint>;
-  private breakpointsByFile: Map<string, DDBBreakpoint[]>;
+	// ============================================================================
+	// Data Caches
+	// ============================================================================
+	private breakpointsById: Map<number, DDBBreakpoint>;
+	private breakpointsByFile: Map<string, DDBBreakpoint[]>;
 
-  // ============================================================================
-  // Metadata
-  // ============================================================================
-  private lastUpdateTime: number | null;
-  private updateListeners: Set<() => void>;
-  private initialized: boolean;
+	// ============================================================================
+	// Metadata
+	// ============================================================================
+	private lastUpdateTime: number | null;
+	private updateListeners: Set<() => void>;
+	private initialized: boolean;
 
-  // ============================================================================
-  // Auto-refresh & Debouncing
-  // ============================================================================
-  private refreshInterval: NodeJS.Timeout | null;
-  private debounceTimeout: NodeJS.Timeout | null;
-  private updateCompletion: Promise<void> = Promise.resolve();
-  private pendingBatch?: { resolve: () => void; reject: (error: unknown) => void };
-  private cacheEpoch = 0;
-  private pendingUpdates: Set<string>;
-  private readonly DEBOUNCE_MS = 50; // Debounce interval in milliseconds
-  private readonly AUTO_REFRESH_MS = 15000; // Default 15 seconds
-  private wsActive: boolean = false; // Flag to control polling when EventStream is active
+	// ============================================================================
+	// Auto-refresh & Debouncing
+	// ============================================================================
+	private refreshInterval: NodeJS.Timeout | null;
+	private debounceTimeout: NodeJS.Timeout | null;
+	private updateCompletion: Promise<void> = Promise.resolve();
+	private pendingBatch?: {
+		resolve: () => void;
+		reject: (error: unknown) => void;
+	};
+	private cacheEpoch = 0;
+	private pendingUpdates: Set<string>;
+	private readonly DEBOUNCE_MS = 50; // Debounce interval in milliseconds
+	private readonly AUTO_REFRESH_MS = 15000; // Default 15 seconds
+	private wsActive: boolean = false; // Flag to control polling when EventStream is active
 
-  // ============================================================================
-  // Constructor (Private - Singleton Pattern)
-  // ============================================================================
-  private constructor() {
-    // Initialize data caches
-    this.breakpointsById = new Map();
-    this.breakpointsByFile = new Map();
+	// ============================================================================
+	// Constructor (Private - Singleton Pattern)
+	// ============================================================================
+	private constructor() {
+		// Initialize data caches
+		this.breakpointsById = new Map();
+		this.breakpointsByFile = new Map();
 
-    // Initialize metadata
-    this.lastUpdateTime = null;
-    this.updateListeners = new Set();
-    this.initialized = false;
+		// Initialize metadata
+		this.lastUpdateTime = null;
+		this.updateListeners = new Set();
+		this.initialized = false;
 
-    // Initialize auto-refresh & debouncing
-    this.refreshInterval = null;
-    this.debounceTimeout = null;
-    this.pendingUpdates = new Set();
-  }
+		// Initialize auto-refresh & debouncing
+		this.refreshInterval = null;
+		this.debounceTimeout = null;
+		this.pendingUpdates = new Set();
+	}
 
-  // ============================================================================
-  // Debouncing Logic
-  // ============================================================================
+	// ============================================================================
+	// Debouncing Logic
+	// ============================================================================
 
-  /**
-   * Schedule an update with debouncing to prevent rapid consecutive calls.
-   */
-  private scheduleUpdate(updateType: PendingUpdate): void {
-    this.pendingUpdates.add(updateType);
+	/**
+	 * Schedule an update with debouncing to prevent rapid consecutive calls.
+	 */
+	private scheduleUpdate(updateType: PendingUpdate): void {
+		this.pendingUpdates.add(updateType);
 
-    // Clear existing debounce timer
-    if (this.debounceTimeout) {
-      clearTimeout(this.debounceTimeout);
-    }
+		// Clear existing debounce timer
+		if (this.debounceTimeout) {
+			clearTimeout(this.debounceTimeout);
+		}
 
-    // Schedule consolidated update
-    if (!this.pendingBatch) {
-      this.updateCompletion = new Promise<void>((resolve, reject) => { this.pendingBatch = { resolve, reject }; });
-      // Keep fire-and-forget callers safe while awaited callers still receive failures.
-      void this.updateCompletion.catch(() => undefined);
-    }
-    this.debounceTimeout = setTimeout(() => {
-      const batch = this.pendingBatch!;
-      this.pendingBatch = undefined;
-      void this.executeQueuedUpdates().then(batch.resolve, batch.reject);
-    }, this.DEBOUNCE_MS);
-  }
+		// Schedule consolidated update
+		if (!this.pendingBatch) {
+			this.updateCompletion = new Promise<void>((resolve, reject) => {
+				this.pendingBatch = { resolve, reject };
+			});
+			// Keep fire-and-forget callers safe while awaited callers still receive failures.
+			void this.updateCompletion.catch(() => undefined);
+		}
+		this.debounceTimeout = setTimeout(() => {
+			const batch = this.pendingBatch!;
+			this.pendingBatch = undefined;
+			void this.executeQueuedUpdates().then(batch.resolve, batch.reject);
+		}, this.DEBOUNCE_MS);
+	}
 
-  /**
-   * Execute all queued updates in an optimized manner.
-   */
-  private async executeQueuedUpdates(): Promise<void> {
-    const updates = Array.from(this.pendingUpdates);
-    this.pendingUpdates.clear();
-    this.debounceTimeout = null;
+	/**
+	 * Execute all queued updates in an optimized manner.
+	 */
+	private async executeQueuedUpdates(): Promise<void> {
+		const updates = Array.from(this.pendingUpdates);
+		this.pendingUpdates.clear();
+		this.debounceTimeout = null;
 
-    // Optimize: if 'all' or 'breakpoints' is requested, just do a full update
-    if (updates.includes("all") || updates.includes("breakpoints")) {
-      await this.performUpdateAll();
-    }
-  }
+		// Optimize: if 'all' or 'breakpoints' is requested, just do a full update
+		if (updates.includes("all") || updates.includes("breakpoints")) {
+			await this.performUpdateAll();
+		}
+	}
 
-  /**
-   * Wait for any pending debounced updates to complete.
-   */
-  private async waitForPendingUpdates(): Promise<void> {
-    return this.updateCompletion;
-  }
+	/**
+	 * Wait for any pending debounced updates to complete.
+	 */
+	private async waitForPendingUpdates(): Promise<void> {
+		return this.updateCompletion;
+	}
 
-  // ============================================================================
-  // Update Methods (Public)
-  // ============================================================================
+	// ============================================================================
+	// Update Methods (Public)
+	// ============================================================================
 
-  /**
-   * Update all breakpoints.
-   * Debounced to prevent rapid consecutive calls.
-   */
-  public async updateAll(): Promise<void> {
-    this.scheduleUpdate("all");
-    await this.waitForPendingUpdates();
-  }
+	/**
+	 * Update all breakpoints.
+	 * Debounced to prevent rapid consecutive calls.
+	 */
+	public async updateAll(): Promise<void> {
+		this.scheduleUpdate("all");
+		await this.waitForPendingUpdates();
+	}
 
-  /**
-   * Immediate update without debouncing.
-   */
-  public async immediateUpdateAll(): Promise<void> {
-    await this.performUpdateAll();
-  }
+	/**
+	 * Immediate update without debouncing.
+	 */
+	public async immediateUpdateAll(): Promise<void> {
+		await this.performUpdateAll();
+	}
 
-  /**
-   * Update breakpoints (alias for updateAll since we only have one data type).
-   * Debounced to prevent rapid consecutive calls.
-   */
-  public async updateBreakpoints(): Promise<void> {
-    this.scheduleUpdate("breakpoints");
-    await this.waitForPendingUpdates();
-  }
+	/**
+	 * Update breakpoints (alias for updateAll since we only have one data type).
+	 * Debounced to prevent rapid consecutive calls.
+	 */
+	public async updateBreakpoints(): Promise<void> {
+		this.scheduleUpdate("breakpoints");
+		await this.waitForPendingUpdates();
+	}
 
-  /**
-   * Immediate update breakpoints without debouncing.
-   */
-  public async immediateUpdateBreakpoints(): Promise<void> {
-    await this.performUpdateAll();
-  }
+	/**
+	 * Immediate update breakpoints without debouncing.
+	 */
+	public async immediateUpdateBreakpoints(): Promise<void> {
+		await this.performUpdateAll();
+	}
 
-  // ============================================================================
-  // Update Methods (Private - Actual Implementation)
-  // ============================================================================
+	// ============================================================================
+	// Update Methods (Private - Actual Implementation)
+	// ============================================================================
 
-  /**
-   * Perform the actual update of all breakpoints.
-   */
-  private async performUpdateAll(): Promise<void> {
-    const epoch = this.cacheEpoch;
-    try {
-      const breakpoints = await getBreakpoints();
-      if (epoch !== this.cacheEpoch) return;
-      this.rebuildCache(breakpoints);
-      this.lastUpdateTime = Date.now();
-      this.initialized = true;
-      this.notifyListeners();
-    } catch (error) {
-      if (epoch !== this.cacheEpoch) return;
-      console.error("Failed to update breakpoints:", error);
-      throw error;
-    }
-  }
+	/**
+	 * Perform the actual update of all breakpoints.
+	 */
+	private async performUpdateAll(): Promise<void> {
+		const epoch = this.cacheEpoch;
+		try {
+			const breakpoints = await getBreakpoints();
+			if (epoch !== this.cacheEpoch) return;
+			this.rebuildCache(breakpoints);
+			this.lastUpdateTime = Date.now();
+			this.initialized = true;
+			this.notifyListeners();
+		} catch (error) {
+			if (epoch !== this.cacheEpoch) return;
+			console.error("Failed to update breakpoints:", error);
+			throw error;
+		}
+	}
 
-  // ============================================================================
-  // Cache Rebuild Logic
-  // ============================================================================
+	// ============================================================================
+	// Cache Rebuild Logic
+	// ============================================================================
 
-  /**
-   * Rebuild all caches from scratch with new breakpoint data.
-   */
-  private rebuildCache(breakpoints: DDBBreakpoint[]): void {
-    // Clear all caches
-    this.breakpointsById.clear();
-    this.breakpointsByFile.clear();
+	/**
+	 * Rebuild all caches from scratch with new breakpoint data.
+	 */
+	private rebuildCache(breakpoints: DDBBreakpoint[]): void {
+		// Clear all caches
+		this.breakpointsById.clear();
+		this.breakpointsByFile.clear();
 
-    // Rebuild caches
-    for (const bp of breakpoints) {
-      this.breakpointsById.set(bp.id, bp);
+		// Rebuild caches
+		for (const bp of breakpoints) {
+			this.breakpointsById.set(bp.id, bp);
 
-      const filePath = bp.location.src;
-      if (!this.breakpointsByFile.has(filePath)) {
-        this.breakpointsByFile.set(filePath, []);
-      }
-      this.breakpointsByFile.get(filePath)!.push(bp);
-    }
+			const filePath = bp.location.src;
+			if (!this.breakpointsByFile.has(filePath)) {
+				this.breakpointsByFile.set(filePath, []);
+			}
+			this.breakpointsByFile.get(filePath)!.push(bp);
+		}
 
-    // Sort breakpoints within each file by line number
-    for (const [, bps] of this.breakpointsByFile) {
-      bps.sort((a, b) => a.location.line - b.location.line);
-    }
-  }
+		// Sort breakpoints within each file by line number
+		for (const [, bps] of this.breakpointsByFile) {
+			bps.sort((a, b) => a.location.line - b.location.line);
+		}
+	}
 
-  // ============================================================================
-  // Breakpoint Query APIs
-  // ============================================================================
+	// ============================================================================
+	// Breakpoint Query APIs
+	// ============================================================================
 
-  /**
-   * Get all breakpoints.
-   */
-  public getAllBreakpoints(): DDBBreakpoint[] {
-    if (!this.isInitialized()) {
-      this.warnNotInitialized("getAllBreakpoints");
-      return [];
-    }
-    return Array.from(this.breakpointsById.values());
-  }
+	/**
+	 * Get all breakpoints.
+	 */
+	public getAllBreakpoints(): DDBBreakpoint[] {
+		if (!this.isInitialized()) {
+			this.warnNotInitialized("getAllBreakpoints");
+			return [];
+		}
+		return Array.from(this.breakpointsById.values());
+	}
 
-  /**
-   * Get a specific breakpoint by ID.
-   */
-  public getBreakpoint(id: number): DDBBreakpoint | undefined {
-    if (!this.isInitialized()) {
-      this.warnNotInitialized("getBreakpoint");
-      return undefined;
-    }
-    return this.breakpointsById.get(id);
-  }
+	/**
+	 * Get a specific breakpoint by ID.
+	 */
+	public getBreakpoint(id: number): DDBBreakpoint | undefined {
+		if (!this.isInitialized()) {
+			this.warnNotInitialized("getBreakpoint");
+			return undefined;
+		}
+		return this.breakpointsById.get(id);
+	}
 
-  /**
-   * Get all breakpoints for a specific file.
-   */
-  public getBreakpointsByFile(filePath: string): DDBBreakpoint[] {
-    if (!this.isInitialized()) {
-      this.warnNotInitialized("getBreakpointsByFile");
-      return [];
-    }
-    return this.breakpointsByFile.get(filePath) || [];
-  }
+	/**
+	 * Get all breakpoints for a specific file.
+	 */
+	public getBreakpointsByFile(filePath: string): DDBBreakpoint[] {
+		if (!this.isInitialized()) {
+			this.warnNotInitialized("getBreakpointsByFile");
+			return [];
+		}
+		return this.breakpointsByFile.get(filePath) || [];
+	}
 
-  /**
-   * Get all unique file paths that have breakpoints.
-   */
-  public getUniqueFiles(): string[] {
-    if (!this.isInitialized()) {
-      this.warnNotInitialized("getUniqueFiles");
-      return [];
-    }
-    return Array.from(this.breakpointsByFile.keys()).sort();
-  }
+	/**
+	 * Get all unique file paths that have breakpoints.
+	 */
+	public getUniqueFiles(): string[] {
+		if (!this.isInitialized()) {
+			this.warnNotInitialized("getUniqueFiles");
+			return [];
+		}
+		return Array.from(this.breakpointsByFile.keys()).sort();
+	}
 
-  /**
-   * Get the total number of breakpoints.
-   */
-  public getBreakpointsCount(): number {
-    return this.breakpointsById.size;
-  }
+	/**
+	 * Get the total number of breakpoints.
+	 */
+	public getBreakpointsCount(): number {
+		return this.breakpointsById.size;
+	}
 
-  /**
-   * Get the number of unique files with breakpoints.
-   */
-  public getFilesCount(): number {
-    return this.breakpointsByFile.size;
-  }
+	/**
+	 * Get the number of unique files with breakpoints.
+	 */
+	public getFilesCount(): number {
+		return this.breakpointsByFile.size;
+	}
 
-  // ============================================================================
-  // Fresh Fetch APIs (Update cache, then return fresh data)
-  // ============================================================================
+	// ============================================================================
+	// Fresh Fetch APIs (Update cache, then return fresh data)
+	// ============================================================================
 
-  /**
-   * Fetch all breakpoints with fresh data from backend.
-   * Updates the cache, then returns the fresh data.
-   */
-  public async fetchAllBreakpoints(): Promise<DDBBreakpoint[]> {
-    await this.updateAll();
-    return this.getAllBreakpoints();
-  }
+	/**
+	 * Fetch all breakpoints with fresh data from backend.
+	 * Updates the cache, then returns the fresh data.
+	 */
+	public async fetchAllBreakpoints(): Promise<DDBBreakpoint[]> {
+		await this.updateAll();
+		return this.getAllBreakpoints();
+	}
 
-  /**
-   * Fetch all breakpoints immediately without debouncing.
-   */
-  public async immediateFetchAllBreakpoints(): Promise<DDBBreakpoint[]> {
-    await this.immediateUpdateAll();
-    return this.getAllBreakpoints();
-  }
+	/**
+	 * Fetch all breakpoints immediately without debouncing.
+	 */
+	public async immediateFetchAllBreakpoints(): Promise<DDBBreakpoint[]> {
+		await this.immediateUpdateAll();
+		return this.getAllBreakpoints();
+	}
 
-  /**
-   * Fetch a specific breakpoint with fresh data from backend.
-   * Updates the cache, then returns the fresh data.
-   */
-  public async fetchBreakpoint(id: number): Promise<DDBBreakpoint | undefined> {
-    await this.updateAll();
-    return this.getBreakpoint(id);
-  }
+	/**
+	 * Fetch a specific breakpoint with fresh data from backend.
+	 * Updates the cache, then returns the fresh data.
+	 */
+	public async fetchBreakpoint(id: number): Promise<DDBBreakpoint | undefined> {
+		await this.updateAll();
+		return this.getBreakpoint(id);
+	}
 
-  /**
-   * Fetch a specific breakpoint immediately without debouncing.
-   */
-  public async immediateFetchBreakpoint(
-    id: number
-  ): Promise<DDBBreakpoint | undefined> {
-    await this.immediateUpdateAll();
-    return this.getBreakpoint(id);
-  }
+	/**
+	 * Fetch a specific breakpoint immediately without debouncing.
+	 */
+	public async immediateFetchBreakpoint(
+		id: number,
+	): Promise<DDBBreakpoint | undefined> {
+		await this.immediateUpdateAll();
+		return this.getBreakpoint(id);
+	}
 
-  /**
-   * Fetch breakpoints for a specific file with fresh data from backend.
-   */
-  public async fetchBreakpointsByFile(
-    filePath: string
-  ): Promise<DDBBreakpoint[]> {
-    await this.updateAll();
-    return this.getBreakpointsByFile(filePath);
-  }
+	/**
+	 * Fetch breakpoints for a specific file with fresh data from backend.
+	 */
+	public async fetchBreakpointsByFile(
+		filePath: string,
+	): Promise<DDBBreakpoint[]> {
+		await this.updateAll();
+		return this.getBreakpointsByFile(filePath);
+	}
 
-  /**
-   * Fetch breakpoints for a specific file immediately without debouncing.
-   */
-  public async immediateFetchBreakpointsByFile(
-    filePath: string
-  ): Promise<DDBBreakpoint[]> {
-    await this.immediateUpdateAll();
-    return this.getBreakpointsByFile(filePath);
-  }
+	/**
+	 * Fetch breakpoints for a specific file immediately without debouncing.
+	 */
+	public async immediateFetchBreakpointsByFile(
+		filePath: string,
+	): Promise<DDBBreakpoint[]> {
+		await this.immediateUpdateAll();
+		return this.getBreakpointsByFile(filePath);
+	}
 
-  // ============================================================================
-  // Utility and Helper Methods
-  // ============================================================================
+	// ============================================================================
+	// Utility and Helper Methods
+	// ============================================================================
 
-  /**
-   * Check if the BreakpointManager has any data loaded.
-   */
-  public hasData(): boolean {
-    return this.breakpointsById.size > 0;
-  }
+	/**
+	 * Check if the BreakpointManager has any data loaded.
+	 */
+	public hasData(): boolean {
+		return this.breakpointsById.size > 0;
+	}
 
-  /**
-   * Get the timestamp of the last successful update.
-   */
-  public getLastUpdateTime(): number | null {
-    return this.lastUpdateTime;
-  }
+	/**
+	 * Get the timestamp of the last successful update.
+	 */
+	public getLastUpdateTime(): number | null {
+		return this.lastUpdateTime;
+	}
 
-  /**
-   * Check if the BreakpointManager has been initialized (first fetch completed).
-   * @returns true if initialized (data has been fetched at least once), false otherwise
-   */
-  private isInitialized(): boolean {
-    return this.initialized;
-  }
+	/**
+	 * Check if the BreakpointManager has been initialized (first fetch completed).
+	 * @returns true if initialized (data has been fetched at least once), false otherwise
+	 */
+	private isInitialized(): boolean {
+		return this.initialized;
+	}
 
-  /**
-   * Show a warning message when BreakpointManager is accessed before initialization.
-   */
-  private warnNotInitialized(methodName: string): void {
-    const message = `BreakpointManager.${methodName}() called before initialization. Start a debug session first.`;
-    console.warn(message);
-    if (vscode) {
-      vscode.window.showInformationMessage(message);
-    }
-  }
+	/**
+	 * Show a warning message when BreakpointManager is accessed before initialization.
+	 */
+	private warnNotInitialized(methodName: string): void {
+		const message = `BreakpointManager.${methodName}() called before initialization. Start a debug session first.`;
+		console.warn(message);
+		if (vscode) {
+			vscode.window.showInformationMessage(message);
+		}
+	}
 
-  // ============================================================================
-  // Event System and Lifecycle Management
-  // ============================================================================
+	// ============================================================================
+	// Event System and Lifecycle Management
+	// ============================================================================
 
-  /**
-   * Register a listener to be notified when data is updated.
-   * Returns an unsubscribe function.
-   *
-   * @param callback Function to call when data is updated
-   * @returns Unsubscribe function
-   */
-  public onDataUpdated(callback: () => void): () => void {
-    this.updateListeners.add(callback);
-    return () => {
-      this.updateListeners.delete(callback);
-    };
-  }
-  
-  // Used to notify listeners externally (e.g., from extension.ts)
-  // So that it can refresh its view.
-  public notifyDataChange(): void {
-    this.notifyListeners();
-  }
+	/**
+	 * Register a listener to be notified when data is updated.
+	 * Returns an unsubscribe function.
+	 *
+	 * @param callback Function to call when data is updated
+	 * @returns Unsubscribe function
+	 */
+	public onDataUpdated(callback: () => void): () => void {
+		this.updateListeners.add(callback);
+		return () => {
+			this.updateListeners.delete(callback);
+		};
+	}
 
-  /**
-   * Notify all registered listeners that data has been updated.
-   */
-  private notifyListeners(): void {
-    this.updateListeners.forEach((listener) => {
-      try {
-        listener();
-      } catch (error) {
-        console.error("Error in update listener:", error);
-      }
-    });
-  }
+	// Used to notify listeners externally (e.g., from extension.ts)
+	// So that it can refresh its view.
+	public notifyDataChange(): void {
+		this.notifyListeners();
+	}
 
-  /**
-   * Start automatic periodic refresh of data.
-   *
-   * @param intervalMs Optional custom interval in milliseconds (default: 15000)
-   */
-  public startAutoRefresh(intervalMs?: number): void {
-    // Don't start polling if EventStream is handling updates
-    if (this.wsActive) {
-      console.debug(
-        "[BreakpointManager] EventStream active, skipping auto-refresh polling"
-      );
-      return;
-    }
+	/**
+	 * Notify all registered listeners that data has been updated.
+	 */
+	private notifyListeners(): void {
+		this.updateListeners.forEach((listener) => {
+			try {
+				listener();
+			} catch (error) {
+				console.error("Error in update listener:", error);
+			}
+		});
+	}
 
-    this.stopAutoRefresh();
+	/**
+	 * Start automatic periodic refresh of data.
+	 *
+	 * @param intervalMs Optional custom interval in milliseconds (default: 15000)
+	 */
+	public startAutoRefresh(intervalMs?: number): void {
+		// Don't start polling if EventStream is handling updates
+		if (this.wsActive) {
+			console.debug(
+				"[BreakpointManager] EventStream active, skipping auto-refresh polling",
+			);
+			return;
+		}
 
-    // Read from VSCode config if not provided
-    let interval = intervalMs;
-    if (!interval && vscode) {
-      const config = vscode.workspace.getConfiguration("ddb");
-      interval = config.get(
-        "breakpointManager.autoRefreshMs",
-        this.AUTO_REFRESH_MS
-      );
-    } else {
-      interval = intervalMs || this.AUTO_REFRESH_MS;
-    }
+		this.stopAutoRefresh();
 
-    console.debug(
-      `[BreakpointManager] Starting auto-refresh with ${interval}ms interval`
-    );
-    this.refreshInterval = setInterval(() => {
-      console.debug("[BreakpointManager] Auto-refresh triggered");
-      this.updateAll().catch((error) => {
-        console.error("Auto-refresh failed:", error);
-      });
-    }, interval);
-  }
+		// Read from VSCode config if not provided
+		let interval = intervalMs;
+		if (!interval && vscode) {
+			const config = vscode.workspace.getConfiguration("ddb");
+			interval = config.get(
+				"breakpointManager.autoRefreshMs",
+				this.AUTO_REFRESH_MS,
+			);
+		} else {
+			interval = intervalMs || this.AUTO_REFRESH_MS;
+		}
 
-  /**
-   * Stop automatic periodic refresh.
-   */
-  public stopAutoRefresh(): void {
-    if (this.refreshInterval) {
-      clearInterval(this.refreshInterval);
-      this.refreshInterval = null;
-    }
-  }
+		console.debug(
+			`[BreakpointManager] Starting auto-refresh with ${interval}ms interval`,
+		);
+		this.refreshInterval = setInterval(() => {
+			console.debug("[BreakpointManager] Auto-refresh triggered");
+			this.updateAll().catch((error) => {
+				console.error("Auto-refresh failed:", error);
+			});
+		}, interval);
+	}
 
-  /**
-   * Set EventStream active state.
-   * When EventStream is active, auto-refresh polling is disabled.
-   * When EventStream is inactive, auto-refresh polling can resume.
-   *
-   * @param active - true if EventStream is connected and handling updates
-   */
-  public setEventStreamActive(active: boolean): void {
-    this.wsActive = active;
-    console.log(`[BreakpointManager] EventStream active: ${active}`);
-  }
+	/**
+	 * Stop automatic periodic refresh.
+	 */
+	public stopAutoRefresh(): void {
+		if (this.refreshInterval) {
+			clearInterval(this.refreshInterval);
+			this.refreshInterval = null;
+		}
+	}
 
-  /**
-   * Clear all cached data.
-   * Useful when debug session ends and data is no longer valid.
-   */
-  public clearCache(): void {
-    this.cacheEpoch++;
-    if (this.debounceTimeout) clearTimeout(this.debounceTimeout);
-    this.debounceTimeout = null;
-    this.pendingUpdates.clear();
-    this.pendingBatch?.resolve();
-    this.pendingBatch = undefined;
-    this.breakpointsById.clear();
-    this.breakpointsByFile.clear();
-    this.lastUpdateTime = null;
-    this.initialized = false;
-    // Notify listeners so UI can update to empty state
-    this.notifyListeners();
-  }
+	/**
+	 * Set EventStream active state.
+	 * When EventStream is active, auto-refresh polling is disabled.
+	 * When EventStream is inactive, auto-refresh polling can resume.
+	 *
+	 * @param active - true if EventStream is connected and handling updates
+	 */
+	public setEventStreamActive(active: boolean): void {
+		this.wsActive = active;
+		console.log(`[BreakpointManager] EventStream active: ${active}`);
+	}
 
-  /**
-   * Dispose of all resources and clear all data.
-   * Should be called when the BreakpointManager is no longer needed.
-   */
-  public dispose(): void {
-    this.cacheEpoch++;
-    if (this.debounceTimeout) clearTimeout(this.debounceTimeout);
-    this.debounceTimeout = null;
-    this.pendingUpdates.clear();
-    this.pendingBatch?.resolve();
-    this.pendingBatch = undefined;
-    this.stopAutoRefresh();
-    if (this.debounceTimeout) {
-      clearTimeout(this.debounceTimeout);
-      this.debounceTimeout = null;
-    }
-    this.updateListeners.clear();
-    this.breakpointsById.clear();
-    this.breakpointsByFile.clear();
-    this.pendingUpdates.clear();
-  }
+	/**
+	 * Clear all cached data.
+	 * Useful when debug session ends and data is no longer valid.
+	 */
+	public clearCache(): void {
+		this.cacheEpoch++;
+		if (this.debounceTimeout) clearTimeout(this.debounceTimeout);
+		this.debounceTimeout = null;
+		this.pendingUpdates.clear();
+		this.pendingBatch?.resolve();
+		this.pendingBatch = undefined;
+		this.breakpointsById.clear();
+		this.breakpointsByFile.clear();
+		this.lastUpdateTime = null;
+		this.initialized = false;
+		// Notify listeners so UI can update to empty state
+		this.notifyListeners();
+	}
+
+	/**
+	 * Dispose of all resources and clear all data.
+	 * Should be called when the BreakpointManager is no longer needed.
+	 */
+	public dispose(): void {
+		this.cacheEpoch++;
+		if (this.debounceTimeout) clearTimeout(this.debounceTimeout);
+		this.debounceTimeout = null;
+		this.pendingUpdates.clear();
+		this.pendingBatch?.resolve();
+		this.pendingBatch = undefined;
+		this.stopAutoRefresh();
+		if (this.debounceTimeout) {
+			clearTimeout(this.debounceTimeout);
+			this.debounceTimeout = null;
+		}
+		this.updateListeners.clear();
+		this.breakpointsById.clear();
+		this.breakpointsByFile.clear();
+		this.pendingUpdates.clear();
+	}
 }

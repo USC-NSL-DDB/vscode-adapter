@@ -66,8 +66,8 @@ The SDK/API remains preview-stage and this adapter is pinned to the tested SDK
 archive and backend fixes. Distributed adapter behavior is tested through DDB's
 mock topology and the instrumented gRPC greeter client/server. The GDB path is
 validated with real GDB; this audit does not claim real LLDB coverage.
-The repository's pre-existing broad lint failures are not a passing validation
-gate. TypeScript compilation, focused tests and runtime checks are the evidence.
+`npm run lint` checks TypeScript, canonical `.mts` modules and test scripts,
+including formatting. CI also runs compilation and unit tests before packaging.
 
 Earlier investigation and regression details are retained in
 [the migration log](canonical-api-migration.md).

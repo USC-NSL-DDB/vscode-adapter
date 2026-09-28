@@ -11,6 +11,21 @@ Start with the build instructions in [README.md](README.md) and the
 code-debug instructions below describe the legacy adapter and its historical
 Node.js 16 toolchain; they are not prerequisites for the canonical runtime.
 
+## Code checks
+
+Run `npm run lint` and `npm test` before committing. Lint covers TypeScript,
+the canonical `.mts` modules, and the CommonJS test scripts. `npm run lint-and-fix`
+applies automatic code fixes and formatting. CI runs both checks before packaging.
+
+Prettier owns formatting, using tabs for code. ESLint checks code correctness.
+The core ESLint indentation fixer is disabled because it misformats TypeScript
+nodes. `null` is allowed because Node and DAP APIs use it as a distinct value.
+Ambient namespaces are allowed for protocol type augmentation, and synchronous
+`require("vscode")` is allowed where the module is optional outside VS Code.
+
+Console output is allowed in extension-host UI modules and tests. Standalone
+adapter code must use DAP output events or stderr; stdout carries the DAP protocol.
+
 # Historical code-debug contributor guide
 
 This file is a work in progress to start gathering the information, ["take with

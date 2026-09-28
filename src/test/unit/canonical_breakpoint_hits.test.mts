@@ -9,19 +9,46 @@ import { CanonicalHarness } from "../integration/helpers/canonical_session.mjs";
 
 function fixture() {
 	const snapshot: Snapshot = {
-		serverInstanceId: "server", stateEventCursor: { serverInstanceId: "server" },
+		serverInstanceId: "server",
+		stateEventCursor: { serverInstanceId: "server" },
 		breakpoints: [
-			{ breakpointId: "shared", target: { group: { groupId: "group" } }, hitCount: "42", subBreakpoints: [{ subBreakpointId: "child-two", sessionId: "two" }] },
+			{
+				breakpointId: "shared",
+				target: { group: { groupId: "group" } },
+				hitCount: "42",
+				subBreakpoints: [{ subBreakpointId: "child-two", sessionId: "two" }],
+			},
 			{ breakpointId: "different", target: { session: { sessionId: "two" } } },
 		],
-		threads: ["one", "peer", "two", "third"].map(id => ({ threadId: id, sessionId: id === "peer" ? "one" : id === "third" ? "two" : id, state: "THREAD_STATE_STOPPED" })),
-		executionStates: ["one", "peer", "two", "third"].map(id => ({ executionStateId: id, revision: "1", target: { thread: { threadId: id } }, stopReason: {
-			kind: "STOP_REASON_KIND_BREAKPOINT", breakpointId: id === "third" ? "different" : id === "two" ? "child-two" : "shared", threadId: id === "peer" ? "one" : id,
-		} })),
+		threads: ["one", "peer", "two", "third"].map((id) => ({
+			threadId: id,
+			sessionId: id === "peer" ? "one" : id === "third" ? "two" : id,
+			state: "THREAD_STATE_STOPPED",
+		})),
+		executionStates: ["one", "peer", "two", "third"].map((id) => ({
+			executionStateId: id,
+			revision: "1",
+			target: { thread: { threadId: id } },
+			stopReason: {
+				kind: "STOP_REASON_KIND_BREAKPOINT",
+				breakpointId:
+					id === "third" ? "different" : id === "two" ? "child-two" : "shared",
+				threadId: id === "peer" ? "one" : id,
+			},
+		})),
 	};
 	const state = new DdbState();
 	state.hydrate(snapshot);
-	const connection = { state, client: { collect: async (_method: string, args: any) => [{ frameId: `frame-${args.threadId}` }], call: () => assert.fail("hit navigation must not execute debugger commands") } } as unknown as DdbConnection;
+	const connection = {
+		state,
+		client: {
+			collect: async (_method: string, args: any) => [
+				{ frameId: `frame-${args.threadId}` },
+			],
+			call: () =>
+				assert.fail("hit navigation must not execute debugger commands"),
+		},
+	} as unknown as DdbConnection;
 	const model = new DdbInspection(connection);
 	const breakpoints = new DdbBreakpoints(model);
 	const sidebar = new DdbSidebar(model, breakpoints);
@@ -33,7 +60,10 @@ suite("Current breakpoint hits", () => {
 		const { sidebar, model } = fixture();
 		const [shared, different] = sidebar.breakpointSnapshot();
 		assert.equal(shared.times, "42");
-		assert.deepEqual(shared.hits.map(hit => hit.threadId), [model.threadHandle("one"), model.threadHandle("two")]);
+		assert.deepEqual(
+			shared.hits.map((hit) => hit.threadId),
+			[model.threadHandle("one"), model.threadHandle("two")],
+		);
 		assert.equal(different.hits.length, 1);
 		assert.equal(different.hits[0].threadId, model.threadHandle("third"));
 	});
@@ -44,8 +74,8 @@ suite("Current breakpoint hits", () => {
 		state.hydrate(snapshot);
 		const hits = sidebar.breakpointSnapshot()[0].hits;
 		assert.equal(hits.length, 3);
-		assert.equal(new Set(hits.map(hit => hit.sessionId)).size, 2);
-		assert.equal(new Set(hits.map(hit => hit.threadId)).size, 3);
+		assert.equal(new Set(hits.map((hit) => hit.sessionId)).size, 2);
+		assert.equal(new Set(hits.map((hit) => hit.threadId)).size, 3);
 	});
 
 	test("clears only resumed or changed stops without using accumulated hit counts", () => {
@@ -53,7 +83,10 @@ suite("Current breakpoint hits", () => {
 		snapshot.threads![0].state = "THREAD_STATE_RUNNING";
 		state.hydrate(snapshot);
 		assert.equal(sidebar.breakpointSnapshot()[0].hits.length, 1);
-		snapshot.executionStates![2].stopReason = { kind: "STOP_REASON_KIND_PAUSE", threadId: "two" };
+		snapshot.executionStates![2].stopReason = {
+			kind: "STOP_REASON_KIND_PAUSE",
+			threadId: "two",
+		};
 		state.hydrate(snapshot);
 		assert.equal(sidebar.breakpointSnapshot()[0].hits.length, 0);
 		assert.equal(sidebar.breakpointSnapshot()[1].hits.length, 1);
@@ -63,7 +96,8 @@ suite("Current breakpoint hits", () => {
 	});
 
 	test("a hit that resumes while its stack is loading must not take focus", async () => {
-		const { connection, state, snapshot, model, sidebar, breakpoints } = fixture();
+		const { connection, state, snapshot, model, sidebar, breakpoints } =
+			fixture();
 		connection.client.collect = async () => {
 			snapshot.threads![2].state = "THREAD_STATE_RUNNING";
 			state.hydrate(snapshot);
@@ -72,27 +106,47 @@ suite("Current breakpoint hits", () => {
 		const dap = new CanonicalHarness();
 		Object.assign(dap, { connection, inspection: model, sidebar, breakpoints });
 		const hit = sidebar.breakpointSnapshot()[0].hits[1];
-		assert.equal((await dap.request("ddb.focusBreakpointHit", hit)).success, false);
+		assert.equal(
+			(await dap.request("ddb.focusBreakpointHit", hit)).success,
+			false,
+		);
 		assert.equal(dap.events.length, 0);
 	});
 
 	test("explicit focus selects the requested stopped thread and rejects a resumed or newer hit", async () => {
-		const { connection, state, snapshot, model, sidebar, breakpoints } = fixture();
+		const { connection, state, snapshot, model, sidebar, breakpoints } =
+			fixture();
 		const dap = new CanonicalHarness();
-		Object.assign(dap, { connection, inspection: model, sidebar, breakpoints, execution: { pauseKind: () => undefined }, focusedStop: "one" });
+		Object.assign(dap, {
+			connection,
+			inspection: model,
+			sidebar,
+			breakpoints,
+			execution: { pauseKind: () => undefined },
+			focusedStop: "one",
+		});
 		const hit = sidebar.breakpointSnapshot()[0].hits[1];
-		assert.equal((await dap.request("ddb.focusBreakpointHit", hit)).success, true);
+		assert.equal(
+			(await dap.request("ddb.focusBreakpointHit", hit)).success,
+			true,
+		);
 		const stop = dap.events.at(-1)!;
 		assert.equal(stop.event, "stopped");
 		assert.equal(stop.body.threadId, hit.threadId);
 		assert.equal(stop.body.preserveFocusHint, false);
 		snapshot.threads![2].state = "THREAD_STATE_RUNNING";
 		state.hydrate(snapshot);
-		assert.equal((await dap.request("ddb.focusBreakpointHit", hit)).success, false);
+		assert.equal(
+			(await dap.request("ddb.focusBreakpointHit", hit)).success,
+			false,
+		);
 		snapshot.threads![2].state = "THREAD_STATE_STOPPED";
 		snapshot.executionStates![2].revision = "2";
 		state.hydrate(snapshot);
-		assert.equal((await dap.request("ddb.focusBreakpointHit", hit)).success, false);
+		assert.equal(
+			(await dap.request("ddb.focusBreakpointHit", hit)).success,
+			false,
+		);
 		assert.equal(dap.events.length, 1, "stale clicks must not change focus");
 	});
 });

@@ -6,7 +6,8 @@ export class Handles<T> {
 
 	get(id: number): T {
 		const value = this.values.get(id);
-		if (value === undefined) throw new Error(`Unknown or expired debugger handle ${id}`);
+		if (value === undefined)
+			throw new Error(`Unknown or expired debugger handle ${id}`);
 		return value;
 	}
 
@@ -16,7 +17,8 @@ export class Handles<T> {
 			this.values.set(existing, value);
 			return existing;
 		}
-		if (this.next > 0x7fffffff) throw new Error("Debugger handle capacity exhausted");
+		if (this.next > 0x7fffffff)
+			throw new Error("Debugger handle capacity exhausted");
 		const id = this.next++;
 		this.values.set(id, value);
 		if (key !== undefined) this.keys.set(key, id);
@@ -24,8 +26,10 @@ export class Handles<T> {
 	}
 
 	removeWhere(predicate: (value: T) => boolean): void {
-		for (const [id, value] of this.values) if (predicate(value)) this.values.delete(id);
-		for (const [key, id] of this.keys) if (!this.values.has(id)) this.keys.delete(key);
+		for (const [id, value] of this.values)
+			if (predicate(value)) this.values.delete(id);
+		for (const [key, id] of this.keys)
+			if (!this.values.has(id)) this.keys.delete(key);
 	}
 
 	/** Never reuse an expired handle, even after a server restart. */

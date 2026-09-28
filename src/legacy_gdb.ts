@@ -1,16 +1,16 @@
 import { configureServiceUrl } from "./common/ddb_api";
 import { MI2DebugSession, RunCommand } from "./mibase";
 import {
-  DebugSession,
-  InitializedEvent,
-  TerminatedEvent,
-  StoppedEvent,
-  OutputEvent,
-  Thread,
-  StackFrame,
-  Scope,
-  Source,
-  Handles,
+	DebugSession,
+	InitializedEvent,
+	TerminatedEvent,
+	StoppedEvent,
+	OutputEvent,
+	Thread,
+	StackFrame,
+	Scope,
+	Source,
+	Handles,
 } from "vscode-debugadapter";
 import { DebugProtocol } from "vscode-debugprotocol";
 import { MI2, escape } from "./backend/mi2/mi2";
@@ -25,221 +25,225 @@ import { getOrCreateUserId, generateSessionId } from "./common/user_session";
 const accessAsync = promisify(fs.access);
 
 export interface LaunchRequestArguments
-  extends DebugProtocol.LaunchRequestArguments {
-  cwd: string;
-  target: string;
-  ddbpath: string;
-  serviceUrl?: string;
-  env: any;
-  debugger_args: string[];
-  pathSubstitutions: { [index: string]: string };
-  arguments: string;
-  terminal: string;
-  autorun: string[];
-  stopAtEntry: boolean | string;
-  ssh: SSHArguments;
-  valuesFormatting: ValuesFormattingMode;
-  printCalls: boolean;
-  showDevDebugOutput: boolean;
-  pythonPath?: string;
-  configFilePath: string;
+	extends DebugProtocol.LaunchRequestArguments {
+	cwd: string;
+	target: string;
+	ddbpath: string;
+	serviceUrl?: string;
+	env: any;
+	debugger_args: string[];
+	pathSubstitutions: { [index: string]: string };
+	arguments: string;
+	terminal: string;
+	autorun: string[];
+	stopAtEntry: boolean | string;
+	ssh: SSHArguments;
+	valuesFormatting: ValuesFormattingMode;
+	printCalls: boolean;
+	showDevDebugOutput: boolean;
+	pythonPath?: string;
+	configFilePath: string;
 }
 
 export interface AttachRequestArguments
-  extends DebugProtocol.AttachRequestArguments {
-  cwd: string;
-  target: string;
-  gdbpath: string;
-  env: any;
-  debugger_args: string[];
-  pathSubstitutions: { [index: string]: string };
-  executable: string;
-  remote: boolean;
-  autorun: string[];
-  stopAtConnect: boolean;
-  stopAtEntry: boolean | string;
-  ssh: SSHArguments;
-  valuesFormatting: ValuesFormattingMode;
-  printCalls: boolean;
-  showDevDebugOutput: boolean;
+	extends DebugProtocol.AttachRequestArguments {
+	cwd: string;
+	target: string;
+	gdbpath: string;
+	env: any;
+	debugger_args: string[];
+	pathSubstitutions: { [index: string]: string };
+	executable: string;
+	remote: boolean;
+	autorun: string[];
+	stopAtConnect: boolean;
+	stopAtEntry: boolean | string;
+	ssh: SSHArguments;
+	valuesFormatting: ValuesFormattingMode;
+	printCalls: boolean;
+	showDevDebugOutput: boolean;
 }
 
 async function checkDDBExists(ddbpath: string): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const ddbProc = spawn(ddbpath, ["--version"]);
+	return new Promise<void>((resolve, reject) => {
+		const ddbProc = spawn(ddbpath, ["--version"]);
 
-    // Capture stdout and stderr
-    let stdout = "";
-    let stderr = "";
+		// Capture stdout and stderr
+		let stdout = "";
+		let stderr = "";
 
-    ddbProc.stdout.on("data", (data) => {
-      stdout += data.toString();
-    });
+		ddbProc.stdout.on("data", (data) => {
+			stdout += data.toString();
+		});
 
-    ddbProc.stderr.on("data", (data) => {
-      stderr += data.toString();
-    });
+		ddbProc.stderr.on("data", (data) => {
+			stderr += data.toString();
+		});
 
-    ddbProc.on("error", (err) => {
-      reject(new Error(`ddb not found ${""}`));
-    });
+		ddbProc.on("error", (err) => {
+			reject(new Error(`ddb not found ${""}`));
+		});
 
-    ddbProc.on("close", (code) => {
-      if (code === 0) {
-        // Optionally, verify the Python version using stdout or stderr
-        resolve();
-      } else {
-        reject(
-          new Error(`ddb check failed with code ${code}: ${stderr || stdout}`)
-        );
-      }
-    });
-  });
+		ddbProc.on("close", (code) => {
+			if (code === 0) {
+				// Optionally, verify the Python version using stdout or stderr
+				resolve();
+			} else {
+				reject(
+					new Error(`ddb check failed with code ${code}: ${stderr || stdout}`),
+				);
+			}
+		});
+	});
 }
-
 
 class GDBDebugSession extends MI2DebugSession {
-  private otelService: OTelService | null = null;
+	private otelService: OTelService | null = null;
 
-  protected override initializeRequest(
-    response: DebugProtocol.InitializeResponse,
-    args: DebugProtocol.InitializeRequestArguments
-  ): void {
-    if (!response.body) {
-      response.body = {};
-    }
-    response.body.supportsGotoTargetsRequest = true;
-    response.body.supportsHitConditionalBreakpoints = true;
-    response.body.supportsConfigurationDoneRequest = true;
-    response.body.supportsConditionalBreakpoints = true;
-    response.body.supportsFunctionBreakpoints = true;
-    response.body.supportsEvaluateForHovers = true;
-    response.body.supportsSetVariable = true;
-    response.body.supportsStepBack = false;
-    this.sendResponse(response);
-  }
+	protected override initializeRequest(
+		response: DebugProtocol.InitializeResponse,
+		args: DebugProtocol.InitializeRequestArguments,
+	): void {
+		if (!response.body) {
+			response.body = {};
+		}
+		response.body.supportsGotoTargetsRequest = true;
+		response.body.supportsHitConditionalBreakpoints = true;
+		response.body.supportsConfigurationDoneRequest = true;
+		response.body.supportsConditionalBreakpoints = true;
+		response.body.supportsFunctionBreakpoints = true;
+		response.body.supportsEvaluateForHovers = true;
+		response.body.supportsSetVariable = true;
+		response.body.supportsStepBack = false;
+		this.sendResponse(response);
+	}
 
-  protected override async launchRequest(
-    response: DebugProtocol.LaunchResponse,
-    args: LaunchRequestArguments
-  ): Promise<void> {
-    try {
-      if (args.serviceUrl) configureServiceUrl(args.serviceUrl);
-      // 1. Check if the configuration file exists and is readable
-      if (!args.configFilePath) throw new Error("Set configFilePath to a DDB YAML configuration");
-      const configFilePath = path.resolve(args.cwd || process.cwd(), args.configFilePath);
-      await fs.promises.access(configFilePath, fs.constants.R_OK);
+	protected override async launchRequest(
+		response: DebugProtocol.LaunchResponse,
+		args: LaunchRequestArguments,
+	): Promise<void> {
+		try {
+			if (args.serviceUrl) configureServiceUrl(args.serviceUrl);
+			// 1. Check if the configuration file exists and is readable
+			if (!args.configFilePath)
+				throw new Error("Set configFilePath to a DDB YAML configuration");
+			const configFilePath = path.resolve(
+				args.cwd || process.cwd(),
+				args.configFilePath,
+			);
+			await fs.promises.access(configFilePath, fs.constants.R_OK);
 
-      // 2. Check if DDB exists
-      await checkDDBExists(args.ddbpath);
+			// 2. Check if DDB exists
+			await checkDDBExists(args.ddbpath);
 
-      // 3. Get or create user ID and generate session ID
-      const userId = await getOrCreateUserId();
-      const sessionId = generateSessionId();
+			// 3. Get or create user ID and generate session ID
+			const userId = await getOrCreateUserId();
+			const sessionId = generateSessionId();
 
-      // 4. Initialize OpenTelemetry
-      try {
-        this.otelService = OTelService.initialize("ddb-da", userId, sessionId);
-      } catch (otelError) {
-        console.error("[OTel] Failed to initialize:", otelError);
-      }
-      
-      const debugger_args_with_otel = [
-        ...(args.debugger_args || []),
-        "--enable-otel",
-        "--user-id",
-        `${userId}`,
-        "--session-id",
-        `${sessionId}`,
-      ];
+			// 4. Initialize OpenTelemetry
+			try {
+				this.otelService = OTelService.initialize("ddb-da", userId, sessionId);
+			} catch (otelError) {
+				console.error("[OTel] Failed to initialize:", otelError);
+			}
 
-      // 5. Initialize the MI Debugger
-      this.miDebugger = new MI2(
-        args.ddbpath,
-        [configFilePath],
-        debugger_args_with_otel,
-        args.env
-      );
-      
-      OTelService.log_info(`[OTel] Debugger Adapter initialized with userId=${userId}, sessionId=${sessionId}`);
+			const debugger_args_with_otel = [
+				...(args.debugger_args || []),
+				"--enable-otel",
+				"--user-id",
+				`${userId}`,
+				"--session-id",
+				`${sessionId}`,
+			];
 
-      // Set various properties
-      this.setPathSubstitutions(args.pathSubstitutions);
-      this.initDebugger();
-      this.quit = false;
-      this.attached = false;
-      this.initialRunCommand = RunCommand.NONE;
-      this.isSSH = false;
-      this.started = false;
-      this.crashed = false;
-      this.setValuesFormattingMode(args.valuesFormatting);
-      this.miDebugger.printCalls = !!args.printCalls;
-      this.miDebugger.debugOutput = !!args.showDevDebugOutput;
-      this.stopAtEntry = args.stopAtEntry;
+			// 5. Initialize the MI Debugger
+			this.miDebugger = new MI2(
+				args.ddbpath,
+				[configFilePath],
+				debugger_args_with_otel,
+				args.env,
+			);
 
-      // If SSH is not used, load the debugger normally
-      await this.miDebugger.load(
-        args.cwd,
-        args.target,
-        args.arguments,
-        args.terminal,
-        args.autorun || []
-      );
+			OTelService.log_info(
+				`[OTel] Debugger Adapter initialized with userId=${userId}, sessionId=${sessionId}`,
+			);
 
-      // Send successful response
-      this.sendResponse(response);
-    } catch (err: any) {
-      // Determine the type of error and send appropriate response
-      if (err.message.includes("Python")) {
-        // Python-related error
-        this.sendErrorResponse(response, 104, err.message);
-      } else if (err.code === "ENOENT" || err.code === "EACCES") {
-        // Configuration file-related error
-        this.sendErrorResponse(
-          response,
-          103,
-          `Failed to load config file: ${err.message}`
-        );
-      } else {
-        // Other unexpected errors
-        this.sendErrorResponse(
-          response,
-          999,
-          `Unexpected error: ${err.message}`
-        );
-      }
-    }
-  }
+			// Set various properties
+			this.setPathSubstitutions(args.pathSubstitutions);
+			this.initDebugger();
+			this.quit = false;
+			this.attached = false;
+			this.initialRunCommand = RunCommand.NONE;
+			this.isSSH = false;
+			this.started = false;
+			this.crashed = false;
+			this.setValuesFormattingMode(args.valuesFormatting);
+			this.miDebugger.printCalls = !!args.printCalls;
+			this.miDebugger.debugOutput = !!args.showDevDebugOutput;
+			this.stopAtEntry = args.stopAtEntry;
 
-  // Add extra commands for source file path substitution in GDB-specific syntax
-  protected setPathSubstitutions(substitutions: {
-    [index: string]: string;
-  }): void {
-    if (substitutions) {
-      Object.keys(substitutions).forEach((source) => {
-        this.miDebugger.extraCommands.push(
-          'gdb-set substitute-path "' +
-            escape(source) +
-            '" "' +
-            escape(substitutions[source]) +
-            '" --all'
-        );
-      });
-    }
-  }
+			// If SSH is not used, load the debugger normally
+			await this.miDebugger.load(
+				args.cwd,
+				args.target,
+				args.arguments,
+				args.terminal,
+				args.autorun || [],
+			);
 
-  protected override disconnectRequest(
-    response: DebugProtocol.DisconnectResponse,
-    args: DebugProtocol.DisconnectArguments
-  ): void {
-    // Shutdown OTEL before disconnecting
-    if (this.otelService) {
-      this.otelService
-        .shutdown()
-        .catch((err) => console.error("[OTel] Shutdown error:", err));
-    }
-    super.disconnectRequest(response, args);
-  }
+			// Send successful response
+			this.sendResponse(response);
+		} catch (err: any) {
+			// Determine the type of error and send appropriate response
+			if (err.message.includes("Python")) {
+				// Python-related error
+				this.sendErrorResponse(response, 104, err.message);
+			} else if (err.code === "ENOENT" || err.code === "EACCES") {
+				// Configuration file-related error
+				this.sendErrorResponse(
+					response,
+					103,
+					`Failed to load config file: ${err.message}`,
+				);
+			} else {
+				// Other unexpected errors
+				this.sendErrorResponse(
+					response,
+					999,
+					`Unexpected error: ${err.message}`,
+				);
+			}
+		}
+	}
+
+	// Add extra commands for source file path substitution in GDB-specific syntax
+	protected setPathSubstitutions(substitutions: {
+		[index: string]: string;
+	}): void {
+		if (substitutions) {
+			Object.keys(substitutions).forEach((source) => {
+				this.miDebugger.extraCommands.push(
+					'gdb-set substitute-path "' +
+						escape(source) +
+						'" "' +
+						escape(substitutions[source]) +
+						'" --all',
+				);
+			});
+		}
+	}
+
+	protected override disconnectRequest(
+		response: DebugProtocol.DisconnectResponse,
+		args: DebugProtocol.DisconnectArguments,
+	): void {
+		// Shutdown OTEL before disconnecting
+		if (this.otelService) {
+			this.otelService
+				.shutdown()
+				.catch((err) => console.error("[OTel] Shutdown error:", err));
+		}
+		super.disconnectRequest(response, args);
+	}
 }
-console.log("Starting gdb adapter.......");
 DebugSession.run(GDBDebugSession);

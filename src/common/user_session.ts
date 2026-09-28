@@ -8,26 +8,26 @@ import * as crypto from "crypto";
  * This ID is shared across extension and adapter processes.
  */
 export async function getOrCreateUserId(): Promise<string> {
-  const userIdPath = path.join(os.homedir(), ".config", "ddb", "user_id");
+	const userIdPath = path.join(os.homedir(), ".config", "ddb", "user_id");
 
-  try {
-    const userId = await fs.promises.readFile(userIdPath, "utf-8");
-    return userId.trim();
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
-      const newUserId = crypto.randomUUID();
-      const dir = path.dirname(userIdPath);
-      await fs.promises.mkdir(dir, { recursive: true });
-      await fs.promises.writeFile(userIdPath, newUserId, "utf-8");
-      return newUserId;
-    }
-    throw err;
-  }
+	try {
+		const userId = await fs.promises.readFile(userIdPath, "utf-8");
+		return userId.trim();
+	} catch (err: any) {
+		if (err.code === "ENOENT") {
+			const newUserId = crypto.randomUUID();
+			const dir = path.dirname(userIdPath);
+			await fs.promises.mkdir(dir, { recursive: true });
+			await fs.promises.writeFile(userIdPath, newUserId, "utf-8");
+			return newUserId;
+		}
+		throw err;
+	}
 }
 
 /**
  * Generates a new session ID (UUID v4).
  */
 export function generateSessionId(): string {
-  return crypto.randomUUID();
+	return crypto.randomUUID();
 }

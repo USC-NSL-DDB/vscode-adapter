@@ -1,3 +1,15 @@
 {
-  "proseWrap": "never"
+  "proseWrap": "never",
+  "overrides": [
+    {
+      "files": [
+        "*.ts",
+        "*.mts",
+        "*.cjs"
+      ],
+      "options": {
+        "useTabs": true
+      }
+    }
+  ]
 }
