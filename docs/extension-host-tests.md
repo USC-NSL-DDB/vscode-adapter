@@ -100,6 +100,15 @@ clicks a caller frame and the breakpoint panel's inline source action. Disconnec
 must terminate both attached processes. It also checks initial stack retrieval
 finishes within one second without waiting for missing system-library sources.
 
+Add `DDB_GREETER_CONTINUE_ONLY=1` to run the Continue-all regression instead.
+It resumes the server, attaches a client, invokes VS Code's Continue command,
+and checks both the successful debugger response and `Greeter received: Hello world`.
+This scenario disables distributed-stack inspection and explicitly resumes the
+server after client attachment, since attachment/inspection may pause a peer
+and hide the case being tested. Run it with both
+`DDB_TEST_BACKEND=gdb` and `DDB_TEST_BACKEND=lldb`, in addition to the normal
+distributed-stack scenario.
+
 The normal scenario covers the group Quick Pick. The greeter scenario supplies
 its selected group through the same paired breakpoint request so it can test RPC
 and stop behavior independently. Both scenarios use an isolated VS Code profile.

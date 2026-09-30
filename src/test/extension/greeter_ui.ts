@@ -23,6 +23,7 @@ async function until(
 /** Opt-in test against the DDB-instrumented gRPC greeter client and server. */
 export async function run(): Promise<void> {
 	const workspace = process.env.DDB_GREETER_WORKSPACE!;
+	const continueOnly = process.env.DDB_GREETER_CONTINUE_ONLY === "1";
 	assert.ok(workspace && process.env.DDB_TEST_BINARY);
 	const directory = await mkdtemp(join(tmpdir(), "ddb-greeter-ui-"));
 	const discoveryFile = "/tmp/ddb/service_discovery/config";
@@ -138,7 +139,9 @@ export async function run(): Promise<void> {
 				ddbpath: process.env.DDB_TEST_BINARY,
 				configFilePath: config,
 				cwd: workspace,
-				distributedStack: true,
+				// Distributed inspection may pause running peers and mask the
+				// mixed-state Continue regression. Test that workflow separately.
+				distributedStack: !continueOnly,
 				valuesFormatting: "prettyPrinters",
 			}),
 			true,
@@ -161,9 +164,54 @@ export async function run(): Promise<void> {
 			Date.now() - stackStart < 1000,
 			"initial stack must not wait for unavailable library source",
 		);
-		await setBreakpoint("greeter_server.cc", 59, "greeter_server");
+		if (!continueOnly)
+			await setBreakpoint("greeter_server.cc", 59, "greeter_server");
 		await session.customRequest("continue", { threadId: serverThread });
 		await delay(300);
+		if (continueOnly) {
+			// Reproduce the toolbar workflow before installing any breakpoints: the
+			// server is already running when a new client attaches and pauses.
+			const beforeFirstClient = messages.length;
+			const firstClient = app("client", ["--target=localhost:50059"]);
+			await until(
+				() =>
+					messages.slice(beforeFirstClient).some((m) => m.event === "stopped"),
+				"first client must attach while the server runs",
+			);
+			// Attachment/inspection can also stop a peer. Establish the exact
+			// running-server/paused-client state before exercising the toolbar.
+			const serverSession = (
+				await session.customRequest("ddb.getSessions")
+			).sessions.find((item: any) => item.alias.includes("greeter_server"));
+			assert.ok(serverSession);
+			await session.customRequest("pause", { sessionId: serverSession.sid });
+			await session.customRequest("continue", { sessionId: serverSession.sid });
+			const beforeContinue = messages.length;
+			await vscode.commands.executeCommand("workbench.action.debug.continue");
+			await until(
+				() =>
+					messages
+						.slice(beforeContinue)
+						.some((m) => m.type === "response" && m.command === "continue"),
+				"toolbar Continue must complete with a running server and paused client",
+			);
+			const continued = messages
+				.slice(beforeContinue)
+				.find((m) => m.type === "response" && m.command === "continue");
+			assert.equal(continued.success, true, continued.message);
+			assert.equal(continued.body.allThreadsContinued, true);
+			await until(
+				() => firstClient.exitCode !== null,
+				"first client must finish its RPC",
+			);
+			assert.equal(firstClient.exitCode, 0);
+			assert.match(appOutput.client, /Greeter received: Hello world/);
+			assert.equal(server.exitCode, null, "server must remain running");
+			console.log(
+				"Toolbar Continue passed with running server and newly attached client",
+			);
+			return;
+		}
 		const beforeClient = messages.filter((m) => m.event === "stopped").length;
 		const client = app("client", ["--target=localhost:50059"]);
 		await until(
@@ -409,12 +457,8 @@ export async function run(): Promise<void> {
 				}
 			}
 		} catch (cleanupError) {
-			if (!failed) {
-				failed = true;
-				failure = cleanupError;
-			} else {
-				console.error("Greeter cleanup failed", cleanupError);
-			}
+			if (!failed) throw cleanupError;
+			console.error("Greeter cleanup failed", cleanupError);
 		}
 	}
 	if (failed) throw failure;
