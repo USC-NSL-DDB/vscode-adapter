@@ -262,6 +262,27 @@ export async function run(): Promise<void> {
 					),
 			"client frame scopes must finish loading",
 		);
+		const activeClientFrame = vscode.debug.activeStackItem;
+		assert.ok(activeClientFrame instanceof vscode.DebugStackFrame);
+		const clientStack = await session.customRequest("stackTrace", {
+			threadId: activeClientFrame.threadId,
+		});
+		const clientFrame = clientStack.stackFrames.find(
+			(frame: any) =>
+				frame.line === 70 && frame.source?.path?.endsWith("greeter_client.cc"),
+		);
+		assert.ok(clientFrame, "client RPC frame must be available");
+		const clientScopes = await session.customRequest("scopes", {
+			frameId: clientFrame.id,
+		});
+		const clientLocals = await session.customRequest("variables", {
+			variablesReference: clientScopes.scopes[0].variablesReference,
+		});
+		assert.deepEqual(
+			clientLocals.variables.map((variable: any) => variable.name).sort(),
+			["context", "reply", "request", "status", "this", "user"],
+			"client locals must exclude global constants and duplicate symbols",
+		);
 		await session.customRequest("continue", { threadId: clientThread });
 		await until(
 			() =>
