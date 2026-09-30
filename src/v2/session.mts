@@ -80,6 +80,7 @@ export class CanonicalDebugSession extends DebugSession {
 	private controlEpoch = 0;
 	private configured = false;
 	private focusedStop?: string;
+	private hitNavigation = 0;
 	private entrySetup?: Promise<void>;
 	private distributed = false;
 	private readonly pendingStops = new Map<string, ExecutionState>();
@@ -750,6 +751,7 @@ export class CanonicalDebugSession extends DebugSession {
 			return;
 		}
 		if (command === "ddb.focusBreakpointHit") {
+			const navigation = ++this.hitNavigation;
 			await this.reply(response, async () => {
 				const findHit = () =>
 					this.sidebar!.currentHits().find(
@@ -776,6 +778,7 @@ export class CanonicalDebugSession extends DebugSession {
 					{ threadId: hit.threadId },
 					this.distributed,
 				);
+				if (navigation !== this.hitNavigation) return { cancelled: true };
 				if (!findHit())
 					throw new Error(
 						"This breakpoint hit is no longer paused. Refresh the breakpoint panel.",

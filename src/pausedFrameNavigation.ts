@@ -56,10 +56,10 @@ export class PausedFrameNavigation implements vscode.Disposable {
 		await this.host.commands.executeCommand(
 			"workbench.debug.action.focusCallStackView",
 		);
-		const target: { frameId: number } = await session.customRequest(
-			"ddb.focusBreakpointHit",
-			hit,
-		);
+		if (navigation !== this.navigation) return;
+		const target: { frameId: number } | { cancelled: true } =
+			await session.customRequest("ddb.focusBreakpointHit", hit);
+		if (navigation !== this.navigation || "cancelled" in target) return;
 		let reachedTarget = false;
 		let cancelled = false;
 		await new Promise<void>((resolve, reject) => {

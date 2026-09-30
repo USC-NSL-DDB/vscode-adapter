@@ -1,7 +1,6 @@
 # gRPC with LLDB
 
-These profiles require DDB built from the LLDB validation branch and a matching
-adapter. Use LLDB 20 or later for the instrumented greeter binaries used here.
+These profiles use the DDB `dev` branch and the adapter `main` branch. Use LLDB 20 or later for the instrumented greeter binaries used here.
 LLDB 18 cannot read their `DW_FORM_data16` debug information.
 
 ## Setup

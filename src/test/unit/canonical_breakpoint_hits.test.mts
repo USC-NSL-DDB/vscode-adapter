@@ -125,6 +125,39 @@ suite("Current breakpoint hits", () => {
 		assert.equal(dap.events.length, 0);
 	});
 
+	test("a superseded hit cannot reclaim focus when its stack finishes last", async () => {
+		const { connection, model, sidebar, breakpoints } = fixture();
+		let release!: () => void;
+		const blocked = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		connection.client.collect = async (_method, args: any) => {
+			if (args.threadId === "one") await blocked;
+			return [{ frameId: `frame-${args.threadId}` }] as any;
+		};
+		const dap = new CanonicalHarness();
+		Object.assign(dap, {
+			connection,
+			inspection: model,
+			sidebar,
+			breakpoints,
+			execution: { pauseKind: () => undefined },
+		});
+		const [firstHit, secondHit] = sidebar.breakpointSnapshot()[0].hits;
+		const first = dap.request("ddb.focusBreakpointHit", firstHit);
+		const second = await dap.request("ddb.focusBreakpointHit", secondHit);
+		assert.equal(second.success, true);
+		release();
+		await first;
+		assert.deepEqual(
+			dap.events
+				.filter((event) => event.event === "stopped")
+				.map((event) => event.body.threadId),
+			[secondHit.threadId],
+			"the latest requested hit must retain focus",
+		);
+	});
+
 	test("explicit focus selects the requested stopped thread and rejects a resumed or newer hit", async () => {
 		const { connection, state, snapshot, model, sidebar, breakpoints } =
 			fixture();

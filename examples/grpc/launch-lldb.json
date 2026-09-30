@@ -5,7 +5,7 @@
       "name": "DDB: gRPC with LLDB",
       "type": "ddb",
       "request": "launch",
-      "ddbpath": "/absolute/path/to/lldb-branch/ddb",
+      "ddbpath": "/absolute/path/to/ddb",
       "configFilePath": "${workspaceFolder}/.ddb/dbg_grpc_lldb.yaml",
       "cwd": "${workspaceFolder}",
       "distributedStack": true,

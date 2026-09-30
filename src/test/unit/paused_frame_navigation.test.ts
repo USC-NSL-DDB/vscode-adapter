@@ -89,6 +89,42 @@ function fixture() {
 const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 suite("Paused-frame navigation", () => {
+	test("does not dispatch an older navigation after its view command finishes late", async () => {
+		const f = fixture();
+		let release!: () => void;
+		const blocked = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let opened = 0;
+		let requests = 0;
+		f.host.commands.executeCommand = async () => {
+			if (++opened === 1) await blocked;
+		};
+		f.session.customRequest = async () => {
+			requests++;
+			return { frameId: 12 };
+		};
+		try {
+			const first = f.navigation.focus(f.session as any, f.hit);
+			const second = f.navigation.focus(f.session as any, f.hit);
+			await turn();
+			f.request(1);
+			f.select(12);
+			f.response(1);
+			await second;
+			release();
+			await first;
+			assert.equal(
+				requests,
+				1,
+				"only the latest navigation should reach the adapter",
+			);
+		} finally {
+			release();
+			f.navigation.dispose();
+		}
+	});
+
 	test("waits for both the target frame and all concurrent stack replies before selecting the row", async () => {
 		const f = fixture();
 		try {
