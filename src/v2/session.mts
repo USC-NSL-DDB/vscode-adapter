@@ -771,15 +771,21 @@ export class CanonicalDebugSession extends DebugSession {
 				// Explicit navigation asks the DAP client to select this stopped thread's
 				// top frame without resuming the target.
 				// VS Code may load the stack both for stop focus and for an expanded
-				// tree. Preload it so those reads finish before its selection update.
-				await this.model.stack({ threadId: hit.threadId }, this.distributed);
+				// tree. Preload once and give the extension the precise frame to await.
+				const stack = await this.model.stack(
+					{ threadId: hit.threadId },
+					this.distributed,
+				);
 				if (!findHit())
 					throw new Error(
 						"This breakpoint hit is no longer paused. Refresh the breakpoint panel.",
 					);
+				const frameId = stack.stackFrames[0]?.id;
+				if (frameId === undefined)
+					throw new Error("The paused thread has no available stack frame");
 				this.focusedStop = threadId;
 				this.publishStopped(threadId, state, true);
-				return {};
+				return { frameId };
 			});
 			return;
 		}

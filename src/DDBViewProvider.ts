@@ -1,3 +1,4 @@
+import { PausedFrameNavigation } from "./pausedFrameNavigation";
 import { registerSessionControls } from "./sessionControls";
 import * as vscode from "vscode";
 import * as path from "path";
@@ -1111,6 +1112,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(breakpointsRefreshCommand);
 
+	const pausedFrameNavigation = new PausedFrameNavigation(vscode);
+	context.subscriptions.push(pausedFrameNavigation);
 	context.subscriptions.push(
 		vscode.commands.registerCommand(
 			"ddbBreakpointsExplorer.focusHit",
@@ -1139,12 +1142,7 @@ export function activate(context: vscode.ExtensionContext) {
 							)?.hit;
 				if (!hit) return;
 				try {
-					// Open the view before the stop event arrives so VS Code can reveal and
-					// select its frame row, including when the Call Stack was collapsed.
-					await vscode.commands.executeCommand(
-						"workbench.debug.action.focusCallStackView",
-					);
-					await session.customRequest("ddb.focusBreakpointHit", hit);
+					await pausedFrameNavigation.focus(session, hit);
 				} catch (error) {
 					void vscode.window.showWarningMessage(
 						`Could not focus breakpoint hit: ${String(error)}`,

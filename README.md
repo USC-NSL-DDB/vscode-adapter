@@ -108,7 +108,10 @@ Currently hit breakpoints show **Hit** and a session count in the panel. Expand 
 group to see which sessions are paused there; those sessions have a yellow frame
 arrow. Hover or focus a hit row and use **Go to Paused Frame** to select its call
 frame and variables. The action opens the Call Stack pane and reveals the selected
-row, including when the pane or target thread was collapsed. Rows with several hits offer a session/thread picker.
+row, including when the pane or target thread was collapsed or another thread's
+caller was selected. Navigation waits for stack replies before selecting the row,
+so a delayed refresh does not leave the previous frame highlighted. Rows with
+several hits offer a session/thread picker.
 Indicators clear as each hitting thread resumes, even if other sessions remain
 stopped. Historical hit counts stay in the tooltip.
 

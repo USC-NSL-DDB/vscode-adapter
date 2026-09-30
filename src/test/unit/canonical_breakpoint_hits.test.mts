@@ -113,6 +113,18 @@ suite("Current breakpoint hits", () => {
 		assert.equal(dap.events.length, 0);
 	});
 
+	test("a stopped thread without frames fails navigation without announcing a new stop", async () => {
+		const { connection, model, sidebar, breakpoints } = fixture();
+		connection.client.collect = async () => [];
+		const dap = new CanonicalHarness();
+		Object.assign(dap, { connection, inspection: model, sidebar, breakpoints });
+		const hit = sidebar.breakpointSnapshot()[0].hits[0];
+		const response = await dap.request("ddb.focusBreakpointHit", hit);
+		assert.equal(response.success, false);
+		assert.match(response.message!, /no available stack frame/);
+		assert.equal(dap.events.length, 0);
+	});
+
 	test("explicit focus selects the requested stopped thread and rejects a resumed or newer hit", async () => {
 		const { connection, state, snapshot, model, sidebar, breakpoints } =
 			fixture();
@@ -126,10 +138,10 @@ suite("Current breakpoint hits", () => {
 			focusedStop: "one",
 		});
 		const hit = sidebar.breakpointSnapshot()[0].hits[1];
-		assert.equal(
-			(await dap.request("ddb.focusBreakpointHit", hit)).success,
-			true,
-		);
+		const focused = await dap.request("ddb.focusBreakpointHit", hit);
+		assert.equal(focused.success, true);
+		const stack = await model.stack({ threadId: hit.threadId }, false);
+		assert.equal(focused.body.frameId, stack.stackFrames[0].id);
 		const stop = dap.events.at(-1)!;
 		assert.equal(stop.event, "stopped");
 		assert.equal(stop.body.threadId, hit.threadId);

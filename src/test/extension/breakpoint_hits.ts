@@ -72,12 +72,13 @@ export async function testBreakpointHits(): Promise<void> {
 			},
 		})),
 	};
-	snapshot.threads!.push({
-		threadId: "running",
-		sessionId: "b",
-		name: "running",
-		state: "THREAD_STATE_RUNNING",
-	});
+	if (process.env.DDB_HIT_ALL_STOPPED !== "1")
+		snapshot.threads!.push({
+			threadId: "running",
+			sessionId: "b",
+			name: "running",
+			state: "THREAD_STATE_RUNNING",
+		});
 	const state = new DdbState();
 	const distributed = process.env.DDB_HIT_DISTRIBUTED === "1";
 	const connection = {
@@ -158,7 +159,16 @@ export async function testBreakpointHits(): Promise<void> {
 				message: response.message,
 				body: response.body,
 			});
-			emitter.fire(response);
+			if (response.command === "stackTrace") {
+				// Remote adapter replies can arrive after the tree refresh starts.
+				// Backend-only delay misses this because DDB preloads the stack.
+				setTimeout(
+					() => emitter.fire(response),
+					Number(process.env.DDB_HIT_STACK_DELAY_MS ?? 150),
+				);
+			} else {
+				emitter.fire(response);
+			}
 		}
 		async launchRequest(response: DebugProtocol.LaunchResponse) {
 			Object.assign(this, { distributed });
@@ -335,6 +345,30 @@ export async function testBreakpointHits(): Promise<void> {
 					`Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row[aria-selected="true"]')).some(row => row.textContent.includes('[breakpoint] b'))`,
 				),
 			"hit navigation must select its row after another thread was manually selected",
+		);
+		// A second stopped thread in the same process must work as well.
+		const sibling = breakpoints.find((bp: any) => bp.location.line === 3)
+			.hits[0];
+		await vscode.commands.executeCommand("ddbBreakpointsExplorer.focusHit", {
+			hits: [sibling],
+		});
+		await vscode.commands.executeCommand(
+			"workbench.action.debug.callStackBottom",
+		);
+		await until(
+			() =>
+				vscode.window.activeTextEditor?.selection.start.line === 0 &&
+				vscode.debug.activeStackItem instanceof vscode.DebugStackFrame &&
+				vscode.debug.activeStackItem.threadId === sibling.threadId,
+			"same-process sibling caller must be selected",
+		);
+		assert.ok(click("worker-b", '[aria-label="Go to Paused Frame"]'));
+		await until(
+			() =>
+				ui(
+					`Array.from(document.querySelectorAll('[aria-label="Debug Call Stack"] .monaco-list-row[aria-selected="true"]')).some(row => row.textContent.includes('[breakpoint] b'))`,
+				),
+			"hit navigation must select its row after inspecting a sibling thread",
 		);
 		// Parent actions present every current hit and can navigate back to another session.
 		assert.ok(click("hits.c:2", '[aria-label="Go to Paused Frame"]'));
