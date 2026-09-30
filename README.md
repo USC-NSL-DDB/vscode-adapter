@@ -31,6 +31,25 @@ Debug Console and `autorun` accept native debugger CLI commands, such as
 `-data-evaluate-expression` with their CLI equivalents. Watch and hover expressions
 use typed evaluation directly.
 
+## Variables
+
+With the current DDB backend, the Variables view offers Locals and arguments,
+File statics, Globals (current source unit), and Registers for GDB and LLDB.
+Function-local statics stay with the locals. The nonlocal scopes load when opened;
+VS Code can restore previously expanded scopes when you change frames.
+
+Globals includes declarations from the selected source file and its included
+headers. It is not a search across every module in the process. Watch expressions
+remain useful for symbols outside that source unit. Expansion and editing use
+DDB variable identities, so display labels do not determine which storage is read
+or changed. Scopes belong to the selected frame, including distributed callers,
+and expire when that thread resumes.
+
+The adapter honors bounded variable requests and preserves edit identities across
+out-of-order pages. If VS Code requests a full named-variable collection, the
+adapter reads API pages up to its 10,000-entry limit. Older backends that expose
+only Locals continue to show the scopes they provide.
+
 ## Managed launch
 
 Use a working DDB YAML configuration. In `.vscode/launch.json`:

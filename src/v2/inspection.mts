@@ -336,6 +336,16 @@ export class DdbInspection {
 					return {
 						name: scope.name ?? "Locals",
 						expensive: scope.expensive ?? false,
+						presentationHint:
+							scope.kind === "SCOPE_KIND_LOCALS" ||
+							scope.kind === "SCOPE_KIND_ARGUMENTS"
+								? "locals"
+								: undefined,
+						namedVariables:
+							scope.variableCount !== undefined &&
+							Number.isSafeInteger(Number(scope.variableCount))
+								? Number(scope.variableCount)
+								: undefined,
 						variablesReference: this.variables.put(
 							{ frame, kind: "scope", id: scope.scopeId },
 							scope.scopeId,
@@ -344,7 +354,8 @@ export class DdbInspection {
 				}),
 				{
 					name: "Registers",
-					expensive: false,
+					expensive: true,
+					presentationHint: "registers",
 					variablesReference: this.variables.put(
 						{ frame, kind: "registers", id: frame.frame.frameId! },
 						`registers:${frame.frame.frameId}`,
@@ -376,20 +387,86 @@ export class DdbInspection {
 				})),
 			};
 		}
-		const variables =
-			context.kind === "scope"
-				? await client.collect("DebuggerService.ListVariables", {
-						scopeId: context.id,
-					})
-				: await client.collect("DebuggerService.ExpandVariable", {
-						variableId: context.id,
-					});
-		check();
-		context.children = variables;
 		const start = args.start ?? 0;
+		const count = args.count ?? 0;
+		const end = count ? start + count : undefined;
+		// Match the SDK collector's bound, including the prefix needed to reach
+		// an offset through continuation tokens.
+		if (
+			!Number.isSafeInteger(start) ||
+			!Number.isSafeInteger(count) ||
+			start < 0 ||
+			count < 0 ||
+			start > 10000 ||
+			(end !== undefined && end > 10000)
+		) {
+			throw new Error(
+				"Invalid variable range: at most 10000 entries can be requested",
+			);
+		}
+		const variables: Variable[] = [];
+		if (end === undefined) {
+			variables.push(
+				...(context.kind === "scope"
+					? await client.collect("DebuggerService.ListVariables", {
+							scopeId: context.id,
+						})
+					: await client.collect("DebuggerService.ExpandVariable", {
+							variableId: context.id,
+						})),
+			);
+		} else {
+			// Canonical pages use continuation tokens. Read only as far as DAP
+			// requests, instead of eagerly collecting the rest of a large scope.
+			let pageToken: string | undefined;
+			const seen = new Set<string>();
+			while (variables.length < end) {
+				const page = {
+					pageSize: Math.min(200, end - variables.length),
+					pageToken,
+				};
+				const result =
+					context.kind === "scope"
+						? await client.call("DebuggerService.ListVariables", {
+								scopeId: context.id,
+								page,
+							})
+						: await client.call("DebuggerService.ExpandVariable", {
+								variableId: context.id,
+								page,
+							});
+				check();
+				if ((result.variables?.length ?? 0) > page.pageSize)
+					throw new Error("DDB exceeded the requested variable page size");
+				if (!result.variables?.length && result.page?.nextPageToken)
+					throw new Error(
+						"DDB returned an empty variable page with a continuation token",
+					);
+				variables.push(...(result.variables ?? []));
+				pageToken = result.page?.nextPageToken;
+				if (!pageToken) break;
+				if (seen.has(pageToken))
+					throw new Error("DDB repeated a variable page token");
+				seen.add(pageToken);
+			}
+		}
+		check();
+		// Earlier pages may remain visible and editable after an out-of-order
+		// refresh. Keep their identities until this scope is invalidated.
+		context.children =
+			end === undefined
+				? variables
+				: [
+						...new Map(
+							[...(context.children ?? []), ...variables].map((variable) => [
+								variable.variableId ?? variable.name,
+								variable,
+							]),
+						).values(),
+					];
 		return {
 			variables: variables
-				.slice(start, args.count ? start + args.count : undefined)
+				.slice(start, end)
 				.map((variable) => this.variable(variable, context.frame)),
 		};
 	}

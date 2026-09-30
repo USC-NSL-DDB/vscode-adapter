@@ -275,6 +275,39 @@ export async function run(): Promise<void> {
 		const clientScopes = await session.customRequest("scopes", {
 			frameId: clientFrame.id,
 		});
+		assert.deepEqual(
+			clientScopes.scopes.map((scope: any) => scope.name),
+			[
+				"Locals and arguments",
+				"File statics",
+				"Globals (current source unit)",
+				"Registers",
+			],
+		);
+		for (const scope of clientScopes.scopes.slice(1)) {
+			assert.equal(scope.expensive, true, "nonlocal scopes must be deferred");
+		}
+		for (const scope of clientScopes.scopes.slice(1, 3)) {
+			const page = await session.customRequest("variables", {
+				variablesReference: scope.variablesReference,
+				start: 0,
+				count: 1,
+			});
+			assert.equal(page.variables.length, 1, `${scope.name} must be browsable`);
+			const all = await session.customRequest("variables", {
+				variablesReference: scope.variablesReference,
+			});
+			const names = all.variables.map((variable: any) => variable.name);
+			assert.equal(
+				new Set(names).size,
+				names.length,
+				`${scope.name} must not repeat declarations`,
+			);
+			assert.ok(
+				!names.includes("this"),
+				"nonlocal scopes must not contain frame arguments",
+			);
+		}
 		const clientLocals = await session.customRequest("variables", {
 			variablesReference: clientScopes.scopes[0].variablesReference,
 		});

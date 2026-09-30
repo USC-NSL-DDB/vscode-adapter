@@ -271,3 +271,132 @@ suite("Canonical inspection lifetimes", () => {
 		assert.ok((await model.scopes(frame.id)).scopes.length > 0);
 	});
 });
+
+suite("Canonical variable scopes", () => {
+	test("preserves scope metadata and defers variable queries", async () => {
+		const { model, connection, calls } = fixture();
+		const threadId = model.threadHandle("one");
+		const frame = (await model.stack({ threadId })).stackFrames[0];
+		connection.client.collect = (async () => [
+			{
+				scopeId: "locals",
+				name: "Locals and arguments",
+				kind: "SCOPE_KIND_LOCALS",
+				expensive: false,
+			},
+			{
+				scopeId: "statics",
+				name: "File statics",
+				kind: "SCOPE_KIND_STATICS",
+				expensive: true,
+			},
+			{
+				scopeId: "globals",
+				name: "Globals (current source unit)",
+				kind: "SCOPE_KIND_GLOBALS",
+				expensive: true,
+				variableCount: "300",
+			},
+		]) as any;
+		const scopes = (await model.scopes(frame.id)).scopes;
+		assert.deepEqual(
+			scopes.map((s) => s.name),
+			[
+				"Locals and arguments",
+				"File statics",
+				"Globals (current source unit)",
+				"Registers",
+			],
+		);
+		assert.deepEqual(
+			scopes.map((s) => s.expensive),
+			[false, true, true, true],
+		);
+		assert.equal(scopes[0].presentationHint, "locals");
+		assert.equal(scopes[3].presentationHint, "registers");
+		assert.equal(scopes[2].namedVariables, 300);
+		assert.ok(!calls.some((c) => /ListVariables|ListRegisters/.test(c.method)));
+	});
+
+	test("a bounded DAP request stops at its requested page and keeps edit identities", async () => {
+		const { model, connection } = fixture();
+		const threadId = model.threadHandle("one");
+		const frame = (await model.stack({ threadId })).stackFrames[0];
+		const scope = (await model.scopes(frame.id)).scopes[0];
+		const requests: any[] = [];
+		const originalCall = connection.client.call.bind(connection.client);
+		connection.client.call = (async (method: any, args: any) => {
+			if (method !== "DebuggerService.ListVariables")
+				return originalCall(method, args);
+			requests.push(args);
+			return {
+				variables: [
+					{ name: "same @ first.cc:1", value: "1", variableId: "first" },
+					{ name: "same @ second.cc:1", value: "2", variableId: "second" },
+				].slice(0, args.page.pageSize),
+				page: { nextPageToken: "more" },
+			};
+		}) as any;
+		const result = await model.listVariables({
+			variablesReference: scope.variablesReference,
+			start: 1,
+			count: 1,
+		});
+		assert.deepEqual(
+			result.variables.map((v) => v.name),
+			["same @ second.cc:1"],
+		);
+		assert.equal(requests.length, 1);
+		assert.equal(requests[0].page.pageSize, 2);
+		await model.listVariables({
+			variablesReference: scope.variablesReference,
+			start: 0,
+			count: 1,
+		});
+		const assigned = await model.setVariable({
+			variablesReference: scope.variablesReference,
+			name: "same @ second.cc:1",
+			value: "3",
+		});
+		assert.equal(assigned.value, "3");
+	});
+	for (const range of [
+		{ start: -1 },
+		{ start: 0.5 },
+		{ count: -1 },
+		{ start: 10000, count: 1 },
+		{ count: Number.MAX_SAFE_INTEGER },
+	]) {
+		test(`rejects invalid variable range ${JSON.stringify(range)} before querying`, async () => {
+			const { model, calls } = fixture();
+			const frame = (await model.stack({ threadId: model.threadHandle("one") }))
+				.stackFrames[0];
+			const scope = (await model.scopes(frame.id)).scopes[0];
+			await assert.rejects(
+				model.listVariables({
+					variablesReference: scope.variablesReference,
+					...range,
+				}),
+				/variable range/,
+			);
+			assert.ok(!calls.some((c) => c.method.endsWith("ListVariables")));
+		});
+	}
+	test("rejects a non-progressing continuation page", async () => {
+		const { model, connection } = fixture();
+		const frame = (await model.stack({ threadId: model.threadHandle("one") }))
+			.stackFrames[0];
+		const scope = (await model.scopes(frame.id)).scopes[0];
+		connection.client.call = (async () => ({
+			variables: [],
+			page: { nextPageToken: "more" },
+		})) as any;
+		await assert.rejects(
+			model.listVariables({
+				variablesReference: scope.variablesReference,
+				count: 1,
+			}),
+			/empty variable page/,
+		);
+	});
+});
