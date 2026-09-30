@@ -24,6 +24,7 @@ async function until(
 export async function run(): Promise<void> {
 	const workspace = process.env.DDB_GREETER_WORKSPACE!;
 	const continueOnly = process.env.DDB_GREETER_CONTINUE_ONLY === "1";
+	const faketimeLibrary = process.env.DDB_TEST_LIBFAKETIME;
 	assert.ok(workspace && process.env.DDB_TEST_BINARY);
 	const directory = await mkdtemp(join(tmpdir(), "ddb-greeter-ui-"));
 	const discoveryFile = "/tmp/ddb/service_discovery/config";
@@ -51,7 +52,22 @@ export async function run(): Promise<void> {
 		const child = spawn(
 			join(workspace, "build", `greeter_${name}`),
 			["--ddb", ...args],
-			{ cwd: join(workspace, "build"), stdio: ["ignore", "pipe", "pipe"] },
+			{
+				cwd: join(workspace, "build"),
+				stdio: ["ignore", "pipe", "pipe"],
+				env: {
+					...process.env,
+					...(faketimeLibrary
+						? {
+								LD_PRELOAD: faketimeLibrary,
+								FAKETIME: "-00000000000000000000.000000000",
+								FAKETIME_NO_CACHE: "1",
+								FAKETIME_DONT_FAKE_MONOTONIC: "1",
+								FAKETIME_DISABLE_SHM: "1",
+							}
+						: {}),
+				},
+			},
 		);
 		children.push(child);
 		const capture = (data: Buffer) => {
@@ -91,7 +107,7 @@ export async function run(): Promise<void> {
 		);
 	};
 
-	try {
+	const scenario = async () => {
 		const extension = vscode.extensions.getExtension("ddb.ddb-debugger")!;
 		if (process.env.DDB_TEST_EXTENSION_DIRECTORY)
 			assert.equal(
@@ -370,6 +386,22 @@ export async function run(): Promise<void> {
 			[],
 			"real frame selection must not produce expired inspection errors",
 		);
+		if (faketimeLibrary) {
+			// Cross a decimal boundary after both RPC stops and caller inspection.
+			await delay(11000);
+			await session.customRequest("continue", {
+				threadId: hit.body.threadId,
+			});
+			await until(
+				() => client.exitCode !== null,
+				"PET client must complete after frame inspection",
+			);
+			assert.equal(client.exitCode, 0);
+			assert.match(appOutput.client, /Greeter received: Hello world/);
+			console.log(
+				"PET Continue after caller/callee breakpoints and frame inspection passed",
+			);
+		}
 		await vscode.debug.stopDebugging(session);
 		await until(
 			() =>
@@ -379,10 +411,13 @@ export async function run(): Promise<void> {
 			"disconnect must terminate both attached greeter processes",
 		);
 		assert.equal(server.signalCode, "SIGKILL");
-		assert.equal(client.signalCode, "SIGKILL");
+		if (!faketimeLibrary) assert.equal(client.signalCode, "SIGKILL");
 		console.log(
 			"Greeter VS Code UI passed: client/server highlights, breakpoint thread labels, caller selection, source navigation, variable inspection and inferior cleanup",
 		);
+	};
+	try {
+		await scenario();
 	} catch (error) {
 		failed = true;
 		failure = error;
@@ -457,8 +492,12 @@ export async function run(): Promise<void> {
 				}
 			}
 		} catch (cleanupError) {
-			if (!failed) throw cleanupError;
-			console.error("Greeter cleanup failed", cleanupError);
+			if (!failed) {
+				failed = true;
+				failure = cleanupError;
+			} else {
+				console.error("Greeter cleanup failed", cleanupError);
+			}
 		}
 	}
 	if (failed) throw failure;

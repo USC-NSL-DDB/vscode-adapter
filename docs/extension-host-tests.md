@@ -109,6 +109,12 @@ and hide the case being tested. Run it with both
 `DDB_TEST_BACKEND=gdb` and `DDB_TEST_BACKEND=lldb`, in addition to the normal
 distributed-stack scenario.
 
+Set `DDB_TEST_LIBFAKETIME=/path/to/libfaketimeMT.so.1` to enable PET in the
+greeter processes. The distributed-stack scenario then waits 11 seconds after
+caller/callee breakpoint and frame inspection, continues again, and requires
+a successful RPC. This catches clock-offset buffer shrinkage at decimal
+boundaries. The debugger's own process is not preloaded with libfaketime.
+
 The normal scenario covers the group Quick Pick. The greeter scenario supplies
 its selected group through the same paired breakpoint request so it can test RPC
 and stop behavior independently. Both scenarios use an isolated VS Code profile.
