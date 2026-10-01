@@ -157,6 +157,11 @@
         "command": "ddb.jumpToFocusedFrame",
         "title": "Jump to Focused Frame",
         "icon": "$(target)"
+      },
+      {
+        "command": "ddbSessionsExplorer.copyDetails",
+        "title": "Copy Session Details",
+        "icon": "$(copy)"
       }
     ],
     "breakpoints": [
@@ -725,28 +730,33 @@
         },
         {
           "command": "ddbSessionsExplorer.sendSignal",
-          "when": "viewItem == sessionItem",
-          "group": "inline"
+          "when": "view == ddbSessionsExplorer && viewItem =~ /^sessionItem[.]/",
+          "group": "sessionControl@2"
         },
         {
           "command": "ddbSessionsExplorer.killSession",
-          "when": "viewItem == sessionItem",
-          "group": "inline"
+          "when": "view == ddbSessionsExplorer && viewItem =~ /^sessionItem[.]/",
+          "group": "sessionControl@3"
         },
         {
           "command": "ddbSessionsExplorer.pauseSession",
-          "when": "viewItem == sessionItem",
-          "group": "inline"
+          "when": "view == ddbSessionsExplorer && viewItem == sessionItem.running",
+          "group": "inline@1"
         },
         {
           "command": "ddbSessionsExplorer.continueSession",
-          "when": "viewItem == sessionItem",
-          "group": "inline"
+          "when": "view == ddbSessionsExplorer && viewItem == sessionItem.paused",
+          "group": "inline@1"
         },
         {
           "command": "ddbSessionsExplorer.showLogicalGroupDetails",
           "when": "view == ddbSessionsExplorer && viewItem == logicalGroup",
           "group": "inline"
+        },
+        {
+          "command": "ddbSessionsExplorer.copyDetails",
+          "when": "view == ddbSessionsExplorer && viewItem =~ /^sessionItem[.]/",
+          "group": "sessionDetails@1"
         }
       ]
     }

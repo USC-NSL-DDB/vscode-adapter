@@ -85,11 +85,63 @@ export async function testSessionControls(): Promise<void> {
 		await vscode.commands.executeCommand("ddbSessionsExplorer.toggleGrouping");
 		const rows = `Array.from(document.querySelectorAll('[aria-label="DDB Sessions"] .monaco-list-row'))`;
 		const button = (name: string) =>
-			`${rows}.find(row => row.textContent.includes('server ('))?.querySelector('[aria-label="${name}"]')`;
+			`${rows}.find(row => row.textContent.includes('server · Session'))?.querySelector('[aria-label="${name}"]')`;
 		await until(
 			() => ui(`!!(${button("Continue Session")})`),
 			"server row must provide a continue button",
 		);
+		assert.equal(
+			ui(`${rows}.some(row => /\\[(sid|grp_id):/.test(row.textContent))`),
+			false,
+		);
+		assert.equal(
+			ui(`!!(${button("Pause Session")})`),
+			false,
+			"paused rows must not show Pause",
+		);
+		ui(
+			`(() => { ${rows}.find(row => row.textContent.includes('server · Session'))?.querySelector('.monaco-tl-twistie').click(); })()`,
+		);
+		await until(
+			() => ui(`${rows}.some(row => row.textContent.startsWith('Tag'))`),
+			"expanded session must expose its full tag",
+		);
+		await vscode.commands.executeCommand("ddbSessionsExplorer.refresh");
+		await until(
+			() => ui(`${rows}.some(row => row.textContent.startsWith('Tag'))`),
+			"refresh must preserve expanded details",
+		);
+		ui(`(() => {
+			const row = ${rows}.find(row => row.textContent.includes('server · Session'));
+			const rect = row.getBoundingClientRect();
+			row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2, clientX: rect.x + 90, clientY: rect.y + 10 }));
+		})()`);
+		const menuItems = `Array.from(document.querySelectorAll('.monaco-menu .action-item'))`;
+		await until(
+			() =>
+				ui(
+					`${menuItems}.some(item => item.textContent.includes('Copy Session Details'))`,
+				),
+			"session context menu must expose Copy Details",
+		);
+		for (const label of ["Send Signal", "Kill Session"]) {
+			assert.ok(
+				ui(
+					`${menuItems}.some(item => item.textContent.includes(${JSON.stringify(label)}))`,
+				),
+				`${label} must remain available`,
+			);
+		}
+		ui(`(() => {
+			const action = ${menuItems}.find(item => item.textContent.includes('Copy Session Details')).querySelector('a');
+			action.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+		})()`);
+		await until(
+			async () =>
+				(await vscode.env.clipboard.readText()).includes("Group hash:"),
+			"Copy Details must include full metadata",
+		);
+		assert.ok((await vscode.env.clipboard.readText()).includes("Tag:"));
 		const beforeControl = messages.length;
 		assert.ok(
 			ui(`(() => { ${button("Continue Session")}.click(); return true; })()`),
@@ -132,6 +184,15 @@ export async function testSessionControls(): Promise<void> {
 		assert.ok(
 			(await session.customRequest("scopes", { frameId: clientFrame.id }))
 				.scopes.length,
+		);
+		await until(
+			() => ui(`!!(${button("Pause Session")})`),
+			"running row must offer Pause",
+		);
+		assert.equal(
+			ui(`!!(${button("Continue Session")})`),
+			false,
+			"running rows must not show Continue",
 		);
 		assert.ok(
 			ui(`(() => { ${button("Pause Session")}.click(); return true; })()`),

@@ -1,3 +1,8 @@
+import {
+	LogicalGroupItem,
+	SessionItem,
+	SessionItemDetail,
+} from "./sessionTreeItems";
 import { PausedFrameNavigation } from "./pausedFrameNavigation";
 import { registerSessionControls } from "./sessionControls";
 import * as vscode from "vscode";
@@ -65,7 +70,7 @@ class SessionsProvider implements vscode.TreeDataProvider<
 	// Update view description to show current mode
 	private updateViewDescription(): void {
 		if (this.treeView) {
-			const description = this.isGroupedMode ? "Grouped" : "Flatten";
+			const description = this.isGroupedMode ? "Grouped" : "Flat";
 			this.treeView.description = description;
 		}
 	}
@@ -106,13 +111,7 @@ class SessionsProvider implements vscode.TreeDataProvider<
 		if (!element) {
 			// Root level: Show logical groups or empty state
 			if (!this.isDebugSessionActive) {
-				return [
-					new SessionItem(
-						"Start DDB to view sessions",
-						vscode.TreeItemCollapsibleState.None,
-						false,
-					),
-				];
+				return [new SessionItemDetail("Start DDB to view sessions", "")];
 			}
 
 			// Get all logical groups and sessions
@@ -120,13 +119,7 @@ class SessionsProvider implements vscode.TreeDataProvider<
 			const ungroupedSessions = this.sessionManager.getUngroupedSessions();
 
 			if (groups.length === 0 && ungroupedSessions.length === 0) {
-				return [
-					new SessionItem(
-						"No sessions found",
-						vscode.TreeItemCollapsibleState.None,
-						false,
-					),
-				];
+				return [new SessionItemDetail("No sessions found", "")];
 			}
 
 			// Return view based on mode
@@ -145,82 +138,20 @@ class SessionsProvider implements vscode.TreeDataProvider<
 				return this.getSessionsForGroup(element.group.id);
 			}
 		} else if (element instanceof SessionItem) {
-			// Session level: Show session details (works in both modes)
-			if (element.sessionDetails) {
-				const sessionDetails = element.sessionDetails;
-				const sessionDetailsItems: SessionItemDetail[] = [];
-				for (const key in sessionDetails) {
-					if (Object.prototype.hasOwnProperty.call(sessionDetails, key)) {
-						const value = sessionDetails[key];
-						const sessionDetailItem = new SessionItemDetail(
-							key,
-							vscode.TreeItemCollapsibleState.None,
-							value,
-						);
-						sessionDetailsItems.push(sessionDetailItem);
-					}
-				}
-				return sessionDetailsItems;
-			}
-		}
-		return [];
-	}
-
-	private formatSessionItem(session: ddb_api.Session): SessionItem {
-		return new SessionItem(
-			`[sid: ${session.sid}] ${session.alias}`,
-			vscode.TreeItemCollapsibleState.Collapsed,
-			true,
-			session.status,
-			session.sid,
-			{
-				"Session Alias": String(session.alias),
-				"Session ID": String(session.sid),
-				"Session Tag": session.tag,
-			},
-		);
-	}
-
-	private formatSessionItemWithLogicalGroup(
-		session: ddb_api.Session,
-		group?: LogicalGroup,
-	): SessionItem {
-		if (!group) {
-			return new SessionItem(
-				`["Ungrouped", sid: ${session.sid}] ${session.alias}`,
-				vscode.TreeItemCollapsibleState.Collapsed, // Still expandable for details
-				true,
-				session.status,
-				session.sid,
-				{
-					"Session Alias": String(session.alias),
-					"Session ID": String(session.sid),
-					"Session Tag": session.tag,
-					"Belongs to Group (id)": "N/A",
-					"Belongs to Group (alias)": "N/A",
-				},
+			return Object.entries(element.sessionDetails).map(
+				([key, value]) => new SessionItemDetail(key, value, element.id),
 			);
 		}
-		return new SessionItem(
-			`[grp_id: ${group.id}, sid: ${session.sid}] ${session.alias}`,
-			vscode.TreeItemCollapsibleState.Collapsed, // Still expandable for details
-			true,
-			session.status,
-			session.sid,
-			{
-				"Session Alias": String(session.alias),
-				"Session ID": String(session.sid),
-				"Session Tag": session.tag,
-				"Belongs to Group (id)": String(group.id),
-				"Belongs to Group (alias)": group.alias,
-			},
-		);
+		return [];
 	}
 
 	private getSessionsForGroup(groupId: number): SessionItem[] {
 		try {
 			const sessions = this.sessionManager.getSessionsByGroup(groupId);
-			return sessions.map((session) => this.formatSessionItem(session));
+			return sessions.map(
+				(session) =>
+					new SessionItem(session, this.sessionManager.getGroup(groupId)),
+			);
 		} catch (error) {
 			const errorMessage =
 				error instanceof Error ? error.message : String(error);
@@ -234,7 +165,7 @@ class SessionsProvider implements vscode.TreeDataProvider<
 	private getUngroupedSessionItems(): SessionItem[] {
 		try {
 			const sessions = this.sessionManager.getUngroupedSessions();
-			return sessions.map((session) => this.formatSessionItem(session));
+			return sessions.map((session) => new SessionItem(session));
 		} catch (error) {
 			const errorMessage =
 				error instanceof Error ? error.message : String(error);
@@ -286,14 +217,13 @@ class SessionsProvider implements vscode.TreeDataProvider<
 		for (const group of groups) {
 			const sessions = this.sessionManager.getSessionsByGroup(group.id);
 			for (const session of sessions) {
-				const groupInfo = `[${group.alias}]`;
-				items.push(this.formatSessionItemWithLogicalGroup(session, group));
+				items.push(new SessionItem(session, group, true));
 			}
 		}
 
 		// Add ungrouped sessions
 		for (const session of ungroupedSessions) {
-			items.push(this.formatSessionItemWithLogicalGroup(session));
+			items.push(new SessionItem(session, undefined, true));
 		}
 
 		return items;
@@ -542,58 +472,7 @@ class BreakpointsProvider implements vscode.TreeDataProvider<BreakpointTreeItem>
 // Tree Item Classes
 // ============================================================================
 
-class LogicalGroupItem extends vscode.TreeItem {
-	constructor(
-		public readonly group: LogicalGroup,
-		public readonly sessionCount: number,
-		public readonly isUngrouped: boolean = false,
-	) {
-		super(
-			isUngrouped
-				? `Ungrouped (${sessionCount})`
-				: `[grp_id: ${group.id}] ${group.alias} (${sessionCount} sessions)`,
-			vscode.TreeItemCollapsibleState.Collapsed,
-		);
-		this.contextValue = "logicalGroup";
-		this.tooltip = isUngrouped
-			? `Sessions not belonging to any logical group`
-			: `Logical Group Detail:\nGroup ID: ${group.id}\nGroup Alias: ${group.alias}\nGroup Hash: ${group.hash}\nNumber of Sessions: ${sessionCount}`;
-	}
-}
-
 export type SessionControlItem = Pick<SessionItem, "sessionId">;
-
-class SessionItem extends vscode.TreeItem {
-	constructor(
-		public readonly label: string,
-		public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-		public readonly showStatus: boolean,
-		public readonly status?: string,
-		public readonly sessionId?: number,
-		public readonly sessionDetails?: any,
-	) {
-		super(label, collapsibleState);
-		this.sessionDetails = sessionDetails;
-
-		if (showStatus) {
-			this.description = this.status;
-			this.sessionId = sessionId;
-			// Add a context value to enable right-click menu actions
-			this.contextValue = "sessionItem";
-		}
-	}
-}
-
-class SessionItemDetail extends vscode.TreeItem {
-	constructor(
-		public readonly label: string,
-		public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-		public readonly description: string,
-	) {
-		super(label, collapsibleState);
-		this.description = description;
-	}
-}
 
 // Placeholder item for empty states
 class PlaceholderItem extends vscode.TreeItem {
@@ -1204,6 +1083,15 @@ export function activate(context: vscode.ExtensionContext) {
 		}),
 	);
 
+	context.subscriptions.push(
+		vscode.commands.registerCommand(
+			"ddbSessionsExplorer.copyDetails",
+			async (item?: SessionItem) => {
+				if (item instanceof SessionItem)
+					await vscode.env.clipboard.writeText(item.copyDetails());
+			},
+		),
+	);
 	registerSessionControls(vscode, context);
 }
 
