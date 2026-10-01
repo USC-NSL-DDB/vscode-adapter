@@ -236,12 +236,13 @@ async function promptForSessions(
 		let timedOut = false;
 		let closed = false;
 
-		// Set up 30 second timeout
+		// One budget covers session readiness and debugger source discovery.
+		const deadline = Date.now() + 30000;
 		const timeoutId = setTimeout(() => {
 			timedOut = true;
 			quickPick.dispose();
 			vscode.window.showWarningMessage(
-				"Loading sessions timed out after 30 seconds. Please try again or check your connection.",
+				"Finding breakpoint targets timed out after 30 seconds while waiting for debugger source information. Please try again.",
 			);
 			resolve(undefined);
 		}, 30000);
@@ -294,7 +295,7 @@ async function promptForSessions(
 			);
 			const groupResponse = await debugSession.customRequest(
 				"ddb.resolveSourceGroups",
-				{ src: src_path },
+				{ src: src_path, timeoutMs: Math.max(1, deadline - Date.now()) },
 			);
 			return [sessionResponse, groupResponse];
 		};
@@ -586,7 +587,10 @@ async function promptForSessions(
 				if (closed) return;
 				clearTimeout(timeoutId);
 				quickPick.dispose();
-				vscode.window.showErrorMessage(`Failed to load sessions: ${error}`);
+				const message = error instanceof Error ? error.message : String(error);
+				vscode.window.showErrorMessage(
+					`Failed to find breakpoint targets: ${message}`,
+				);
 				resolve(undefined);
 			});
 	});

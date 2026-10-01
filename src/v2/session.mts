@@ -868,7 +868,9 @@ export class CanonicalDebugSession extends DebugSession {
 					case "ddb.getBreakpoints":
 						return { bkpts: this.sidebar.breakpointSnapshot() };
 					case "ddb.resolveSourceGroups":
-						return { grps: await this.sidebar.sourceGroups(args.src) };
+						return {
+							grps: await this.sidebar.sourceGroups(args.src, args.timeoutMs),
+						};
 					default:
 						return {
 							status: this.connection!.state.cursor ? "up" : "starting",

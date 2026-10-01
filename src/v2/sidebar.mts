@@ -126,11 +126,19 @@ export class DdbSidebar {
 		});
 	}
 
-	async sourceGroups(source: string) {
+	async sourceGroups(source: string, timeoutMs = 30_000) {
 		if (!source) throw new Error("Source path is required");
+		if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
+			throw new Error("Source discovery timeout must be positive");
+		// First-time source discovery can scan large debug symbol tables. Share
+		// the picker budget across all batches instead of the SDK's 10s default.
+		const deadline = Date.now() + Math.min(timeoutMs, 30_000);
 		const groups = this.groups();
 		const matches: typeof groups = [];
 		for (let offset = 0; offset < groups.length; offset += 4) {
+			const remaining = deadline - Date.now();
+			if (remaining <= 0)
+				throw new Error("Debugger source discovery timed out");
 			const results = await Promise.all(
 				groups.slice(offset, offset + 4).map(async (group) => {
 					try {
@@ -142,6 +150,7 @@ export class DdbSidebar {
 								},
 								location: { path: source },
 							},
+							{ timeoutMs: remaining },
 						);
 						return group;
 					} catch (error) {
